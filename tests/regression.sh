@@ -3,8 +3,8 @@
 # output in tests/reference/ (serial backend, -O3 without -march=native).
 # The reference was regenerated when the beam current filter
 # (numerics.beam_filter = 1) and the zero-gradient closure at the rear end of
-# the window were introduced; with beam_filter = 0 the code reproduces the
-# previous reference except in the rearmost slice.
+# the window were introduced, and again with the self-fields of bunches with
+# v < c (gamma = 1000 here: changes of up to 2e-3 near the rear of the window).
 # usage: sh tests/regression.sh <gempic_rz> <compare_columns> [block.key=value ...]
 #        (e.g. numerics.backend=cuda: the parallel engine against the same reference)
 set -e

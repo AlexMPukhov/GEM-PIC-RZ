@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp)
+  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -116,7 +116,7 @@ elseif(GEMPIC_OPENMP)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
       src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp
-      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp)
+      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
     target_include_directories(gempic_rz_gpuemu PRIVATE src)

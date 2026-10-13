@@ -24,7 +24,7 @@ grid {
   dr_points     = 20, 20, 100 um
   r_max         = 5 mm
   dzeta         = 25 nm           # 32 points per resonant wavelength
-  window_length = 50 um           # slippage 50 lambda_r = 40 um + bunch + margins
+  window_length = 54 um           # slippage 50 lambda_r = 40 um + bunch + space-charge margin ahead
   dz            = 0.7111 mm       # 20 steps per undulator period
   z_end         = 0.74 m
   r_absorber    = 4.2 mm

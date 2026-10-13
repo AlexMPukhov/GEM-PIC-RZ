@@ -1,0 +1,16 @@
+# Physics test: self-field of a bunch with v < c (gamma = 100) in vacuum, no
+# external fields. With the field of its own beta (and enough window ahead
+# of it) the bunch keeps its mean energy: |dE/E| < 1e-4 over 4 cm (with the
+# v = c field it changed by 7e-4). Radial boundary far away (free-hand grid
+# 5 um -> 5 mm, r_max = 10 cm), absorber off.
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = table;  r_points = 0, 0.2, 100 mm;  dr_points = 5, 5, 5000 um;  r_max = 100 mm
+  dzeta = 50 nm;  window_length = 90 um
+  dz = 0.4 mm;  z_end = 0.04 m
+  r_absorber = 200 mm
+}
+bunch { name = b; charge = 106.7 pC; gamma = 100; sigma_x = 70 um; emittance_x = 0 um
+        distribution_z = flattop; length = 16 um; zeta_center = 45 um; macroparticles = 50000 }
+output { dir = bunch_slow_out; every = 0; maps = false; particles = false }
+numerics { iterations = 1; beam_dz_max = 0.25 mm; beam_filter = 0 }

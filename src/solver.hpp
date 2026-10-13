@@ -46,6 +46,8 @@ class FieldSolver {
   // beyond c_{N-1}), with the same operator as the field update, so that the
   // fields E = -grad psi, B = z x E are an exact discrete equilibrium.
   void poisson(int m, const cd* rho, cd* psi);
+  // the tridiagonal matrix -Lap^c_m of the Poisson problem (sub a, diagonal b, super cc)
+  const Tridiag& poissonMatrix(int m) const { return Tp[m]; }
   // E_r (faces) = -G psi,  E_phi (centres) = -(i m / c) psi
   void gradient(int m, const cd* psi, cd* Er, cd* Ep) const;
 

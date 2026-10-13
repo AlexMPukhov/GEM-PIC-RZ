@@ -18,6 +18,7 @@
 #include "units.hpp"
 #include "zgrid.hpp"
 #include "external.hpp"
+#include "eigen.hpp"
 
 using namespace gem;
 
@@ -516,6 +517,32 @@ int main() {
                            "z_end = 50 um }"),
                  "grid steps must be positive");
     EXPECT_ERROR(cfgOf(R + "dzeta = 30 nm; nzeta = 100; z_grid = adaptive; dz = 5 um; z_end = 50 um }"), "z_grid");
+  }
+
+  // ------------------------------------------------------------ symmetric tridiagonal eigenproblem
+  {
+    const int n = 40;
+    std::vector<double> d(n, 2.0), e(n, -1.0), Z;
+    CHECK(symTridiagEigen(d, e, Z));
+    std::vector<double> ev = d, ex(n);
+    std::sort(ev.begin(), ev.end());
+    for (int k = 0; k < n; ++k) ex[k] = 2.0 - 2.0 * std::cos((k + 1) * PI / (n + 1));
+    double worst = 0, ortho = 0, resid = 0;
+    for (int k = 0; k < n; ++k) worst = std::max(worst, std::fabs(ev[k] - ex[k]));
+    for (int a = 0; a < n; ++a)
+      for (int b = 0; b < n; ++b) {
+        double sdot = 0;
+        for (int i = 0; i < n; ++i) sdot += Z[size_t(i) * n + a] * Z[size_t(i) * n + b];
+        ortho = std::max(ortho, std::fabs(sdot - (a == b ? 1.0 : 0.0)));
+      }
+    for (int k = 0; k < n; ++k)  // T z = lambda z
+      for (int i = 0; i < n; ++i) {
+        double t = 2.0 * Z[size_t(i) * n + k];
+        if (i > 0) t -= Z[size_t(i - 1) * n + k];
+        if (i + 1 < n) t -= Z[size_t(i + 1) * n + k];
+        resid = std::max(resid, std::fabs(t - d[k] * Z[size_t(i) * n + k]));
+      }
+    CHECK(worst < 1e-12 && ortho < 1e-12 && resid < 1e-12);
   }
 
   // ------------------------------------------------------------ undulator

@@ -86,6 +86,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/mapping.*` | free-hand grid mapping: step given at reference points, linear in between (analytic, used for r, ζ and z) |
 | `src/grid.*` | staggered non-uniform radial grid, interpolation weights |
 | `src/external.hpp` | external fields acting on the particles: undulators |
+| `src/eigen.*` | symmetric tridiagonal eigenproblem (initial fields of bunches with v < c) |
 | `src/zgrid.hpp` | longitudinal grid of the window: slices, half-cells, location of particles, interpolation weights of the R equation |
 | `src/fields.hpp` | mode fields and currents |
 | `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step) |
@@ -100,7 +101,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/main.cpp` | command-line driver |
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
-| `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
+| `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); a γ = 100 bunch keeps its energy in its own field; ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
 | `tools/h5_extract.cpp` | reads the HDF5 files: tables of axis, map, beam, field line-outs (also an example reader) |
 | `tests/hdf5.sh` | HDF5 files read back against the text output (double and single precision) |
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
@@ -333,10 +334,8 @@ bunch form factor exp(−k²σ_z² − k²θ²σ_r²), integrated over 0.6 < k/k
   the bunch (8.264 µm vs 8.260 µm from the trajectory).
 
 **Limitations so far:**
-- **Bunch self-field at the start:** it is the v = c field. That is exact for σ_z ≫ σ_r/γ, which holds for FEL
-  bunches. For the 0.1 µm test bunch (σ_r/γ = 1 µm) part of the initial field is not the co-moving field of a
-  γ = 100 bunch. That part stays behind as a free field in mode 0, separate from the radiation in m ≥ 1. A
-  finite-γ initialization would remove it.
+- **Bunch self-field:** fixed (see "Corrections", item 5). The earlier v = c field was wrong for the
+  0.1 µm test bunch (σ_r/γ = 1 µm) and stayed behind as a free field in mode 0.
 - **High-gain regime (SASE, seeded amplification):** not demonstrated yet. A first attempt (300 A, γ = 100,
   σ_r = 30 µm, 30 periods) was dominated by space charge. The beam grows from 30 to 45 µm even without the undulator,
   as the envelope equation predicts. In the undulator, ε_x also grows to 2 µm; this does not change with
@@ -453,6 +452,27 @@ earlier versions except in the rearmost slice.
    The current sum of the last slice used zero for the half-cell behind the
    window, which halved the source of R there. Now a zero-gradient closure is used.
    See "Numerical Cherenkov radiation" above.
+
+5. **Self-fields of bunches with v < c** (found with the undulator tests at
+   γ = 100). Bunches used to start with the v = c field, R = 2E_⊥ from
+   −Lap_⊥ψ = j_z. A bunch with v < c slips backwards in the window, and the
+   part of that field that is not its co-moving field stayed behind and
+   exchanged energy with the bunch. A 16 µm, 107 pC bunch at γ = 100 gained
+   0.13 % in energy in 8 cm, while its field energy fell by 19 %; this was
+   independent of dζ, dz and dr. Now every bunch starts with the field of its
+   own β: −(Lap_⊥ + γ⁻²∂_ζ²)ψ = j_z/β, R = (1 + β)E_⊥, L = (1 − β)E_⊥,
+   E_z = −γ⁻²∂_ζψ. This is solved with the radial eigenmodes of the
+   discrete Laplacian and a tridiagonal solve along ζ (`src/eigen.*`).
+   - **Window ahead of the bunch:** the space-charge field of such a bunch
+     reaches ahead of it, E_z(d)/E_z(head) ~ L r/(γ d²). The scheme sets
+     E_z = 0 at the front of the window, and a field cut off there acts as a
+     uniform E_z on the whole bunch. The summary warns if the gap is smaller
+     than √(100 L r/γ).
+   - **Test (same bunch, no undulator, 8 cm):** mean energy 50.5889 →
+     50.5899 MeV (2 × 10⁻⁵); field energy within 2 %. The gap was 70 µm, and
+     the radial boundary was at 10 cm with a free-hand grid of 5 µm → 5 mm.
+     With a 2 µm gap the bunch loses 1.2 × 10⁻³ instead.
+   - **Bunches with γ > 10⁵:** they keep the v = c field, unchanged.
 
 ## What is new compared with the prototype
 

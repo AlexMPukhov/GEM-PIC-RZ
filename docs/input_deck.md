@@ -216,6 +216,16 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 
 Each bunch starts with its relativistic vacuum self-field: E⊥ = −∇⊥ψ with −Δ⊥ψ = j_z, and B = ẑ × E. This assumes γ ≫ 1; a warning is printed for γ < 10. The field is initialized even if the plasma begins at z = 0: the bunch then enters the plasma with its vacuum field.
 
+**Self-field of a bunch.** Every bunch starts with the field of a charge distribution moving with its own β:
+−(Lap⊥ + γ⁻²∂ζ²)ψ = j_z/β, E⊥ = −∇⊥ψ, E_z = −γ⁻²∂ζψ, B = β ẑ × E. (For γ > 10⁵ this is the v = c field,
+R = 2E⊥.) For γ of order 100 two things matter:
+- **Gap ahead of the bunch:** the longitudinal space-charge field reaches a distance d ahead of the bunch with
+  E_z(d)/E_z(head) ~ L r/(γ d²), where L is the bunch length and r its radius. The scheme sets E_z = 0 at the front
+  of the window, so the window must extend ahead of the bunch by at least √(100 L r/γ). The summary warns
+  otherwise.
+- **Radial boundary:** the outer boundary is a conducting wall. For a bunch in free space, put it far outside γ L
+  (e.g. a free-hand grid growing geometrically to centimetres), and switch the absorber off (`r_absorber > r_max`).
+
 ## `undulator` (0 … N blocks)
 
 A static undulator field that acts on all particles (bunches, trapped and plasma particles). The field solver does not see it. Several blocks add up, e.g. two sections with a gap.

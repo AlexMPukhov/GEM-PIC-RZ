@@ -624,6 +624,23 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   const double half = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
   if (B.zeta_center - half < 0 || B.zeta_center + half > g.window())
     warn.push_back(b.label() + " (" + B.name + ") extends beyond the window (particles outside are removed)");
+  // The longitudinal space-charge field of a bunch with v < c reaches the
+  // distance d ahead of it with E_z(d) / E_z(head) ~ L r / (gamma d^2). The
+  // scheme sets E_z = 0 at the front of the window; a field cut off there acts
+  // as a uniform E_z on the whole bunch (it changes the bunch energy).
+  if (B.gamma < 1e5) {
+    const double L = 2.0 * half, rb = std::max(B.sigma_x, B.sigma_y);
+    // (the same reach behind the bunch: the initial field is computed with psi = 0 at the rear end)
+    const double front = g.window() - (B.zeta_center + half), rear = B.zeta_center - half;
+    const double need = std::sqrt(100.0 * L * rb / B.gamma);  // E_z(gap) / E_z(edge) = 1 %
+    if (std::min(front, rear) < need) {
+      char buf[256];
+      std::snprintf(buf, sizeof buf, "%.3g um from the front and %.3g um from the rear; give it >= %.3g um on both sides",
+                    front * u.k0inv_um(), rear * u.k0inv_um(), need * u.k0inv_um());
+      warn.push_back(b.label() + " (" + B.name + "): its space-charge field (gamma = " +
+                     std::to_string(int(B.gamma)) + ") reaches the ends of the window: the bunch is " + buf);
+    }
+  }
   if (3.0 * std::max(B.sigma_x, B.sigma_y) > g.r_max)
     warn.push_back(b.label() + " (" + B.name + ") is wider than the radial box");
   if (std::max(B.sigma_x, B.sigma_y) < 2.0 * g.dr_min)

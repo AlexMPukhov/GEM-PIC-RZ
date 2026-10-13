@@ -3,6 +3,7 @@
 // ============================================================================
 #include "simulation.hpp"
 
+#include "eigen.hpp"
 #include "rng.hpp"
 
 #include <algorithm>
@@ -148,33 +149,133 @@ void Simulation::initBunches() {
 }
 
 // ----------------------------------------------------------------------------
-// Self-fields of the bunches at the start. For v_z -> c the vacuum field of a
-// bunch is purely transverse: E = -grad_perp psi, B = z x E, with
-// -Lap_perp psi = rho = j_z, so R = 2 E_perp and L = E_z = B_z = 0.
-// (This field cannot build up during the run: for v = c the source of R,
-//  d_r E_z - j_r, vanishes. Without it a bunch would carry the field of a
-//  backward-moving charge.) The discrete Poisson operator is the one of the
-// field update, so in vacuum the fields are an exact discrete equilibrium.
-// The bunch currents are also deposited at the start level s^0, where the
-// trapezoidal update of R needs them.
+// Self-fields of the bunches at the start: the field of a charge distribution
+// moving with the velocity beta of its bunch, at rest in the frame of the
+// bunch. With psi = gamma phi' (phi' = potential in the rest frame),
+//     -(Lap_perp + gamma^-2 d_zeta^2) psi = rho,        rho = j_z / beta,
+//     E_perp = -grad_perp psi,  E_z = -gamma^-2 d_zeta psi,  B = beta z x E,
+// i.e.  R = (1 + beta) E_perp,  L = (1 - beta) E_perp,  B_z = 0.
+// For beta -> 1 this is the purely transverse field R = 2 E_perp with
+// -Lap_perp psi = j_z. For beta < 1 the field reaches gamma^-1 times the radius
+// beyond the ends of the bunch, and E_z is the longitudinal space-charge field.
+// (A field that is not this co-moving field does not move with a bunch that
+// slips back in zeta; it stays behind and exchanges energy with the bunch.)
+//
+// Discretization: Lap_perp is the operator of the field solver, symmetric with
+// the weights A^c: diagonalized once per mode, S = D^1/2 (-Lap) D^-1/2 = Q
+// diag(lambda) Q^T. Every radial eigenmode k then gives a tridiagonal problem
+// along zeta (second difference on the slices, psi = 0 beyond the window):
+//     (lambda_k - gamma^-2 D_zz) psi_k = rho_k.
+// Each bunch is solved with its own gamma (bunches with gamma > 1e5: the
+// limit beta = 1). The bunch currents are also deposited at the start level
+// s^0, where the trapezoidal update of R needs them.
 // ----------------------------------------------------------------------------
 void Simulation::initBunchFields() {
   if (beam.empty()) return;
   for (const auto& p : beam) depositBeamParticle(c0b, p);
   filterBeamCurrent(c0b);  // the initial field belongs to the filtered current
   const int N = g.N;
-  std::vector<cd> rho(N), psi(N), Er(N + 1), Ep(N);
-  for (int n = 0; n < Nz; ++n) {
+  // radial eigenmodes of -Lap^c_m (computed on demand, per mode)
+  std::vector<std::vector<double>> lam(M + 1), Q(M + 1);
+  auto eigen = [&](int m) {
+    if (!lam[m].empty()) return;
+    const Tridiag& T = solver.poissonMatrix(m);
+    std::vector<double> d(N), e(N, 0.0);
+    for (int i = 0; i < N; ++i) d[i] = T.b[i];
+    for (int i = 0; i + 1 < N; ++i) e[i] = -std::sqrt(T.cc[i] * T.a[i + 1]);  // symmetrized off-diagonal
+    if (!symTridiagEigen(d, e, Q[m])) throw std::runtime_error("bunch fields: eigenvalue iteration failed");
+    lam[m] = d;
+  };
+  Currents C;
+  C.init(M, Nz, N);
+  std::vector<cd> rho(size_t(Nz) * N), psi(size_t(Nz) * N), col(Nz), Er(N + 1), Ep(N);
+  std::vector<double> sq(N);
+  for (int i = 0; i < N; ++i) sq[i] = std::sqrt(g.Ac[i]);
+  for (size_t b = 0; b < cfg.bunches.size(); ++b) {
+    C.zero();
+    bool any = false;
+    for (const auto& p : beam)
+      if (p.sp == int(b)) { depositBeamParticle(C, p); any = true; }
+    if (!any) continue;
+    filterBeamCurrent(C);
+    const double gam = cfg.bunches[b].gamma;
+    const double beta = (gam > 1e5) ? 1.0 : std::sqrt(1.0 - 1.0 / (gam * gam));
+    const double ig2 = (gam > 1e5) ? 0.0 : 1.0 / (gam * gam);
     for (int m = 0; m <= M; ++m) {
       // charge density at slice n: linear interpolation of the half-cells n-1 and n
-      // (the average on a uniform grid)
-      for (int i = 0; i < N; ++i)
-        rho[i] = 0.5 * (zv.wLo(n) * ((n > 0) ? c0b.jz[c0b.c(m, n - 1, i)] : cd(0.0)) +
-                        zv.wHi(n) * c0b.jz[c0b.c(m, n, i)]);
-      solver.poisson(m, rho.data(), psi.data());
-      solver.gradient(m, psi.data(), Er.data(), Ep.data());
-      for (int i = 1; i <= N; ++i) fold.Rr[fold.f(m, n, i)] += 2.0 * Er[i];
-      for (int i = 0; i < N; ++i) fold.Rp[fold.c(m, n, i)] += 2.0 * Ep[i];
+      for (int n = 0; n < Nz; ++n)
+        for (int i = 0; i < N; ++i)
+          rho[size_t(n) * N + i] = 0.5 * (zv.wLo(n) * ((n > 0) ? C.jz[C.c(m, n - 1, i)] : cd(0.0)) +
+                                          zv.wHi(n) * C.jz[C.c(m, n, i)]) / beta;
+      if (ig2 == 0.0) {
+        for (int n = 0; n < Nz; ++n) solver.poisson(m, &rho[size_t(n) * N], &psi[size_t(n) * N]);
+      } else {
+        eigen(m);
+        const std::vector<double>& Z = Q[m];
+        // rho_k(n) = sum_i Q_ik sqrt(A_i) rho_i(n)
+        std::vector<cd> rk(size_t(Nz) * N);
+        for (int n = 0; n < Nz; ++n) {
+          const cd* r = &rho[size_t(n) * N];
+          cd* out = &rk[size_t(n) * N];
+          for (int i = 0; i < N; ++i) {
+            const cd v = sq[i] * r[i];
+            if (v == cd(0.0)) continue;
+            const double* zi = &Z[size_t(i) * N];
+            for (int k = 0; k < N; ++k) out[k] += zi[k] * v;
+          }
+        }
+        // tridiagonal solve along zeta for every eigenmode
+        std::vector<double> lo(Nz), di(Nz), up(Nz), cp(Nz);
+        for (int n = 0; n < Nz; ++n) {
+          const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
+          const double f = 2.0 * ig2 / (hm + hp);
+          lo[n] = -f / hm; up[n] = -f / hp; di[n] = f / hm + f / hp;
+        }
+        for (int k = 0; k < N; ++k) {
+          const double lk = lam[m][k];
+          for (int n = 0; n < Nz; ++n) col[n] = rk[size_t(n) * N + k];
+          double den = di[0] + lk;
+          cp[0] = up[0] / den;
+          col[0] /= den;
+          for (int n = 1; n < Nz; ++n) {
+            den = di[n] + lk - lo[n] * cp[n - 1];
+            cp[n] = up[n] / den;
+            col[n] = (col[n] - lo[n] * col[n - 1]) / den;
+          }
+          for (int n = Nz - 2; n >= 0; --n) col[n] -= cp[n] * col[n + 1];
+          for (int n = 0; n < Nz; ++n) rk[size_t(n) * N + k] = col[n];
+        }
+        // psi_i(n) = sum_k Q_ik psi_k(n) / sqrt(A_i)
+        for (int n = 0; n < Nz; ++n) {
+          const cd* in = &rk[size_t(n) * N];
+          cd* out = &psi[size_t(n) * N];
+          for (int i = 0; i < N; ++i) {
+            const double* zi = &Z[size_t(i) * N];
+            cd a = 0.0;
+            for (int k = 0; k < N; ++k) a += zi[k] * in[k];
+            out[i] = a / sq[i];
+          }
+        }
+      }
+      for (int n = 0; n < Nz; ++n) {
+        solver.gradient(m, &psi[size_t(n) * N], Er.data(), Ep.data());
+        for (int i = 1; i <= N; ++i) {
+          fold.Rr[fold.f(m, n, i)] += (1.0 + beta) * Er[i];
+          if (beta < 1.0) fold.Lr[fold.f(m, n, i)] += (1.0 - beta) * Er[i];
+        }
+        for (int i = 0; i < N; ++i) {
+          fold.Rp[fold.c(m, n, i)] += (1.0 + beta) * Ep[i];
+          if (beta < 1.0) fold.Lp[fold.c(m, n, i)] += (1.0 - beta) * Ep[i];
+        }
+        if (ig2 > 0.0) {  // E_z = -gamma^-2 d_zeta psi (central difference, psi = 0 beyond the window)
+          const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
+          for (int i = 0; i < N; ++i) {
+            const cd up1 = (n + 1 < Nz) ? psi[size_t(n + 1) * N + i] : cd(0.0);
+            const cd dn1 = (n > 0) ? psi[size_t(n - 1) * N + i] : cd(0.0);
+            fold.Ez[fold.c(m, n, i)] -= ig2 * (up1 - dn1) / (hm + hp);
+          }
+        }
+      }
     }
   }
 }
