@@ -338,7 +338,8 @@ void PipelineRun::step() {
       if (na < 0 || na >= Nz) { p.status = 2; break; }
       EB f = S.gather(S.fold, na, 1.0 - w, na + 1, w, p.x, p.y);
       addExternal(S.ext, p.x, p.y, p.z, f);
-      boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+      if (num.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
+      else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
       gm = gammaOf(p);
       p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
       p.zeta += (p.uz / gm - 1.0) * dt;

@@ -519,6 +519,26 @@ int main() {
     EXPECT_ERROR(cfgOf(R + "dzeta = 30 nm; nzeta = 100; z_grid = adaptive; dz = 5 um; z_end = 50 um }"), "z_grid");
   }
 
+  // ------------------------------------------------------------ particle pushers
+  {
+    // gamma = 1000 along z in E_x = beta B_y: E + v x B = 0 (Vay exact, Boris not)
+    const double uz0 = std::sqrt(1000.0 * 1000.0 - 1.0), beta = uz0 / 1000.0;
+    EB f{beta * 1e-3, 0, 0, 0, 1e-3, 0};
+    double ax = 0, ay = 0, az = uz0, bx = 0, by = 0, bz = uz0;
+    for (int k = 0; k < 100; ++k) {
+      vay(ax, ay, az, f, -1.0, 5e5);
+      boris(bx, by, bz, f, -1.0, 5e5);
+    }
+    CHECK(std::fabs(ax) < 1e-9 && std::fabs(az - uz0) < 1e-9 * uz0);
+    CHECK(std::fabs(bx) > 1e-3);  // the Boris push drifts (the reason for the Vay push)
+    // pure magnetic field: |u| conserved, gyration as Boris for small steps
+    double cx = 1.0, cy = 0.0, cz = 0.0, dx = 1.0, dy = 0.0, dz = 0.0;
+    EB m{0, 0, 0, 0, 0, 0.01};
+    for (int k = 0; k < 1000; ++k) { vay(cx, cy, cz, m, -1.0, 0.1); boris(dx, dy, dz, m, -1.0, 0.1); }
+    CHECK(std::fabs(std::hypot(cx, cy) - 1.0) < 1e-12);
+    CHECK(std::fabs(cx - dx) < 1e-4 && std::fabs(cy - dy) < 1e-4);
+  }
+
   // ------------------------------------------------------------ symmetric tridiagonal eigenproblem
   {
     const int n = 40;

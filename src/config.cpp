@@ -729,6 +729,7 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.iterations = int(r.integer("iterations", N.iterations));
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
+  N.beam_vay = r.word("beam_pusher", "vay", {"vay", "boris"}) == "vay";
   N.seed = static_cast<unsigned long>(r.integer("seed", long(N.seed)));
   N.beam_dz_max = r.num("beam_dz_max", Dim::Length, N.beam_dz_max);
   N.vz_min = r.num("vz_min", Dim::None, N.vz_min);
@@ -964,8 +965,10 @@ std::string Config::summary() const {
     line("checkpoints: every %d steps (keep %d)%s", output.checkpoint_every, output.checkpoint_keep,
          output.walltime_hours > 0 ? (", stop at " + std::to_string(output.walltime_hours) + " h wall time").c_str()
                                    : "");
-  line("output: dir '%s', every %d steps; numerics: %d iterations/slice, beam filter %d, seed %lu, backend %s",
-       output.dir.c_str(), output.every, numerics.iterations, numerics.beam_filter, numerics.seed,
+  line("output: dir '%s', every %d steps; numerics: %d iterations/slice, beam filter %d, beam pusher %s, seed %lu, "
+       "backend %s",
+       output.dir.c_str(), output.every, numerics.iterations, numerics.beam_filter,
+       numerics.beam_vay ? "vay" : "boris", numerics.seed,
        numerics.backend == NumericsConfig::Backend::Cuda     ? "cuda"
        : numerics.backend == NumericsConfig::Backend::OpenMP ? "openmp"
                                                              : "serial");

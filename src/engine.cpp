@@ -125,6 +125,7 @@ struct Params {
   ZetaView zv;   // longitudinal grid
   const int* cls;  // matrix class of slice n (FieldSolver::classOf)
   ExternalV ext;   // external fields (undulators)
+  int vay;         // beam list: Vay pusher (else Boris)
   GridV g;
   int nIons;
   const IonV* ions;
@@ -423,7 +424,8 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
     if (na < 0 || na >= P.Nz) { p.status = 2; break; }
     EB f = gather(P, F, na, 1.0 - w, na + 1, w, p.x, p.y);
     addExternal(P.ext, p.x, p.y, p.z, f);
-    boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+    if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
+    else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
     gm = gammaOf(p);
     p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
     p.zeta += (p.uz / gm - 1.0) * dt;
@@ -753,6 +755,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   P.zv = ZetaView{Nz, sim.zg.uniform ? 1 : 0, sim.zg.h, E.zz.data(), E.zhs.data(), E.zzc.data(), E.zwlo.data(),
                   E.zwhi.data()};
   P.cls = E.cls.data();
+  P.vay = sim.cfg.numerics.beam_vay ? 1 : 0;
   if (!sim.undV.empty()) E.und.assign(sim.undV.data(), sim.undV.size());
   P.ext = ExternalV{int(sim.undV.size()), sim.undV.empty() ? nullptr : E.und.data()};
   P.g = {N, E.rho.data(), E.c.data(), E.Af.data(), E.Ac.data(), E.Vf.data(), E.Vc.data(), E.kC.data(), E.kF.data()};

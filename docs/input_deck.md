@@ -345,6 +345,7 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 | `iterations` | integer | 2 | passes per slice (1 = predictor only) |
 | `seed` | integer | 12345 | random seed (plasma loading, bunches, ionization) |
 | `beam_dz_max` | length | 10 k0⁻¹ | largest sub-step of the beam push along s |
+| `beam_pusher` | `vay` \| `boris` | `vay` | pusher of the beam list. Vay keeps the cancellation E + v × B = 0 of a relativistic beam in its own field exactly; Boris adds a spurious force ~ (qEΔt)² (`boris`: the behaviour of earlier versions) |
 | `vz_beam` | number | 0.9 | a streaming particle that reaches the next s-level joins the beam list (pushed along s) if v_z ≥ vz_beam; slower particles continue streaming in the next step, entering the ζ-march at their ζ |
 | `vz_min` | number | 0.8 | beam particles slower than this return to streaming in the same way. No particle is removed because it is slow |
 | `beam_filter` | integer 0–8 | 1 | passes of a (1,2,1)/4 filter along ζ applied to the beam current (beam-list particles) before the field solve. It removes the source of numerical Cherenkov radiation at the ζ-Nyquist wavenumber (see README, "Numerical Cherenkov radiation"). Response cos^(2p)(kh/2): one pass attenuates kh = 0.2 by 1%. 0 = off |

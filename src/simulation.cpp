@@ -461,7 +461,8 @@ void Simulation::pushBeam() {
       if (na < 0 || na >= Nz) { p.status = 2; break; }
       EB f = gather(fold, na, 1.0 - w, na + 1, w, p.x, p.y);
       addExternal(ext, p.x, p.y, p.z, f);
-      boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+      if (cfg.numerics.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
+      else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
       gm = gammaOf(p);
       p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
       p.zeta += (p.uz / gm - 1.0) * dt;

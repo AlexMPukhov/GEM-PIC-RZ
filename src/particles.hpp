@@ -67,6 +67,32 @@ GEM_HD inline void boris(double& ux, double& uy, double& uz, const EB& f, double
   ux = vx + qh * f.Ex; uy = vy + qh * f.Ey; uz = vz + qh * f.Ez;
 }
 
+// relativistic Vay push (J.-L. Vay, Phys. Plasmas 15, 056701 (2008)): for
+// E + v x B = 0 the momentum does not change, for any dt. The Boris push does
+// not keep this cancellation: for a beam in its own field (net force ~ E/gamma^2)
+// it adds a spurious force ~ (q E dt)^2 that can exceed the physical one by
+// orders of magnitude at gamma ~ 1000 and large steps.
+GEM_HD inline void vay(double& ux, double& uy, double& uz, const EB& f, double qm, double dt) {
+  const double e = 0.5 * qm * dt;
+  const double ig = 1.0 / sqrt(1.0 + ux * ux + uy * uy + uz * uz);
+  const double vx = ux * ig, vy = uy * ig, vz = uz * ig;
+  // u' = u + q dt/m (E + v x B / 2)
+  const double upx = ux + e * (2.0 * f.Ex + vy * f.Bz - vz * f.By);
+  const double upy = uy + e * (2.0 * f.Ey + vz * f.Bx - vx * f.Bz);
+  const double upz = uz + e * (2.0 * f.Ez + vx * f.By - vy * f.Bx);
+  const double tx = e * f.Bx, ty = e * f.By, tz = e * f.Bz;
+  const double tau2 = tx * tx + ty * ty + tz * tz;
+  const double ust = upx * tx + upy * ty + upz * tz;
+  const double sigma = 1.0 + upx * upx + upy * upy + upz * upz - tau2;
+  const double gnew = sqrt(0.5 * (sigma + sqrt(sigma * sigma + 4.0 * (tau2 + ust * ust))));
+  const double ax = tx / gnew, ay = ty / gnew, az = tz / gnew;
+  const double s = 1.0 / (1.0 + ax * ax + ay * ay + az * az);
+  const double ut = upx * ax + upy * ay + upz * az;
+  ux = s * (upx + ut * ax + upy * az - upz * ay);
+  uy = s * (upy + ut * ay + upz * ax - upx * az);
+  uz = s * (upz + ut * az + upx * ay - upy * ax);
+}
+
 GEM_HD inline double gammaOf(const Particle& p) { return sqrt(1.0 + p.ux * p.ux + p.uy * p.uy + p.uz * p.uz); }
 
 }  // namespace gem

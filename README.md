@@ -67,6 +67,7 @@ numerics { ... }    algorithm parameters               (optional)
 | example | shows |
 |---|---|
 | `examples/lwfa_witness.deck` | LWFA with an external witness bunch on a free-hand radial grid (the prototype's default case) |
+| `examples/fel_sase.deck` | compact high-gain FEL (SASE from the macroparticle noise): gain length against Ming Xie |
 | `examples/undulator_emission.deck` | coherent spontaneous emission of a short bunch in a planar undulator (λ_r resolved on the ζ grid) |
 | `examples/lwfa_flexgrid.deck` | the same on free-hand grids along ζ and z (fewer slices and steps, small steps in the up-ramp) |
 | `examples/pwfa_driver_witness.deck` | beam-driven wake with drive and witness bunches, flat-top witness, m = 0 only |
@@ -333,15 +334,37 @@ bunch form factor exp(−k²σ_z² − k²θ²σ_r²), integrated over 0.6 < k/k
 - **ctest `undulator`:** 10 periods, 15 s. It checks the energy (±5%), the spectral peak (±0.3%) and the slippage of
   the bunch (8.264 µm vs 8.260 µm from the trajectory).
 
+**Test: high-gain FEL (SASE)** (`examples/fel_sase.deck`, 7.5 min on 2 cores). The setup:
+- helical undulator, period 1 cm, K = 1, 60 periods;
+- bunch at γ = 1000, 4 kA, σ_r = 10 µm, zero emittance, flat-top over 1.3 µm = 130 λ_r;
+- λ_r = 10 nm, resolved by 16 slices;
+- radial boundary at 2 cm.
+
+The FEL parameter is ρ = 0.009. The 1D power gain length is 5.1 periods, and Ming Xie's formula gives 6.4
+(diffraction η_d = 0.40). 2πL_c = 55 λ_r. The amplification starts from the macroparticle noise. A copy with
+1000 times less charge has no gain and serves as the reference.
+
+| z (m) | 0.20 | 0.28 | 0.36 | 0.44 | 0.52 | 0.60 |
+|---|---|---|---|---|---|---|
+| bunching, largest over 20 λ_r slices (noise: 0.0074) | 0.008 | 0.013 | 0.027 | 0.045 | 0.059 | 0.073 |
+| radiated energy / Q², relative to the low-charge copy | 0.95 | 0.93 | 0.97 | 1.16 | 1.60 | 3.2 |
+
+- **Gain length:** in the exponential stage (z = 0.24 … 0.40 m) the bunching grows with a power gain length of
+  5.6–6.0 periods, close to Ming Xie's 6.4.
+- **After that:** the growth slows down. The bunch is only 2.4 × 2πL_c long, and the energy spread from its
+  longitudinal space charge reaches 0.33 ρ.
+- **Beam size:** the beam grows from 10 to 12.2 µm by space charge, as the envelope equation predicts.
+- **Two corrections were needed** for this test (see "Corrections", items 5 and 6): bunch self-fields for v < c,
+  and the Vay pusher. Before them, the beam blew up from 10 to 30 µm and there was no gain.
+- **Short bunches:** a bunch of 10 λ_r (≪ 2πL_c) shows no exponential gain. The radiation slips out after
+  about 2 gain lengths. The bunching peaks at 0.047, and the radiated energy is at most 3 times the
+  coherent emission.
+
 **Limitations so far:**
-- **Bunch self-field:** fixed (see "Corrections", item 5). The earlier v = c field was wrong for the
-  0.1 µm test bunch (σ_r/γ = 1 µm) and stayed behind as a free field in mode 0.
-- **High-gain regime (SASE, seeded amplification):** not demonstrated yet. A first attempt (300 A, γ = 100,
-  σ_r = 30 µm, 30 periods) was dominated by space charge. The beam grows from 30 to 45 µm even without the undulator,
-  as the envelope equation predicts. In the undulator, ε_x also grows to 2 µm; this does not change with
-  m_max = 3 and is not understood yet. A proper gain test needs a focusing lattice (quadrupoles are not yet
-  available as external fields), a beam that is not space-charge dominated, and a radial domain large enough that
-  the absorber does not drag on the self-field.
+- **No quadrupoles yet:** there are no external focusing fields, so long undulators with a matched beam are not
+  yet possible.
+- **Helical field:** it is the on-axis field, without natural focusing.
+- **Shot noise:** the noise comes from the macroparticles; there is no quiet start with the true shot noise.
 
 ## Mobile ions
 
@@ -473,6 +496,14 @@ earlier versions except in the rearmost slice.
      the radial boundary was at 10 cm with a free-hand grid of 5 µm → 5 mm.
      With a 2 µm gap the bunch loses 1.2 × 10⁻³ instead.
    - **Bunches with γ > 10⁵:** they keep the v = c field, unchanged.
+
+6. **Pusher of the beam list** (found with the FEL tests). The Boris push does not keep the cancellation
+   E + v × B ≈ 0 of a beam in its own field. Its error is a spurious force ~ (qE Δt)², and the beam sub-steps
+   are large (`beam_dz_max`). At γ = 1000 (4 kA, σ_r = 10 µm, sub-step 0.625 mm) the radial force on the
+   particles was 17 times the field force E_r/γ². The beam blew up from 10 to 30 µm in 0.6 m instead of
+   growing by 2 µm. The beam list is now pushed with the Vay pusher (`numerics.beam_pusher = vay`), which is
+   exact for E + v × B = 0 at any step: the force agrees with E_r/γ² to 1% at that sub-step. Streaming
+   particles keep the Boris push; their steps are small.
 
 ## What is new compared with the prototype
 

@@ -204,6 +204,7 @@ struct NumericsConfig {
 #endif
   int iterations = 2;        // passes per slice (1 = predictor only)
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
+  bool beam_vay = true;      // beam list pushed with the Vay pusher (false: Boris)
   unsigned long seed = 12345;
   double beam_dz_max = 10.0; // max sub-step of the beam push along s
   double vz_min = 0.8;       // beam particles slower than this return to streaming
