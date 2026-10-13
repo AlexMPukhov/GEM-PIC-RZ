@@ -1,0 +1,62 @@
+# ============================================================================
+#  Beam-driven wakefield (PWFA): drive bunch + witness bunch, no laser
+#  Axisymmetric: only mode m = 0 is needed.
+#
+#  run:   gempic_rz examples/pwfa_driver_witness.deck
+# ============================================================================
+
+grid {
+  lambda0       = 0.8 um          # only defines the code units here (no laser)
+  m_max         = 0
+
+  radial_grid   = table           # dr at the reference radii, linear in between:
+  r_points      = 0,   3,   15, 150 um   # 0.1 um resolves the witness (sigma_r = 1 um),
+  dr_points     = 0.1, 0.1, 2,  2   um   # 2 um the drive-beam blowout (~40 um)
+  r_max         = 150 um
+
+  dzeta         = 0.5 um          # no laser: only the plasma wavelength (106 um) is resolved
+  window_length = 300 um
+
+  dz            = 0.5 mm          # the driver betatron length is ~6.7 mm
+  z_end         = 5 cm
+  r_absorber    = 130 um
+}
+
+plasma {
+  density  = 1e17 cm^-3           # lambda_p = 106 um
+  z_points = 0, 2, 100 mm         # 2 mm entrance ramp
+  z_values = 0, 1, 1
+  r_max    = 120 um
+  ppc_r    = 2
+  ppc_phi  = 4                    # m_max = 0: 4 particles per ring are enough
+}
+
+bunch {
+  name           = driver
+  charge         = 500 pC
+  energy         = 1 GeV
+  energy_spread  = 1 %
+  sigma_x        = 5 um
+  emittance_x    = 5 um
+  sigma_z        = 12 um
+  zeta_center    = 250 um
+  macroparticles = 50000
+}
+
+bunch {
+  name           = witness
+  charge         = 50 pC
+  energy         = 1 GeV
+  energy_spread  = 0.5 %
+  sigma_x        = 1 um
+  emittance_x    = 1 um
+  distribution_z = flattop
+  length         = 8 um
+  zeta_center    = 140 um         # behind the driver, in the accelerating phase
+  macroparticles = 20000
+}
+
+output {
+  dir   = pwfa
+  every = 10
+}

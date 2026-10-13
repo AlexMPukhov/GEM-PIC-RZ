@@ -1,0 +1,19 @@
+# Undulator test (tests/undulator.sh): coherent spontaneous emission of a short
+# bunch (sigma_z = 0.1 um, 1 fC, gamma = 100) in a planar undulator with 10
+# periods, K = 0.5, period 14.2222 mm: resonant wavelength
+#   lambda_r = lambda_u (1 + K^2/2) / (2 gamma^2) = 0.8 um (= lambda0).
+# Expected (far-field radiation integral of the same trajectory with the bunch
+# form factor): radiated energy 1.103e-8 code units, peak of the spectrum at
+# k = 0.981 k0, slippage of the bunch 8.26 um (7.91 um in the undulator).
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = table;  r_points = 0, 0.4, 1.5 mm;  dr_points = 20, 20, 100 um;  r_max = 5 mm
+  dzeta = 25 nm;  window_length = 14 um
+  dz = 0.7111 mm;  z_end = 0.1493 m
+  r_absorber = 4.2 mm
+}
+undulator { type = planar; period = 14.2222 mm; K = 0.5; periods = 10; ramp_periods = 1; natural_focusing = false }
+bunch { name = b; charge = 1 fC; gamma = 100; sigma_x = 100 um; emittance_x = 0 um
+        sigma_z = 0.1 um; zeta_center = 12 um; macroparticles = 100000 }
+output { dir = undulator_out; every = 0; format = hdf5; particles = false }
+numerics { iterations = 1; beam_dz_max = 0.4444 mm; beam_filter = 0 }

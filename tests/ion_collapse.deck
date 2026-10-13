@@ -1,0 +1,17 @@
+# Physics test: ion collapse inside a dense flat-top electron bunch
+# (Rosenzweig et al., PRL 95, 195002 (2005)). n_b = 100 n0, hydrogen.
+# The on-axis ion density in the compression phase is compared with a
+# test-ion model (analytic bunch + ion-channel field, full blowout) by
+# tests/check_physics (mode "ioncollapse").
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = stretched; dr_min = 0.5 k0^-1; dr_max = 10 k0^-1; r_transition = 30 k0^-1; r_max = 600 k0^-1
+  dzeta = 5 k0^-1;  nzeta = 1000
+  dz = 10 k0^-1;  z_end = 10 k0^-1
+  r_absorber = 560 k0^-1
+}
+plasma { density = 1e-5 n_c;  ppc_r = 2; ppc_phi = 4; ppc_r_axis = 8; ppc_phi_axis = 8; r_axis_refine = 10 k0^-1 }
+ion    { mass = 1 m_p; name = H }
+bunch  { name = driver; charge = 5791.1 pC; gamma = 1e5; sigma_x = 20 k0^-1
+         distribution_z = flattop; length = 4000 k0^-1; zeta_center = 2800 k0^-1; macroparticles = 200000 }
+output { dir = ion_collapse_out; every = 1; maps = false; particles = false }

@@ -1,0 +1,65 @@
+# Free-hand zeta grid and z grid (tests/flexgrid.sh): the regression deck
+# on a window with steps 0.25 ... 0.5 k0^-1 (fine at the witness bunch,
+# coarser behind it and at the laser) and growing steps along z.
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = stretched
+  dr_min            = 0.3 k0^-1
+  dr_max            = 3.0 k0^-1
+  transition_cell   = 40
+  transition_cells  = 8
+  nr                = 100
+  zeta_grid         = table
+  zeta_points       = 0, 100, 160, 200, 300 k0^-1
+  dzeta_points      = 0.5, 0.25, 0.25, 0.25, 0.4 k0^-1
+  window_length     = 300 k0^-1
+  z_grid            = table
+  z_points          = 0, 200 k0^-1
+  dz_points         = 20, 60 k0^-1
+  z_end             = 120 k0^-1
+  r_absorber        = 160 k0^-1
+  absorber_strength = 0.2
+}
+laser {
+  a0          = 2
+  waist       = 63 k0^-1
+  length_1e   = 25 k0^-1
+  zeta_center = 240 k0^-1
+}
+plasma {
+  density       = 0.002 n_c
+  z_points      = 0, 400 k0^-1
+  z_values      = 0, 1
+  r_max         = 150 k0^-1
+  ppc_r         = 2
+  ppc_phi       = 8
+  ppc_r_axis    = 4
+  ppc_phi_axis  = 16
+  r_axis_refine = 10 k0^-1
+}
+bunch {
+  name           = witness
+  charge         = 5 pC
+  gamma          = 1000
+  energy_spread  = 0.001
+  sigma_x        = 3 k0^-1
+  emittance_x    = 2.36 k0^-1
+  sigma_z        = 4 k0^-1
+  zeta_center    = 130 k0^-1
+  macroparticles = 20000
+}
+output {
+  dir        = flexgrid_out
+  every      = 1
+  map_stride = 4
+}
+ion {
+  element = H
+}
+numerics {
+  iterations  = 2
+  seed        = 12345
+  beam_dz_max = 10 k0^-1
+  vz_min      = 0.5
+}

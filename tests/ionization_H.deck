@@ -1,0 +1,17 @@
+# Physics test: field ionization of neutral hydrogen (one level) by a laser
+# pulse at focus (a0 = 0.01, about half of the atoms on the axis ionized).
+# The atoms are fixed and dilute (1e-8 n_c), so the field is the vacuum field.
+# tests/check_physics compares the ionized fraction leaving the window with
+#   1 - exp(-int w_ADK(|E(r,t)|) dt), averaged over the loaded disk r < 50.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 1 k0^-1;  nr = 80
+  dzeta = 0.25 k0^-1;  nzeta = 720
+  dz = 1 k0^-1;  z_end = 1 k0^-1
+  r_absorber = 75 k0^-1
+}
+laser  { a0 = 0.01;  waist = 30 k0^-1;  length_1e = 25 k0^-1;  zeta_center = 90 k0^-1 }
+plasma { density = 1e-8 n_c;  free_electrons = false;  r_max = 50 k0^-1
+         ppc_r = 30;  ppc_phi = 30;  r_axis_refine = 0 k0^-1 }
+ion    { element = H;  ionization = adk;  density = 1e-8 n_c;  mobile = false }
+output { dir = ionization_H_out;  every = 1;  maps = false;  particles = false }

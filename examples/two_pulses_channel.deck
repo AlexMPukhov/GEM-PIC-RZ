@@ -1,0 +1,57 @@
+# ============================================================================
+#  Two laser pulses in a parabolic plasma channel
+#   * drive pulse, focused 0.5 mm into the plasma (starts with wavefront curvature)
+#   * weaker, circularly polarized trailing pulse at the second harmonic
+#  Shows: several laser blocks, focus position, polarization, channel profile.
+#
+#  run:   gempic_rz examples/two_pulses_channel.deck
+# ============================================================================
+
+grid {
+  lambda0          = 0.8 um
+  m_max            = 1
+
+  radial_grid      = table        # dr at the reference radii, linear in between
+  r_points         = 0,   2.5, 6,   40 um
+  dr_points        = 0.1, 0.1, 0.5, 0.5 um
+  r_max            = 40 um
+
+  dzeta            = 20 nm        # 20 points per wavelength of the 400 nm pulse
+  window_length    = 60 um
+
+  dz               = 10 um
+  z_end            = 2 mm
+}
+
+laser {                           # laser[0]: drive pulse
+  a0           = 1.5
+  waist        = 12 um
+  tau_fwhm     = 25 fs
+  zeta_center  = 50 um
+  z_focus      = 0.5 mm
+}
+
+laser {                           # laser[1]: second-harmonic pulse
+  a0           = 0.3
+  wavelength   = 400 nm
+  waist        = 6 um
+  length_1e    = 2 um
+  zeta_center  = 30 um
+  polarization = circular
+  helicity     = +1
+}
+
+plasma {
+  density        = 2e18 cm^-3
+  z_points       = 0, 0.3, 1.5, 1.8 mm   # trapezoidal profile
+  z_values       = 0, 1, 1, 0
+  radial_profile = parabolic             # n(r) = n0 (1 + depth r^2 / r_channel^2)
+  channel_depth  = 0.4
+  r_channel      = 12 um
+  r_max          = 32 um
+}
+
+output {
+  dir   = two_pulses
+  every = 20
+}

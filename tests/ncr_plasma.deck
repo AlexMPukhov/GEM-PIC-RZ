@@ -1,0 +1,14 @@
+# Numerical Cherenkov / rear-boundary test (tests/cherenkov.sh): a bunch
+# drives a plasma wake that reaches the rear end of the window.
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = uniform;  dr = 0.5 k0^-1;  nr = 80
+  dzeta = 0.5 k0^-1;  nzeta = 300
+  dz = 20 k0^-1;  z_end = 2000 k0^-1          # 100 steps
+  r_absorber = 34 k0^-1
+}
+plasma { density = 0.002 n_c;  z_points = 0, 10 k0^-1;  z_values = 0, 1;  r_max = 30 k0^-1 }
+bunch { name = driver; charge = 0.2 pC; gamma = 1000; sigma_x = 4 k0^-1; emittance_x = 0 um
+        sigma_z = 2 k0^-1; zeta_center = 130 k0^-1; macroparticles = 20000 }
+output { dir = pla; every = 0; format = hdf5; particles = false }
+numerics { backend = serial }

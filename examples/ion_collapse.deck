@@ -1,0 +1,57 @@
+# ============================================================================
+#  Ion collapse inside a dense electron bunch  (Rosenzweig et al.,
+#  PRL 95, 195002 (2005)). The physics test tests/ion_collapse.deck in
+#  physical units.
+#
+#  A flat-top bunch with peak density n_b = 100 n0 blows out the plasma
+#  electrons. The hydrogen ions near the axis feel E_r = -(n_b - n0) r/2 and
+#  collapse onto the axis after  pi / (2 omega_i),  omega_i^2 = (Z/M)(n_b - n0)/2,
+#  i.e. about 385 um behind the bunch head (545 um for deuterium: x sqrt 2).
+#
+#  run:   gempic_rz examples/ion_collapse.deck
+#         gempic_rz examples/ion_collapse.deck ion.mass=2m_p output.dir=collapse_D
+#  plot:  column 5 of collapse_H/axis_00001.txt (Z n_i/n0 on axis)
+# ============================================================================
+grid {
+  lambda0       = 0.8 um
+  m_max         = 0
+  radial_grid   = table          # dr at the reference radii, linear in between
+  r_points      = 0,     2,     10,   76 um
+  dr_points     = 0.064, 0.064, 1.27, 1.27 um
+  r_max         = 76 um
+  dzeta         = 0.637 um
+  window_length = 637 um
+  dz            = 1.27 um        # one step is enough: the ions respond within one pass
+  z_end         = 1.27 um
+  r_absorber    = 71 um
+}
+
+plasma {
+  density       = 1.742e16 cm^-3 # n0 = 1e-5 n_c
+  ppc_r         = 2
+  ppc_phi       = 4
+  ppc_r_axis    = 8
+  ppc_phi_axis  = 8
+  r_axis_refine = 1.27 um
+}
+
+ion {
+  mass = 1 m_p                   # try 2 m_p (deuterium) or: element = He; charge_state = 2
+  name = H
+}
+
+bunch {
+  name           = driver
+  charge         = 5.79 nC       # peak density 1.74e18 cm^-3 = 100 n0
+  gamma          = 1e5
+  sigma_x        = 2.55 um
+  distribution_z = flattop
+  length         = 509 um
+  zeta_center    = 356.5 um      # head at 611 um
+  macroparticles = 200000
+}
+
+output {
+  dir   = collapse_H
+  every = 1
+}

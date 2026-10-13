@@ -1,0 +1,13 @@
+# Physics test: self-field of an ultra-relativistic flat-top bunch in vacuum.
+# Expected: E_r = -(n_b sigma^2 / r)(1 - exp(-r^2/2 sigma^2)) (Gauss), E_z = 0.
+# Checked by tests/check_physics (mode "bunchfield").
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = stretched; dr_min = 0.5 k0^-1; dr_max = 10 k0^-1; r_transition = 30 k0^-1; r_max = 600 k0^-1
+  dzeta = 5 k0^-1;  nzeta = 1000
+  dz = 10 k0^-1;  z_end = 10 k0^-1
+  r_absorber = 560 k0^-1
+}
+bunch { name = driver; charge = 5791.1 pC; gamma = 1e5; sigma_x = 20 k0^-1
+        distribution_z = flattop; length = 4000 k0^-1; zeta_center = 2800 k0^-1; macroparticles = 200000 }
+output { dir = bunch_vacuum_out; every = 1; map_stride = 10; particles = false }

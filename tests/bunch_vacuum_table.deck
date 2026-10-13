@@ -1,0 +1,16 @@
+# Physics test: as bunch_vacuum.deck, but on a free-hand radial grid whose
+# step changes slope (kinks) inside and just outside the bunch.
+# Expected: E_r from Gauss's law, E_z = 0 (check_physics bunchfield).
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = table
+  r_points  = 0,   15,  60, 300 k0^-1
+  dr_points = 0.5, 0.5, 4,  10  k0^-1
+  r_max = 600 k0^-1
+  dzeta = 5 k0^-1;  nzeta = 1000
+  dz = 10 k0^-1;  z_end = 10 k0^-1
+  r_absorber = 560 k0^-1
+}
+bunch { name = driver; charge = 5791.1 pC; gamma = 1e5; sigma_x = 20 k0^-1
+        distribution_z = flattop; length = 4000 k0^-1; zeta_center = 2800 k0^-1; macroparticles = 200000 }
+output { dir = bunch_vacuum_table_out; every = 1; map_stride = 10; particles = false }

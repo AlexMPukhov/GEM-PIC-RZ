@@ -1,0 +1,63 @@
+# Regression deck: laser, plasma with an up-ramp, mobile hydrogen ions and a
+# witness bunch (code units k0^-1). The reference output in tests/reference/
+# was produced by this code after the corrections of the bunch self-field and
+# of the deposition shape (see README); before these corrections the same
+# deck without the ion block reproduced the original prototype bit by bit.
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = stretched
+  dr_min            = 0.3 k0^-1
+  dr_max            = 3.0 k0^-1
+  transition_cell   = 40
+  transition_cells  = 8
+  nr                = 100
+  dzeta             = 0.25 k0^-1
+  nzeta             = 1200
+  dz                = 40 k0^-1
+  z_end             = 200 k0^-1
+  r_absorber        = 160 k0^-1
+  absorber_strength = 0.2
+}
+laser {
+  a0          = 2
+  waist       = 63 k0^-1
+  length_1e   = 25 k0^-1
+  zeta_center = 240 k0^-1
+}
+plasma {
+  density       = 0.002 n_c
+  z_points      = 0, 400 k0^-1
+  z_values      = 0, 1
+  r_max         = 150 k0^-1
+  ppc_r         = 2
+  ppc_phi       = 8
+  ppc_r_axis    = 4
+  ppc_phi_axis  = 16
+  r_axis_refine = 10 k0^-1
+}
+bunch {
+  name           = witness
+  charge         = 5 pC
+  gamma          = 1000
+  energy_spread  = 0.001
+  sigma_x        = 3 k0^-1
+  emittance_x    = 2.36 k0^-1
+  sigma_z        = 4 k0^-1
+  zeta_center    = 130 k0^-1
+  macroparticles = 20000
+}
+output {
+  dir        = regression_out
+  every      = 5
+  map_stride = 4
+}
+ion {
+  element = H
+}
+numerics {
+  iterations  = 2
+  seed        = 12345
+  beam_dz_max = 10 k0^-1
+  vz_min      = 0.5
+}

@@ -1,0 +1,14 @@
+# Numerical Cherenkov test (tests/cherenkov.sh): relativistic bunch in vacuum.
+# The zeta-Nyquist part of the field energy must stay small with the beam
+# filter (numerics.beam_filter = 1) and grows without it.
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = uniform;  dr = 0.5 k0^-1;  nr = 80
+  dzeta = 0.5 k0^-1;  nzeta = 160
+  dz = 20 k0^-1;  z_end = 6000 k0^-1          # 300 steps
+  r_absorber = 200 k0^-1                      # no absorber (it drags on the vacuum self-field)
+}
+bunch { name = b; charge = 1 pC; gamma = 1000; sigma_x = 2 k0^-1; emittance_x = 0 um
+        sigma_z = 4 k0^-1; zeta_center = 60 k0^-1; macroparticles = 20000 }
+output { dir = vac; every = 0; format = hdf5; particles = false }
+numerics { backend = serial }

@@ -1,0 +1,146 @@
+// ============================================================================
+//  simulation.hpp -- GEM-PIC-RZ time stepping (Galilean transformation GT2:
+//  s = z slow, zeta = z - t fast, c = 1)
+//
+//  Per step s^0 -> s^1 = s^0 + dz:
+//   1. push the beam list (bunches + trapped electrons) along s, deposit j^1
+//   2. load fresh plasma rings (electrons + mobile ions) at the front of the window
+//   3. march zeta from the front to the rear; per slice predictor-corrector:
+//      push streaming particles, deposit, solve the slice for all modes
+//   4. streaming particles that reach z = s^1 join the beam list if v_z >= vz_beam;
+//      slower ones continue streaming in the next step, inserted at their zeta
+//      (beam particles with v_z < vz_min return to streaming the same way)
+//   5. radial absorber, swap levels
+// ============================================================================
+#pragma once
+#include <random>
+#include <string>
+#include <vector>
+
+#include <cstdint>
+#include <map>
+#include <memory>
+
+#include "config.hpp"
+#include "engine.hpp"
+#include "external.hpp"
+#include "fields.hpp"
+#include "grid.hpp"
+#include "ionization.hpp"
+#include "particles.hpp"
+#include "solver.hpp"
+#include "zgrid.hpp"
+
+namespace gem {
+
+// moments of the particles of one species (combinable over MPI ranks)
+struct Moments {
+  long long n = 0;
+  double Q = 0, g1 = 0, g2 = 0, x1 = 0, x2 = 0, u1 = 0, u2 = 0, xu = 0, y1 = 0, y2 = 0, v1 = 0, v2 = 0, yv = 0,
+         z1 = 0, z2 = 0;
+  void add(const Particle& p);
+  void add(const Moments& o);
+};
+
+// everything the per-step console line and tables need, as partial sums /
+// extrema that can be combined over ranks
+struct DiagSums {
+  double maxEx = 0, minEz = 0, maxEz = 0, nimax = 0;  // on-axis fields, mobile-ion density
+  std::map<int, Moments> moments;                      // per species id of the beam list
+  std::vector<double> freed;                           // per ion block: charge freed in the step
+  void add(const DiagSums& o);
+};
+
+class PipelineRun;
+
+class Simulation {
+ public:
+  // restartFile empty: initial state from the deck; else: state of a checkpoint
+  explicit Simulation(const Config& cfg, const std::string& restartFile = "");
+  ~Simulation();
+
+  void step();
+  void diagnostics(bool writeFiles);
+  bool finite() const;  // no NaN/Inf in the fields
+
+  double z() const { return s0; }
+  int stepNumber() const { return step_no; }
+  long restreamedParticles() const { return n_restreamed; }
+  const RadialGrid& grid() const { return g; }
+  std::string backendInfo() const;  // backend and device
+  void setDeckText(const std::string& t) { deckText = t; }  // stored in the HDF5 files
+  // checkpoint of the complete state: <output.dir>/checkpoint_NNNNN.h5 (returns the path)
+  std::string writeCheckpoint();
+  // newest checkpoint_NNNNN.h5 in dir ("" if none)
+  static std::string latestCheckpoint(const std::string& dir);
+
+ private:
+  friend class Engine;  // parallel backends (engine.cpp) share the state
+  friend class PipelineRun;  // MPI pipeline along zeta (pipeline.cpp)
+  Config cfg;
+  RadialGrid g;
+  Fields fold, fnew;            // levels s^0 and s^1
+  Currents c0b, c0s, c1b, c1s;  // beam / streaming currents at s^0 and s^1
+  FieldSolver solver;
+  std::vector<Particle> stream, backup, beam;
+  std::vector<cd> predR, predP, predRprev, predPprev, Jr, Jp, jr1, jp1, jz1;
+  std::mt19937_64 rng;
+  uint64_t ionKey = 0;                       // key of the ionization random numbers of the current pass
+  std::vector<AdkRates> adk;                 // per ion block (empty levels without ionization)
+  std::vector<Particle> born;                // electrons freed in the current slice
+  std::vector<std::vector<double>> exitStates;  // per ion block: atoms per charge state leaving the window
+  std::vector<double> freedCharge;           // per ion block: charge freed in the last step [code]
+  double sliceFieldBound = 0.0;              // upper bound of |E| on the two slices of the current push
+  double s0 = 0.0;
+  int step_no = 0;
+  long n_restreamed = 0, n_trapped_total = 0;
+  std::vector<Particle> pending;      // particles joining the current march at their zeta (they wait
+                                      // in the streaming list with status STATUS_WAITING)
+  std::vector<Particle> pendingNext;  // ... joining the march of the next step
+  double n_ref = 1.0;  // density for the n_e/n0 output
+  std::unique_ptr<Engine> engine;  // parallel backend (null: serial code below)
+  std::string deckText;            // deck after overrides (provenance of the output)
+
+  // shortcuts to often used parameters
+  int M = 0, Nz = 0;
+  double Delta = 0;  // step of the current s^0 -> s^1 (set at the start of every step)
+  ZetaGrid zg;       // longitudinal grid of the window
+  ZetaView zv;       // view of zg
+  std::vector<UndulatorV> undV;  // external fields (undulators)
+  ExternalV ext;                 // view of undV
+
+  void beginStep();  // Delta of this step, matrices of the field solver
+
+  void initLasers();
+  void initBunches();
+  void initBunchFields();
+
+  EB gather(const Fields& F, int n1, double w1, int n2, double w2, double x, double y) const;
+  void accumulate(const Fields& F, int m, int n, double w, double r, const RadialGrid::W& wc,
+                  const RadialGrid::W& wf, cd& er, cd& ep, cd& ez, cd& br, cd& bp, cd& bz) const;
+  void deposit(Currents& C, int k, double wk, double x, double y, double vx, double vy, double vz, double W,
+               bool ion = false);
+  void depositBeamParticle(Currents& C, const Particle& p);
+  // (1,2,1)/4 filter along zeta of the beam current (numerics.beam_filter passes):
+  // removes the zeta-Nyquist component, which the scheme radiates resonantly
+  // (it has omega = 0 there for every k_perp: numerical Cherenkov)
+  void filterBeamCurrent(Currents& C) const;
+
+  void pushBeam();
+  void loadFresh();
+  void pushStreamParticle(Particle& p, int n, double s1);
+  void ionize(Particle& p, double E1, double E0, double dt);
+  double fieldBound(const Fields& F, int n) const;
+  void absorber();
+
+  DiagSums diagSums(int n0, int n1) const;          // slices / half-cells [n0, n1) and the beam list
+  void report(const DiagSums& D, bool files);       // console, tables, files
+  void writeFiles();
+  void writeHdf5();  // output_hdf5.cpp
+  void readCheckpoint(const std::string& path);
+  void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt
+  void writeBunchTable(const DiagSums& D);
+  void writeIonizationTable(const DiagSums& D);
+};
+
+}  // namespace gem

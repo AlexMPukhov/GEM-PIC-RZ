@@ -1,0 +1,64 @@
+# ============================================================================
+#  Coherent spontaneous undulator emission of a short electron bunch
+#
+#  planar undulator, 50 periods of 14.22 mm, K = 0.5; bunch 1 fC, 50.6 MeV
+#  (gamma = 100), sigma_z = 0.1 um, sigma_r = 100 um.  Resonant wavelength
+#      lambda_r = lambda_u (1 + K^2/2) / (2 gamma^2) = 0.8 um  (= lambda0)
+#  The radiation stays at fixed zeta, the bunch slips back by one lambda_r per
+#  period: at the end the 40 um long, 50-cycle pulse lies ahead of the bunch.
+#  Expected (far-field radiation integral, README "Undulators"): radiated
+#  energy 6.0e-8 code units = 1.77e-14 J; the code gives 5.78e-8 (5.86e-8
+#  with dzeta = 12.5 nm).  About 2 minutes on 2 cores.
+#
+#  run:      gempic_rz examples/undulator_emission.deck
+#  analyse:  h5_extract undulator_emission/data_01041.h5 energy 5.5 48    (W(m>=1): radiation)
+#            h5_extract undulator_emission/data_01041.h5 spectrum 5.5 48 0.9 1.05 301
+#            h5_extract undulator_emission/data_01041.h5 lineout 0 0     (E_x on axis)
+# ============================================================================
+
+grid {
+  lambda0       = 0.8 um          # = resonant wavelength
+  m_max         = 1               # linear polarization: mode 1 (as a laser)
+  radial_grid   = table           # 20 um up to 0.4 mm, growing to 100 um at 1.5 mm
+  r_points      = 0, 0.4, 1.5 mm
+  dr_points     = 20, 20, 100 um
+  r_max         = 5 mm
+  dzeta         = 25 nm           # 32 points per resonant wavelength
+  window_length = 50 um           # slippage 50 lambda_r = 40 um + bunch + margins
+  dz            = 0.7111 mm       # 20 steps per undulator period
+  z_end         = 0.74 m
+  r_absorber    = 4.2 mm
+}
+
+undulator {
+  type             = planar
+  period           = 14.2222 mm
+  K                = 0.5
+  periods          = 50
+  ramp_periods     = 1            # linear ramps of the field at both ends (whole periods)
+  natural_focusing = false        # here: keep the bunch size constant for the comparison
+}
+
+bunch {
+  name           = b
+  charge         = 1 fC           # coherent emission ~ charge^2; the space charge stays negligible
+  gamma          = 100
+  sigma_x        = 100 um
+  emittance_x    = 0 um
+  sigma_z        = 0.1 um         # longitudinal form factor exp(-k^2 sigma_z^2) = 0.54
+  zeta_center    = 45 um          # near the front: the bunch slips backwards
+  macroparticles = 100000
+}
+
+output {
+  dir       = undulator_emission
+  every     = 0                   # start and end only
+  format    = hdf5
+  particles = false
+}
+
+numerics {
+  iterations  = 1                 # no plasma: the predictor is exact
+  beam_dz_max = 0.4444 mm         # sub-steps of the beam push: 32 per period
+  beam_filter = 0                 # (with 1: -2 % in the radiated energy at this resolution)
+}

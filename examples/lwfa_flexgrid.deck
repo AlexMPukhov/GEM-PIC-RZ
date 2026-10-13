@@ -1,0 +1,93 @@
+# ============================================================================
+#  examples/lwfa_witness.deck on free-hand grids along zeta and z:
+#  897 instead of 1200 slices and 73 instead of 99 steps, with smaller steps
+#  in the density up-ramp (see README "Free-hand grids": the free-hand zeta
+#  grid reproduces the uniform run, the small steps in the ramp improve the
+#  energy gain).
+#
+#  run:   gempic_rz examples/lwfa_flexgrid.deck
+# ============================================================================
+
+grid {
+  lambda0          = 0.8 um       # reference wavelength: defines the code units
+  m_max            = 1            # modes 0 (wake) and 1 (linearly polarized laser)
+
+  # free-hand radial grid: step dr given at reference radii, linear in between.
+  # 38 nm up to 1.5 um (the witness pinches to ~0.15 um), growing to 0.38 um
+  # at 4 um (14 % per cell), constant outside
+  radial_grid      = table
+  r_points         = 0,    1.5,  4,    24   um
+  dr_points        = 38.2, 38.2, 382,  382  nm
+  r_max            = 24.4 um
+
+  # co-moving window on a free-hand grid: 25 points per laser wavelength at the
+  # laser (zeta > 25 um) and at the witness (12 ... 20 um), 2x coarser in the
+  # bubble between them, 4x coarser behind the bubble (897 instead of 1200
+  # slices). The step is linear in zeta between the reference points.
+  zeta_grid        = table
+  zeta_points      = 0,   8,   12,    20,    22.5, 25,    38.2 um
+  dzeta_points     = 127, 127, 31.83, 31.83, 63.7, 31.83, 31.83 nm
+  window_length    = 38.2 um
+  # steps along z: 2.5 um in the density up-ramp (the laser enters the
+  # plasma), growing to 10.2 um at z = 150 um
+  z_grid           = table
+  z_points         = 0,   51,  150 um
+  dz_points        = 2.5, 2.5, 10.2 um
+  z_end            = 0.5 mm
+  r_absorber       = 20.4 um
+}
+
+laser {
+  a0           = 2
+  waist        = 8.02 um          # 1/e field radius (= 1/e^2 intensity radius)
+  tau_fwhm     = 12.5 fs          # intensity FWHM
+  zeta_center  = 30.56 um         # distance from the rear end of the window
+                                 # (as in the earlier runs, the front tail beyond 3 length_1e
+                                 #  is cut by the window: a warning is printed)
+  z_focus      = 0 mm             # focal plane (z = 0: start of the simulation)
+  polarization = linear
+}
+
+plasma {
+  density        = 3.48e18 cm^-3  # 0.002 n_c
+  z_points       = 0, 51 um       # linear up-ramp over 51 um, then constant
+  z_values       = 0, 1
+  radial_profile = uniform
+  r_max          = 19.1 um        # plasma column radius
+  ppc_r          = 2              # macroparticles per radial cell ...
+  ppc_phi        = 8              # ... and per ring
+  ppc_r_axis     = 4              # more particles in the fine cells near
+  ppc_phi_axis   = 16             # the axis (avoids a noise stripe on axis)
+  r_axis_refine  = 1.27 um
+}
+
+bunch {
+  name           = witness
+  species        = electron
+  charge         = 5 pC
+  energy         = 510.5 MeV      # kinetic energy (gamma = 1000)
+  energy_spread  = 0.1 %          # rms, relative
+  sigma_x        = 0.382 um       # rms size at the waist (sigma_y = sigma_x)
+  emittance_x    = 0.30 um        # normalized rms emittance (mm mrad)
+  sigma_z        = 0.509 um
+  zeta_center    = 16.55 um       # in the first bubble
+  macroparticles = 20000
+}
+
+# Mobile ions: uncomment to include the motion of the plasma ions (hydrogen).
+# Ion motion matters for high laser amplitudes and dense, low-emittance
+# witness bunches; it roughly doubles the number of plasma macroparticles.
+# ion {
+#   element = H
+# }
+
+output {
+  dir        = lwfa_flexgrid
+  every      = 10                 # field and particle files every 10 steps
+  map_stride = 4
+}
+
+numerics {
+  iterations = 2                  # predictor + 1 corrector per slice
+  seed       = 12345
+}

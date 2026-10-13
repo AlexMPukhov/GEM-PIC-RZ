@@ -1,0 +1,16 @@
+# Physics test: sequential field ionization N5+ -> N6+ -> N7+ (K shell,
+# 552.07 and 667.05 eV) of mobile nitrogen ions by a laser pulse (a0 = 2.2).
+# tests/check_physics compares the charge-state fractions of the ions
+# leaving the window with the rate equations integrated in the same field.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 1 k0^-1;  nr = 80
+  dzeta = 0.25 k0^-1;  nzeta = 720
+  dz = 1 k0^-1;  z_end = 1 k0^-1
+  r_absorber = 75 k0^-1
+}
+laser  { a0 = 2.2;  waist = 30 k0^-1;  length_1e = 25 k0^-1;  zeta_center = 90 k0^-1 }
+plasma { density = 1e-8 n_c;  r_max = 50 k0^-1
+         ppc_r = 12;  ppc_phi = 12;  r_axis_refine = 0 k0^-1 }
+ion    { element = N;  charge_state = 5;  ionization = adk }
+output { dir = ionization_N_out;  every = 1;  maps = false;  particles = false }

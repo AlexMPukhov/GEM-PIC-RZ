@@ -1,0 +1,70 @@
+# ============================================================================
+#  Ionization injection in a He / N mixture
+#
+#  The helium (and the outer shells of the nitrogen dopant, up to N5+) are
+#  ionized by the leading edge of the pulse long before its peak; they form the
+#  free-electron background of 3.5e18 cm^-3. The K-shell electrons of nitrogen
+#  (N5+ -> N6+ -> N7+, 552 and 667 eV, NIST) are released only near the peak
+#  of the a0 = 2 pulse, inside the bubble, where they can be trapped. At this
+#  amplitude the background electrons are hardly self-injected, so the trapped
+#  charge comes from ionization (try a0 = 2.5: strong self-injection as well).
+#  Trapped electrons from ionization appear as 'inj_N5+' in bunches.txt; the
+#  charge-state distribution of the nitrogen leaving the window is written to
+#  ionization.txt.
+#
+#  Without a channel the pulse diffracts (a0: 2.0 -> 1.5 over 0.3 mm), the
+#  injected charge peaks at ~0.5 pC around z = 0.15 mm and then slips out of the
+#  weakening bubble. In a matched channel (radial_profile = parabolic,
+#  channel_depth = 0.5, r_channel = 8.02 um) injection continues (~8 pC after
+#  0.4 mm), but self-focusing then raises a0 and background electrons are
+#  self-injected as well.
+#
+#  run:   gempic_rz examples/ionization_injection.deck
+#  plot:  gnuplot -e "step=40; dir='ion_injection'" tools/plot_maps.gp
+# ============================================================================
+
+grid {
+  lambda0          = 0.8 um
+  m_max            = 1
+  radial_grid      = table           # dr at the reference radii, linear in between
+  r_points         = 0,    1.5,  4,    24   um
+  dr_points        = 38.2, 38.2, 382,  382  nm
+  r_max            = 24.4 um
+  dzeta            = 31.83 nm        # 25 points per wavelength
+  nzeta            = 1200            # 38.2 um
+  dz               = 5.09 um
+  z_end            = 0.3 mm
+  r_absorber       = 20.4 um
+}
+
+laser {
+  a0           = 2.0
+  waist        = 8.02 um
+  tau_fwhm     = 12.5 fs
+  zeta_center  = 30.56 um
+  polarization = linear
+}
+
+plasma {
+  density        = 3.5e18 cm^-3      # free electrons from He (2+) and N (up to 5+)
+  z_points       = 0, 51 um
+  z_values       = 0, 1
+  r_max          = 19.1 um
+}
+
+# The helium ions (and the N ions up to 5+) that neutralize most of the free
+# electrons are treated as an immobile background. The nitrogen dopant is
+# represented by particles: it starts as N5+ and is field-ionized (ADK).
+ion {
+  element          = N
+  charge_state     = 5
+  ionization       = adk
+  max_charge_state = 7
+  density          = 3.5e16 cm^-3    # nitrogen atoms (1% of the free electrons)
+  mobile           = false           # the heavy dopant hardly moves; saves time
+}
+
+output {
+  dir   = ion_injection
+  every = 20
+}
