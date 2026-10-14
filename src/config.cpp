@@ -783,13 +783,31 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   O.axis = r.flag("axis", O.axis);
   O.maps = r.flag("maps", O.maps);
   O.particles = r.flag("particles", O.particles);
-  const std::string fmt = r.word("format", "text", {"text", "hdf5", "both"});
-  O.text = (fmt != "hdf5");
-  O.hdf5 = (fmt != "text");
+  // format: one or more of text, hdf5, openpmd (both = text, hdf5)
+  if (r.has("format")) {
+    O.text = O.hdf5 = O.openpmd = false;
+    const Entry* e = b.find("format");
+    for (std::string w : e->tokens) {
+      for (auto& ch : w) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+      if (w == "text") O.text = true;
+      else if (w == "hdf5") O.hdf5 = true;
+      else if (w == "openpmd") O.openpmd = true;
+      else if (w == "both") O.text = O.hdf5 = true;
+      else r.fail(e, "'" + w + "' is not allowed (choose one or more of: text, hdf5, openpmd, both)");
+    }
+    e->used = true;
+  }
 #if !defined(GEMPIC_HAVE_HDF5)
-  if (O.hdf5)
+  if (O.hdf5 || O.openpmd)
     r.failKey("format", "this build has no HDF5 support (install the HDF5 library, e.g. libhdf5-dev, and rebuild)");
 #endif
+  // openPMD: fields interpolated to a uniform r-z grid (default: the smallest steps)
+  O.openpmd_dr = r.num("openpmd_dr", Dim::Length, 0.0);
+  O.openpmd_dzeta = r.num("openpmd_dzeta", Dim::Length, 0.0);
+  if (O.openpmd_dr < 0) r.failKey("openpmd_dr", "must be positive");
+  if (O.openpmd_dzeta < 0) r.failKey("openpmd_dzeta", "must be positive");
+  if (!O.openpmd && (r.has("openpmd_dr") || r.has("openpmd_dzeta")))
+    r.failKey(r.has("openpmd_dr") ? "openpmd_dr" : "openpmd_dzeta", "needs format = openpmd");
   O.hdf5_single = r.word("hdf5_precision", "double", {"double", "single"}) == "single";
   O.hdf5_compression = int(r.integer("hdf5_compression", O.hdf5_compression));
   if (O.hdf5_compression < 0 || O.hdf5_compression > 9) r.failKey("hdf5_compression", "must be 0 ... 9");
@@ -1208,9 +1226,25 @@ std::string Config::summary() const {
     }
     line("constants (code units): %s", s.c_str());
   }
-  if (output.hdf5)
-    line("output format: %s (HDF5 %s precision, compression %d)", output.text ? "text + hdf5" : "hdf5",
-         output.hdf5_single ? "single" : "double", output.hdf5_compression);
+  if (output.hdf5 || output.openpmd) {
+    std::string f = output.text ? "text" : "";
+    if (output.hdf5) f += f.empty() ? "hdf5" : " + hdf5";
+    if (output.openpmd) f += f.empty() ? "openpmd" : " + openpmd";
+    line("output format: %s (HDF5 %s precision, compression %d)", f.c_str(), output.hdf5_single ? "single" : "double",
+         output.hdf5_compression);
+  }
+  if (output.openpmd) {
+    const double dr = output.openpmd_dr > 0 ? output.openpmd_dr : grid.dr_min;
+    double dzt = output.openpmd_dzeta;
+    if (!(dzt > 0)) {
+      dzt = 1e300;
+      for (int n = 0; n < grid.Nz; ++n) dzt = std::min(dzt, grid.zetaNode(n + 1) - grid.zetaNode(n));
+    }
+    const long nr = long(std::floor(grid.r_max / dr + 1e-9)) + 1, nz = long(std::floor(grid.window() / dzt + 1e-9)) + 1;
+    line("openPMD: %s/openpmd/openpmd_%%T.h5, fields on a uniform grid dr = %.4g um, dzeta = %.4g um (%ld x %ld "
+         "points, %d modes)",
+         output.dir.c_str(), dr * um, dzt * um, nr, nz, 2 * grid.M + 1);
+  }
   if (output.checkpoint_every > 0 || output.walltime_hours > 0)
     line("checkpoints: every %d steps (keep %d)%s", output.checkpoint_every, output.checkpoint_keep,
          output.walltime_hours > 0 ? (", stop at " + std::to_string(output.walltime_hours) + " h wall time").c_str()

@@ -331,7 +331,8 @@ The (1,2,1) beam filter (`numerics.beam_filter`) damps the current at λ_r by co
 | `every` | integer | 25 | field/particle files every N steps (0: only at the start and end) |
 | `map_stride` | integer | 4 | every n-th slice in the 2D maps |
 | `axis`, `maps`, `particles` | true/false | true | which files to write (`particles` also controls the beam list in the HDF5 files) |
-| `format` | `text` \| `hdf5` \| `both` | `text` | `text`: `axis_`, `map_`, `beam_NNNNN.txt`; `hdf5`: one file `data_NNNNN.h5` per output step with all modes (see below); `both`: both |
+| `format` | one or more of `text`, `hdf5`, `openpmd` (`both` = `text, hdf5`) | `text` | `text`: `axis_`, `map_`, `beam_NNNNN.txt`; `hdf5`: one file `data_NNNNN.h5` per output step with all modes on the native grid (see below); `openpmd`: openPMD 1.1.0 files `openpmd/openpmd_<step>.h5` (see below). E.g. `format = text, openpmd` |
+| `openpmd_dr`, `openpmd_dzeta` | length | smallest dr / dzeta of the grid | spacing of the uniform r–ζ grid of the openPMD fields |
 | `hdf5_precision` | `double` \| `single` | `double` | floating-point precision of the HDF5 datasets (single: half the size) |
 | `hdf5_compression` | integer 0 … 9 | 0 | gzip level of the HDF5 datasets (0: none; the files of the examples shrink by about 3.5× with `single` + 6) |
 | `checkpoint_every` | integer | 0 | write a checkpoint `checkpoint_NNNNN.h5` every N steps and at the end of the run (0: none; needs HDF5) |
@@ -349,6 +350,25 @@ Every run writes:
 | `axis_NNNNN.txt` | on-axis E_x, E_z, n_e/n0, Z n_i/n0 (mobile ions) versus ζ [µm] |
 | `map_NNNNN.txt` | E_x, E_z, n_e/n0, Z n_i/n0 in the x–ζ plane (gnuplot `pm3d` format) |
 | `beam_NNNNN.txt` | x, y, ζ [µm], u_x, u_y, u_z, q [pC], species (bunch index; −1 for self-trapped plasma electrons) |
+
+### openPMD files
+
+`format = openpmd` writes files that follow the openPMD standard 1.1.0 (file-based, `<dir>/openpmd/openpmd_<step>.h5`),
+for openPMD-viewer, openPMD-api, VisualPIC, ParaView and other tools:
+
+```python
+from openpmd_viewer import OpenPMDTimeSeries
+ts = OpenPMDTimeSeries('diag/openpmd')
+Ex, info = ts.get_field('E', 'x', iteration=100, theta=0)        # plane theta = 0, all modes
+z, uz, w = ts.get_particle(['z', 'uz', 'w'], species='witness', iteration=100)
+```
+
+- **Meshes:** `E`, `B` (components `r`, `t`, `z`) and `n_e` (density of all electrons; `Zn_i`: charge density of the mobile ions / e, with ion blocks), in SI via `unitSI`. Geometry `thetaMode` with dataset index 0 for m = 0 and 2m−1, 2m for the cos(mθ), sin(mθ) parts (`imag=+`).
+- **Interpolation:** the standard needs a uniform grid. The fields are interpolated from the staggered (and possibly non-uniform) r–ζ grid to the nodes r_j = j·`openpmd_dr`, ζ_k = k·`openpmd_dzeta`, linearly as in the particle gather, with the regular behaviour on the axis. The defaults (the smallest steps) keep the resolution but make large files on stretched grids; choose coarser values for overviews. The native `hdf5` format stores the exact data.
+- **Coordinates:** the lab position is z = ζ + s, and the time t = s/c (`gridGlobalOffset` and particle `positionOffset/z` hold s). Each step is an iteration.
+- **Particles:** one species per bunch (its `name`), `trapped` (self-injected plasma electrons) and `inj_<ion>` (electrons from field ionization), if present: `position`, `positionOffset`, `momentum` (per real particle), `weighting` (real particles per macroparticle), constant `charge` and `mass`, and a `particlePatches` bounding box.
+- **Precision and compression:** `hdf5_precision` and `hdf5_compression` apply to these files too.
+- **Check:** the files pass the openPMD validator (`openPMD_check_h5`) without errors or warnings; the `openpmd` test also compares the fields rebuilt from the thetaMode data with the code's own reconstruction.
 
 ### HDF5 files
 

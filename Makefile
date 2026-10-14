@@ -80,6 +80,7 @@ ifeq ($(HDF5),1)
 	sh tests/undulator.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract
 	sh tests/flexgrid.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
 	sh tests/functions.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
+	sh tests/openpmd.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract || [ $$? -eq 77 ]
 ifeq ($(MPI),1)
 	sh tests/mpi.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns mpirun
 endif

@@ -200,6 +200,10 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME functions_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/functions.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
   endforeach()
+  # openPMD output: validator (if installed), fields and particles against the native files
+  add_test(NAME openpmd
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
+  set_tests_properties(openpmd PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   add_test(NAME cherenkov

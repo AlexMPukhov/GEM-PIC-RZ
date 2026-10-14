@@ -809,6 +809,19 @@ int main() {
     CHECK_NEAR(fz.By, 0.95 * U.ku(), 1e-9);
   }
 
+  // ------------------------------------------------------------ output formats
+#if defined(GEMPIC_HAVE_HDF5)
+  {
+    Config o = cfgOf(std::string(BASE) + "output { format = text, openpmd; openpmd_dr = 1 um }");
+    CHECK(o.output.text && o.output.openpmd && !o.output.hdf5);
+    CHECK_NEAR(o.output.openpmd_dr, 2.0 * PI / 0.8, 1e-14);
+    Config o2 = cfgOf(std::string(BASE) + "output { format = both }");
+    CHECK(o2.output.text && o2.output.hdf5 && !o2.output.openpmd);
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "output { format = vtk }"), "'vtk' is not allowed");
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "output { openpmd_dr = 1 um }"), "needs format = openpmd");
+  }
+#endif
+
   // ------------------------------------------------------------ example decks must be valid
 #ifdef GEM_SOURCE_DIR
   for (const auto& f : std::filesystem::directory_iterator(std::string(GEM_SOURCE_DIR) + "/examples")) {

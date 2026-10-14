@@ -108,7 +108,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/comm.*` | thin MPI layer (packed messages; a single-rank stub without MPI) |
 | `src/portable.hpp`, `src/hd.hpp` | portability layer: memory, kernel launchers, teams, atomics, counter-based RNG, complex numbers |
 | `src/diagnostics.cpp` | console output, `bunches.txt`, axis/map/particle files |
-| `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), checkpoints (`checkpoint_NNNNN.h5`) and restart |
+| `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), openPMD output, checkpoints (`checkpoint_NNNNN.h5`) and restart |
 | `src/main.cpp` | command-line driver |
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
@@ -226,6 +226,15 @@ layout is listed in `docs/input_deck.md`.
 - **Reading, C++:** `tools/h5_extract.cpp` is an example reader. It prints `info`, `axis`, `map`, `beam`, a `lineout` at any (r, φ), the field `energy` of the window (optionally of a ζ range, per mode group) together with its ζ-Nyquist part (a monitor of numerical Cherenkov radiation), or the `spectrum` dW/dk of the radiation (modes m ≥ 1). It reconstructs the fields from the modes exactly as the particle gather does, including the axis.
 - **Reading, Python:** h5py reads the complex fields directly, e.g. `h5py.File('data_00050.h5')['fields/Ez'][1]` for mode 1.
 - **Test:** `hdf5_output` checks that the files, read back with `h5_extract`, reproduce the text output value by value (1200 axis values, 60 000 map values, 20 000 beam particles).
+
+## openPMD output
+
+`output { format = openpmd }` (combinable: `format = text, openpmd`) writes files that follow the openPMD standard
+1.1.0, `<dir>/openpmd/openpmd_<step>.h5`, readable with openPMD-viewer, openPMD-api, VisualPIC or ParaView. The fields
+are written in `thetaMode` on a uniform r–ζ grid (`openpmd_dr`, `openpmd_dzeta`; interpolated as in the particle
+gather), the lab position is z = ζ + s and the time s/c, and each bunch is a particle species with SI units. The
+files pass the openPMD validator without errors or warnings; details in
+[`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
 
 ## Checkpoints and restart
 

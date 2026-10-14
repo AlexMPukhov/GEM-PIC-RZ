@@ -194,6 +194,10 @@ struct OutputConfig {
   // text: axis/map/beam ASCII files; hdf5: one file data_NNNNN.h5 per output
   // step with all modes, densities and the beam list; both: both
   bool text = true, hdf5 = false;
+  // openpmd: openPMD 1.1.0 files <dir>/openpmd/openpmd_%T.h5 (T = step): fields in
+  // thetaMode, interpolated to a uniform r-z grid; the beam list per species
+  bool openpmd = false;
+  double openpmd_dr = 0, openpmd_dzeta = 0;  // output grid (0: smallest steps of the grid)
   bool hdf5_single = false;  // store floating-point data in single precision
   int hdf5_compression = 0;  // gzip level 0..9 (0: none)
   // checkpoints for restarts (checkpoint_NNNNN.h5, complete state in double precision)

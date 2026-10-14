@@ -138,6 +138,7 @@ void Simulation::report(const DiagSums& D, bool files) {
   writeIonizationTable(D);
   if (files && cfg.output.text) writeFiles();
   if (files && cfg.output.hdf5) writeHdf5();
+  if (files && cfg.output.openpmd) writeOpenPMD();
 }
 
 // After a restart from step N the tables may hold lines of steps > N from the

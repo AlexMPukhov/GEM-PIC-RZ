@@ -137,7 +137,8 @@ class Simulation {
   DiagSums diagSums(int n0, int n1) const;          // slices / half-cells [n0, n1) and the beam list
   void report(const DiagSums& D, bool files);       // console, tables, files
   void writeFiles();
-  void writeHdf5();  // output_hdf5.cpp
+  void writeHdf5();     // output_hdf5.cpp
+  void writeOpenPMD();  // output_hdf5.cpp (openPMD 1.1.0)
   void readCheckpoint(const std::string& path);
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt
   void writeBunchTable(const DiagSums& D);
