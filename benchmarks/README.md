@@ -45,8 +45,8 @@ That beam diverges from a waist with β = 0.95 m and ε_n = 0.105 µm at 10 nm, 
 | GENESIS | 7.45 cm | 37.4 cm |
 | GENESIS + longitudinal space charge | 7.52 cm | 37.7 cm |
 | GENESIS + longitudinal space charge + beam widening | **7.92 cm** | **38.4 cm** |
-| GEM-PIC-RZ before corrections 7 and 8 (see the main README) | 9.53 cm | 39.9 cm |
-| GEM-PIC-RZ with correction 7 (undulator kick averaged over the step) | 8.72 cm | — |
+| GEM-PIC-RZ before corrections 7 and 8 (see the main README) | 9.53 cm | — |
+| GEM-PIC-RZ with correction 7 (undulator kick averaged over the step) | 8.72 cm | 39.9 cm |
 | GEM-PIC-RZ with corrections 7 and 8 (current deposited at the time of the position) | **8.33 cm** | **38.7 cm** |
 | … with Δz = λ_u/32 | 8.26 cm | |
 | … with Δζ = λ_r/32 | 8.28 cm | |
@@ -71,7 +71,7 @@ genesis4 genesis/fel.in            # and fel_sc.in, fel_sigma_sc.in; the same in
 gempic_rz gem.deck numerics.backend=openmp     # 12 min on 2 cores
 gempic_rz gem_x.deck numerics.backend=openmp   # 34 min
 python3 compare.py 10nm gem_out_nocorr gem_out gem_out_v res_dzeta_v
-python3 compare.py 0.8nm gemx_out_nocorr gemx_out
+python3 compare.py 0.8nm gemx_out_nocorr gemx_out   # gemx_out_nocorr: with correction 7 only
 ```
 GENESIS 4 was built from github.com/svenreiche/Genesis-1.3-Version4 (v1.10.10) against serial HDF5. That needed a
 small shim header defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; it was run on one MPI rank.

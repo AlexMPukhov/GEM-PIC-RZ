@@ -29,7 +29,7 @@ LABELS = {
     "gem_out_v": "GEM-PIC-RZ, with corrections 7 and 8",
     "res_dz_v": "GEM-PIC-RZ, 7 + 8, dz = lambda_u / 32",
     "res_dzeta_v": "GEM-PIC-RZ, 7 + 8, dzeta = lambda / 32",
-    "gemx_out_nocorr": "GEM-PIC-RZ, before corrections 7 and 8",
+    "gemx_out_nocorr": "GEM-PIC-RZ, with correction 7 (undulator kick)",
     "gemx_out": "GEM-PIC-RZ, with corrections 7 and 8",
 }
 
