@@ -1,0 +1,32 @@
+&setup
+  rootname = seeded_sigma
+  lattice  = fel.lat
+  beamline = LINE
+  lambda0  = 1.0e-8
+  gamma0   = 1000.0
+  delz     = 0.000625
+  npart    = 8192
+  nbins    = 4
+  shotnoise = 0
+&end
+&lattice
+&end
+&field
+  power      = 1.0e7
+  waist_size = 30.0e-6
+  waist_pos  = 0.0
+  dgrid      = 3.0e-4
+  ngrid      = 301
+&end
+&beam
+  current = 4000.0
+  gamma   = 1000.0
+  delgam  = 0.0
+  ex      = 1.05e-7
+  ey      = 1.05e-7
+  betax   = 0.95
+  betay   = 0.95
+&end
+&track
+  output_step = 16
+&end

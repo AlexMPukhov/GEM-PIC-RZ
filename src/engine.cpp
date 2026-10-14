@@ -126,6 +126,7 @@ struct Params {
   const int* cls;  // matrix class of slice n (FieldSolver::classOf)
   ExternalV ext;   // external fields (undulators)
   int vay;         // beam list: Vay pusher (else Boris)
+  double beamDzMax;  // numerics.beam_dz_max (sub-steps of the beam push)
   GridV g;
   int nIons;
   const IonV* ions;
@@ -279,8 +280,11 @@ GEM_HD inline void deposit(const Params& P, const CurrV& C, int k, int kz, doubl
 
 // (Simulation::depositBeamParticle)
 GEM_HD inline void depositBeam(const Params& P, const CurrV& C, const Particle& p) {
-  const double gm = gammaOf(p);
-  const double vx = p.ux / gm, vy = p.uy / gm, vz = p.uz / gm;
+  const int nsub = P.beamDzMax > 0.0 ? (int)ceil(P.Delta / P.beamDzMax) : 1;
+  double ux, uy, uz;
+  velocityAtPosition(P.ext, p, P.Delta / (nsub > 1 ? nsub : 1), ux, uy, uz);
+  const double gm = sqrt(1.0 + ux * ux + uy * uy + uz * uz);
+  const double vx = ux / gm, vy = uy / gm, vz = uz / gm;
   if (vz <= 0.0) return;
   double f;
   const int j = P.zv.beamCell(p.zeta, f);
@@ -367,7 +371,7 @@ GEM_HD inline void pushStream(const Params& P, const FieldsV& F, const CurrV& C,
   } else {
     f = gather(P, F, n + 1, wm, n, 1.0 - wm, xm, ym);
   }
-  if (P.ext.any()) addExternal(P.ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f);
+  if (P.ext.any()) addExternal(P.ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f, dt0 * p.uz / g0);
   double ux = p.ux, uy = p.uy, uz = p.uz;
   boris(ux, uy, uz, f, p.qm, dt0);
   double g1 = sqrt(1.0 + ux * ux + uy * uy + uz * uz);
@@ -423,7 +427,7 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
     const int na = P.zv.cell(p.zeta, w);
     if (na < 0 || na >= P.Nz) { p.status = 2; break; }
     EB f = gather(P, F, na, 1.0 - w, na + 1, w, p.x, p.y);
-    addExternal(P.ext, p.x, p.y, p.z, f);
+    addExternal(P.ext, p.x, p.y, p.z, f, dz);
     if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
     gm = gammaOf(p);
@@ -758,6 +762,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
                   E.zwhi.data()};
   P.cls = E.cls.data();
   P.vay = sim.cfg.numerics.beam_vay ? 1 : 0;
+  P.beamDzMax = sim.cfg.numerics.beam_dz_max;
   if (!sim.undV.empty()) E.und.assign(sim.undV.data(), sim.undV.size());
   if (!sim.undK.empty()) E.undK.assign(sim.undK.data(), sim.undK.size());
   if (!sim.magV.empty()) E.mag.assign(sim.magV.data(), sim.magV.size());

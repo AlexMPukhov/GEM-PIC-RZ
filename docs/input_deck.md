@@ -387,6 +387,7 @@ A static undulator field that acts on all particles (bunches, trapped and plasma
 
 **Resolution.** The summary prints the resonant wavelength λ_r = λ_u (1 + K²/2)/(2γ²) for every bunch (helical: 1 + K²). Warnings are issued when the resolution is too coarse:
 - `dz` and `numerics.beam_dz_max` should be at most λ_u/16; the transverse current oscillates with the period.
+- The particle push uses the undulator field averaged over its step along z (the field times sinc(k_u Δz/2), exact for a sinusoid). The orbit amplitude K/γ is then exact for any step; without this factor it is too large by (k_u Δz)²/24, 0.6 % at λ_u/16, which shifts the resonance by 0.6 %·K²/(1 + K²). The beam current is deposited with the momentum at the time of the position (the leapfrog push has it half a sub-step earlier, a phase lag k_u Δz/2 of the transverse current). With both, the FEL gain changes by less than 1 % in gain length when Δz or Δζ is halved from λ_u/16 and λ_r/16 (`benchmarks/genesis_seeded`).
 - `dzeta` should be at most λ_r/12, better λ_r/20 or finer.
 
 The (1,2,1) beam filter (`numerics.beam_filter`) damps the current at λ_r by cos²(k_r h/2), i.e. the radiated energy by cos⁴(k_r h/2) (−2 % at λ_r/32, −13 % at λ_r/12). In vacuum it can be switched off (`beam_filter = 0`).
@@ -430,7 +431,7 @@ all particles, like the undulators; the field solver does not see them. Several 
 | `hdf5_compression` | integer 0 … 9 | 0 | gzip level of the HDF5 datasets (0: none; the files of the examples shrink by about 3.5× with `single` + 6) |
 | `fel` | `auto` \| `true` \| `false` | `auto` | FEL table `fel.txt` every step (auto: on when there are undulator and bunch blocks) |
 | `fel_wavelength` | length | resonance of `undulator[0]` for `bunch[0]` | wavelength of the bunching factor in `fel.txt` |
-| `fel_slice` | length | 20 `fel_wavelength` | slice length for the largest bunching `b_max` in `fel.txt` |
+| `fel_slice` | length | 20 `fel_wavelength` | slice length for the largest bunching `b_max` in `fel.txt` and for the power profile `fel_power.txt` (best a whole number of `fel_wavelength`) |
 | `checkpoint_every` | integer | 0 | write a checkpoint `checkpoint_NNNNN.h5` every N steps and at the end of the run (0: none; needs HDF5) |
 | `checkpoint_keep` | integer | 2 | keep only the newest N checkpoints (0: all) |
 | `walltime_hours` | number | 0 | stop with a checkpoint (exit code 3) before this wall-clock time is exceeded (0: no limit) |
@@ -442,7 +443,8 @@ Every run writes:
 | `deck_used.txt` | the deck after command-line overrides |
 | `summary.txt` | the parameters in physical units |
 | `bunches.txt` | one line per step and bunch: charge, energy, energy spread, sizes, emittances, bunch length; also the self-trapped plasma electrons (`trapped`) and the trapped electrons freed by ionization (`inj_<ion name>`) |
-| `fel.txt` | (with `output.fel`) per step: field energy of the modes m ≥ 1 (the radiation of a centred beam) [J], the largest power through a slice, ∫S_z dA over the modes m ≥ 1 [W], and its ζ, the energy of mode 0 [J] (self-fields, wake), the bunching factor \|⟨e^{ikζ}⟩\| of every bunch at `fel_wavelength`, and its largest value over slices of `fel_slice` (slices with at least half the charge of the fullest one). Checked against the data files (energy) and the form factor of a short bunch (bunching) in `tests/undulator.sh`; MPI runs give the same table |
+| `fel.txt` | (with `output.fel`) per step: field energy of the modes m ≥ 1 (the radiation of a centred beam) [J], the largest power through a slice, ∫S_z dA over the modes m ≥ 1 [W], and its ζ, the energy of mode 0 [J] (self-fields, wake), the resonant power `P_res_max` [W] and its ζ (see below), the bunching factor \|⟨e^{ikζ}⟩\| of every bunch at `fel_wavelength`, and its largest value over slices of `fel_slice` (slices with at least half the charge of the fullest one). Checked against the data files (energy) and the form factor of a short bunch (bunching) in `tests/undulator.sh`; MPI runs give the same table |
+| `fel_power.txt` | (with `output.fel`) per step, the power of the radiation at `fel_wavelength` in every slice of length `fel_slice` [W]: the modes m ≥ 1 of R and L are demodulated at ±k over the slice, so the fields that move with the bunch (its Coulomb field, displaced by the helical or planar orbit, carries a Poynting flux of MW at kA currents) drop out. A seed in vacuum gives its power to 1e-4. This is the gain curve P(z) at fixed ζ, e.g. in the steady-state part of a long bunch |
 | `ionization.txt` | per step and ionizing species: mean charge state and charge-state fractions of the ions leaving the window, freed charge |
 | `axis_NNNNN.txt` | on-axis E_x, E_z, n_e/n0, Z n_i/n0 (mobile ions) versus ζ [µm] |
 | `map_NNNNN.txt` | E_x, E_z, n_e/n0, Z n_i/n0 in the x–ζ plane (gnuplot `pm3d` format) |

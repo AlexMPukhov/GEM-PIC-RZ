@@ -1,0 +1,65 @@
+# deck gem.deck after command-line overrides
+
+grid {
+  lambda0       = 10 nm
+  m_max         = 1
+  radial_grid   = table
+  r_points      = 0 40 400 2300 um
+  dr_points     = 1 1 20 50 um
+  r_max         = 2.3 mm
+  dzeta         = 0.3125nm
+  window_length = 5900 nm
+  dz            = 0.625 mm
+  z_end         = 0.6 m
+  r_absorber    = 3 mm
+}
+
+undulator {
+  type         = helical
+  period       = 1 cm
+  k            = 1
+  periods      = 60
+  ramp_periods = 1
+}
+
+bunch {
+  name             = b
+  charge           = 26.69 pC
+  gamma            = 1000
+  sigma_x          = 10 um
+  emittance_x      = 0 um
+  distribution_z   = function
+  profile_z        = "zeta < 2.3 um ? sin(pi / 2 * (zeta - 2.2 um) / (0.1 um))^2 : zeta > 4.3 um ? sin(pi / 2 * (4.4 um - zeta) / (0.1 um))^2 : 1"
+  zeta_min         = 2.2 um
+  zeta_max         = 4.4 um
+  macroparticles   = 440000
+  shot_noise       = fawley
+  noise_wavelength = 10 nm
+}
+
+laser {
+  a0                = 5.0834e-6
+  waist             = 30 um
+  envelope_function = "zeta < 1.5 um ? 0 : zeta < 1.6 um ? sin(pi / 2 * (zeta - 1.5 um) / (0.1 um))^2 : zeta < 4.5 um ? 1 : zeta < 4.6 um ? sin(pi / 2 * (4.6 um - zeta) / (0.1 um))^2 : 0"
+  zeta_center       = 3.3 um
+  polarization      = circular
+  helicity          = -1
+}
+
+output {
+  dir       = res_dzeta_v
+  every     = 0
+  format    = text
+  maps      = false
+  axis      = false
+  particles = false
+  fel_slice = 0.2 um
+}
+
+numerics {
+  iterations  = 1
+  beam_dz_max = 0.625 mm
+  beam_filter = 0
+  backend     = openmp
+}
+

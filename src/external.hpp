@@ -88,7 +88,16 @@ GEM_HD inline void addMagnets(const ExternalV& X, double x, double y, double z, 
 }
 
 // add the external fields at the lab position (x, y, z) to f
-GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z, EB& f) {
+// dzStep: the step along z of the push that uses the field (0: none). The push kicks the
+// momentum with the field at one point of the step; for the undulator field, a sinusoid in z,
+// the exact kick over the step is that times sinc(k_u dz / 2). With this factor the orbit
+// amplitude K / gamma is exact for any step (otherwise too large by (k_u dz)^2 / 24: 0.6 % at
+// lambda_u / 16, which shifts the resonance by 0.6 % K^2 / (1 + K^2)).
+GEM_HD inline double sincHalf(double a) {  // sin(a/2) / (a/2)
+  const double h = 0.5 * a;
+  return fabs(h) < 1e-4 ? 1.0 - h * h / 6.0 : sin(h) / h;
+}
+GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z, EB& f, double dzStep = 0.0) {
   if (X.nm) addMagnets(X, x, y, z, f);
   for (int k = 0; k < X.n; ++k) {
     const UndulatorV& U = X.u[k];
@@ -102,6 +111,7 @@ GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z,
       const double w = t - j;
       b = g * ((1.0 - w) * X.k[U.koff + j] + w * X.k[U.koff + j + 1]);
     }
+    if (dzStep != 0.0) b *= sincHalf(U.ku * dzStep);
     if (U.helical) {
       f.Bx += b * cos(psi);
       f.By += b * sin(psi);
@@ -113,6 +123,30 @@ GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z,
       f.By += b * cos(psi);
     }
   }
+}
+
+// Velocity for the current deposit of a beam particle, at the time of its position. The beam push
+// is a leapfrog: after a sub-step dz the position is at the end of it, the momentum half a sub-step
+// earlier. In an undulator u_perp turns by k_u dz per sub-step, so the deposited current would lag by
+// k_u dz / 2 in phase: a phase error of the FEL coupling of first order in dz (it lengthened the gain
+// length by ~10 % at dz = lambda_u / 16). The half step is completed with the external fields (a
+// magnetic rotation, Boris form, exact in norm); the self-fields change u little over half a step.
+GEM_HD inline void velocityAtPosition(const ExternalV& X, const Particle& p, double dz, double& ux, double& uy,
+                                      double& uz) {
+  ux = p.ux; uy = p.uy; uz = p.uz;
+  if (!X.any() || !(dz > 0.0) || !(uz > 0.0)) return;
+  EB f{};
+  addExternal(X, p.x, p.y, p.z - 0.25 * dz, f, 0.5 * dz);
+  if (f.Bx == 0.0 && f.By == 0.0 && f.Bz == 0.0) return;
+  const double gm = sqrt(1.0 + ux * ux + uy * uy + uz * uz);
+  const double dt = 0.5 * dz * gm / uz;
+  const double k = p.qm * dt / (2.0 * gm);
+  const double tx = k * f.Bx, ty = k * f.By, tz = k * f.Bz;
+  const double t2 = tx * tx + ty * ty + tz * tz, sf = 2.0 / (1.0 + t2);
+  const double px = ux + (uy * tz - uz * ty), py = uy + (uz * tx - ux * tz), pz = uz + (ux * ty - uy * tx);
+  ux += sf * (py * tz - pz * ty);
+  uy += sf * (pz * tx - px * tz);
+  uz += sf * (px * ty - py * tx);
 }
 
 }  // namespace gem

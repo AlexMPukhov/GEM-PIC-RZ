@@ -1,0 +1,46 @@
+# Seeded FEL amplifier at 0.8 nm: GEM-PIC-RZ against GENESIS 1.3 v4 (steady state), see README.md.
+#  helical undulator, period 2 cm, K = 1, 140 periods, no focusing in both codes
+#  beam gamma = 5000 (2.555 GeV kinetic), 4 kA, sigma_r = 10 um, zero emittance and energy spread
+#  lambda_r = lambda_u (1 + K^2) / (2 gamma^2) = 0.8 nm = lambda0;  rho = 2.9e-3
+#  seed: Gaussian beam, w0 = 30 um at the undulator entrance, 10 MW, circular polarization
+#  The bunch (flat 160 nm, sin^2 edges of 10 nm) is longer than the slippage (112 nm): the
+#  radiation at 320 ... 360 nm has met only the flat part, as in a steady-state run.
+#  At gamma = 5000 the transverse space charge (absent in GENESIS) widens the beam by ~3 %.
+grid {
+  lambda0       = 0.8 nm
+  m_max         = 1
+  radial_grid   = table
+  r_points      = 0, 40, 200, 950 um
+  dr_points     = 1, 1,  10,  40  um
+  r_max         = 950 um
+  dzeta         = 0.05 nm
+  window_length = 680 nm
+  dz            = 1.25 mm
+  z_end         = 2.8 m
+  r_absorber    = 2 mm      # off
+}
+undulator { type = helical; period = 2 cm; K = 1; periods = 140; ramp_periods = 1 }
+bunch {
+  name           = b
+  charge         = 2.2682 pC           # 4 kA over 170 nm (flat part + half the edges)
+  gamma          = 5000
+  sigma_x        = 10 um
+  emittance_x    = 0 um
+  distribution_z = function
+  profile_z      = "zeta < 315 nm ? sin(pi / 2 * (zeta - 305 nm) / (10 nm))^2 : zeta > 475 nm ? sin(pi / 2 * (485 nm - zeta) / (10 nm))^2 : 1"
+  zeta_min       = 305 nm
+  zeta_max       = 485 nm
+  macroparticles = 440000
+  shot_noise     = fawley
+  noise_wavelength = 0.8 nm
+}
+laser {
+  a0                = 4.067e-7          # 10 MW (circular: P = 2 x 21.5 GW (a0 w0 / lambda)^2)
+  waist             = 30 um
+  envelope_function = "zeta < 285 nm ? 0 : zeta < 295 nm ? sin(pi / 2 * (zeta - 285 nm) / (10 nm))^2 : zeta < 495 nm ? 1 : zeta < 505 nm ? sin(pi / 2 * (505 nm - zeta) / (10 nm))^2 : 0"
+  zeta_center       = 390 nm
+  polarization      = circular
+  helicity          = -1               # the resonant sense of rotation for this undulator field
+}
+output { dir = gemx_out; every = 0; format = text; maps = false; axis = false; particles = false; fel_slice = 8 nm }
+numerics { iterations = 1; beam_dz_max = 1.25 mm; beam_filter = 0 }

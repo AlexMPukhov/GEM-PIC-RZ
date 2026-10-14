@@ -54,6 +54,11 @@ struct DiagSums {
   double Wrad = 0, W0 = 0, Pmax = 0, zPmax = 0;
   // bunching per bunch in slices of output.fel_slice: {Q, sum |q| cos, sum |q| sin} per slice
   std::map<int, std::vector<double>> slices;
+  // power of the modes m >= 1 in slices of output.fel_slice: {sum P h, sum h} per slice
+  std::vector<double> pslices;
+  // resonant part: per slice, mode m >= 1 and radial point (faces 1..N, then centres 0..N-1) the sums
+  // sum_n F_n exp(-+ i k zeta_n) h_n of R and L (8 doubles: R+, R-, L+, L- as re, im)
+  std::vector<double> rslices;
   void add(const DiagSums& o);
 };
 

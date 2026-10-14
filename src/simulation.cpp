@@ -579,8 +579,11 @@ void Simulation::filterBeamCurrent(Currents& C) const {
 // beam-type deposit (current at level s^1): W = q / v_z, linear in zeta
 // between half-cell centres
 void Simulation::depositBeamParticle(Currents& C, const Particle& p) {
-  double gm = gammaOf(p);
-  double vx = p.ux / gm, vy = p.uy / gm, vz = p.uz / gm;
+  const int nsub = std::max(1, int(std::ceil(Delta / cfg.numerics.beam_dz_max)));
+  double ux, uy, uz;
+  velocityAtPosition(ext, p, Delta / nsub, ux, uy, uz);
+  const double gm = std::sqrt(1.0 + ux * ux + uy * uy + uz * uz);
+  double vx = ux / gm, vy = uy / gm, vz = uz / gm;
   if (vz <= 0.0) return;
   double f;
   const int j = zv.beamCell(p.zeta, f);
@@ -610,7 +613,7 @@ void Simulation::pushBeam() {
       const int na = zv.cell(p.zeta, w);
       if (na < 0 || na >= Nz) { p.status = 2; break; }
       EB f = gather(fold, na, 1.0 - w, na + 1, w, p.x, p.y);
-      addExternal(ext, p.x, p.y, p.z, f);
+      addExternal(ext, p.x, p.y, p.z, f, dz);
       if (cfg.numerics.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
       else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
       gm = gammaOf(p);
@@ -790,7 +793,7 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1, Currents& C, 
   } else {
     f = gather(fnew, n + 1, wm, n, 1.0 - wm, xm, ym);
   }
-  if (ext.any()) addExternal(ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f);
+  if (ext.any()) addExternal(ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f, dt0 * p.uz / g0);
   double ux = p.ux, uy = p.uy, uz = p.uz;
   boris(ux, uy, uz, f, p.qm, dt0);
   double g1 = std::sqrt(1.0 + ux * ux + uy * uy + uz * uz);

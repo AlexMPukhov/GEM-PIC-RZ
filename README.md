@@ -359,9 +359,9 @@ bunch form factor exp(−k²σ_z² − k²θ²σ_r²), integrated over 0.6 < k/k
 - **Helical undulator:** the on-axis polarization is circular (equal |E_x|, |E_y|). The energy is about twice the
   planar value, and λ_r = λ_u(1 + K²)/(2γ²).
 - **ctest `undulator`:** 10 periods, 15 s. It checks the energy (±5%), the spectral peak (±0.3%) and the slippage of
-  the bunch (8.264 µm vs 8.260 µm from the trajectory).
+  the bunch (8.262 µm vs 8.260 µm from the trajectory).
 
-**Test: high-gain FEL (SASE)** (`examples/fel_sase.deck`, 6.3 min on 2 cores). The setup:
+**Test: high-gain FEL (SASE)** (`examples/fel_sase.deck`, 7.7 min on 2 cores). The setup:
 - helical undulator, period 1 cm, K = 1, 60 periods;
 - bunch at γ = 1000, 4 kA, σ_r = 10 µm, zero emittance, flat-top over 1.3 µm = 130 λ_r;
 - λ_r = 10 nm, resolved by 16 slices;
@@ -373,11 +373,11 @@ The FEL parameter is ρ = 0.009. The 1D power gain length is 5.1 periods, and Mi
 
 | z (m) | 0.20 | 0.28 | 0.36 | 0.44 | 0.52 | 0.60 |
 |---|---|---|---|---|---|---|
-| bunching, largest over 20 λ_r slices (noise: 0.0074) | 0.008 | 0.013 | 0.027 | 0.045 | 0.059 | 0.073 |
-| radiated energy / Q², relative to the low-charge copy | 0.95 | 0.93 | 0.97 | 1.16 | 1.60 | 3.2 |
+| radiated energy / Q², relative to the low-charge copy | 0.95 | 0.93 | 1.00 | 1.22 | 1.76 | 3.77 |
 
-- **Gain length:** in the exponential stage (z = 0.24 … 0.40 m) the bunching grows with a power gain length of
-  5.6–6.0 periods, close to Ming Xie's 6.4.
+- **Gain length:** the energy above the spontaneous emission (ratio − 1) grows by 3.5–3.6 per 8 periods from
+  z = 0.44 m on: a power gain length of 6.3 periods, as Ming Xie's 6.4 (with corrections 7 and 8; before them,
+  the ratio reached 3.2 instead of 3.77).
 - **After that:** the growth slows down. The bunch is only 2.4 × 2πL_c long, and the energy spread from its
   longitudinal space charge reaches 0.33 ρ.
 - **Beam size:** the beam grows from 10 to 12.2 µm by space charge, as the envelope equation predicts.
@@ -387,11 +387,11 @@ The FEL parameter is ρ = 0.009. The 1D power gain length is 5.1 periods, and Mi
   about 2 gain lengths. The bunching peaks at 0.047, and the radiated energy is at most 3 times the
   coherent emission.
 
-**Limitations so far:**
-- **No quadrupoles yet:** there are no external focusing fields, so long undulators with a matched beam are not
-  yet possible.
-- **Helical field:** it is the on-axis field, without natural focusing.
-- **Shot noise:** the noise comes from the macroparticles; there is no quiet start with the true shot noise.
+**Limitations:**
+- **Helical field:** it is the on-axis field, without natural focusing. External focusing comes from the
+  transport elements (quadrupoles, solenoids, plasma lenses), which may overlap the undulator.
+- **Shot noise:** in this example the noise comes from the macroparticles. `bunch.shot_noise = fawley` gives
+  the true shot noise of the electron number (beamlets).
 
 ## Mobile ions
 
@@ -542,6 +542,18 @@ earlier versions except in the rearmost slice.
    growing by 2 µm. The beam list is now pushed with the Vay pusher (`numerics.beam_pusher = vay`), which is
    exact for E + v × B = 0 at any step: the force agrees with E_r/γ² to 1% at that sub-step. Streaming
    particles keep the Boris push; their steps are small.
+7. **Undulator kick per step** (found with the GENESIS benchmark, `benchmarks/genesis_seeded`). The push kicks
+   the momentum with the field at one point of the step. For the undulator field, a sinusoid in z, this
+   overestimates the kick by 1/sinc(k_u Δz/2): the orbit amplitude was K/γ·(1 + (k_u Δz)²/24), 0.6 % too large
+   at Δz = λ_u/16, and the resonance was shifted by 0.6 %·K²/(1 + K²). The undulator field is now multiplied by
+   sinc(k_u Δz/2), the exact mean over the step.
+8. **Time of the beam current in an undulator** (same benchmark). The beam push is a leapfrog: after a sub-step
+   the position is at its end, the momentum half a sub-step earlier. In an undulator u⊥ turns by k_u Δz per
+   sub-step, so the deposited current lagged by k_u Δz/2 in phase, a phase error of the FEL coupling of first
+   order in Δz. The current is now deposited with the momentum at the time of the position (the half step
+   completed with the external field, `velocityAtPosition` in `src/external.hpp`).
+   In the 10 nm benchmark the power gain length went from 9.5 cm (before 7 and 8) to 8.7 cm (7) and 8.3 cm (7 and
+   8); halving Δz or Δζ then changes it by less than 1 %.
 
 ## What is new compared with the prototype
 
@@ -558,6 +570,18 @@ earlier versions except in the rearmost slice.
 - **Function parser:** profiles of plasmas, lasers, bunches and undulator tapers as expressions in the deck.
 - **GPU and multi-core:** the parallel engine runs the time step on an NVIDIA GPU (`cuda`) or on CPU threads (`openmp`); see above.
 - **Diagnostics:** `bunches.txt` holds the statistics of every bunch and of the self-trapped charge at every step. The output is in µm and pC. Each run saves `deck_used.txt` and `summary.txt`.
+
+## Benchmarks against other codes
+
+`benchmarks/` compares GEM-PIC-RZ with established codes on the same cases (details, scripts and data in
+[`benchmarks/README.md`](benchmarks/README.md)):
+
+- **Seeded FEL vs GENESIS 1.3 v4** at 10 nm and 0.8 nm. The power gain length agrees to 0.6 % at 0.8 nm and to
+  4 % at 10 nm with GENESIS runs that include the physics GEM-PIC-RZ has beyond GENESIS: longitudinal space
+  charge, and the widening of the beam by its transverse space charge. The benchmark found two numerical errors
+  of the undulator coupling (corrections 7 and 8 below).
+- **LWFA vs FBPIC** (a0 = 2, n0 = 3.5·10¹⁸ cm⁻³): the on-axis wake of the first period agrees to 1.6 % rms after
+  100 µm, at 1/50 of the computing time.
 
 ## Checks
 

@@ -6,8 +6,8 @@
 #  lambda_r = lambda_u (1 + K^2) / (2 gamma^2) = 10 nm = lambda0.
 #  FEL parameter rho = 0.009: 1D gain length 5.1 periods, Ming Xie 6.4
 #  periods; 2 pi L_c = 55 lambda_r. The simulation gives a power gain length
-#  of 5.6 ... 6.0 periods in the exponential stage (README "Undulators").
-#  About 6.3 minutes on 2 cores (6880 slices x 131 radial cells x 961 steps).
+#  of 6.3 periods in the exponential stage (README "Undulators").
+#  About 7.7 minutes on 2 cores (6880 slices x 131 radial cells x 961 steps).
 #
 #  The bunch must be several cooperation lengths long: radiation slips
 #  forward by one lambda_r per period and leaves a bunch of a few lambda_r

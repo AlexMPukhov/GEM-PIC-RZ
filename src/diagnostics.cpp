@@ -85,6 +85,10 @@ void DiagSums::add(const DiagSums& o) {
   Wrad += o.Wrad;
   W0 += o.W0;
   if (o.Pmax > Pmax) { Pmax = o.Pmax; zPmax = o.zPmax; }
+  if (pslices.size() < o.pslices.size()) pslices.resize(o.pslices.size(), 0.0);
+  for (size_t j = 0; j < o.pslices.size(); ++j) pslices[j] += o.pslices[j];
+  if (rslices.size() < o.rslices.size()) rslices.resize(o.rslices.size(), 0.0);
+  for (size_t j = 0; j < o.rslices.size(); ++j) rslices[j] += o.rslices[j];
   for (const auto& kv : o.slices) {
     auto& v = slices[kv.first];
     if (v.size() < kv.second.size()) v.resize(kv.second.size(), 0.0);
@@ -150,6 +154,26 @@ DiagSums Simulation::diagSums(int n0, int n1) const {
         else { D.Wrad += PI * fac * hn * e; P += PI * s; }
       }
       if (P > D.Pmax) { D.Pmax = P; D.zPmax = zv.node(n); }
+      if (D.pslices.empty()) D.pslices.assign(2 * ns, 0.0);
+      const size_t jp = std::min(ns - 1, size_t(std::max(0.0, zv.node(n) / ls)));
+      D.pslices[2 * jp] += P * hn;
+      D.pslices[2 * jp + 1] += hn;
+      // demodulation at +-k: the resonant radiation, without the fields that move with the bunch
+      if (M >= 1) {
+        const size_t per = size_t(M) * 2 * N * 8;
+        if (D.rslices.empty()) D.rslices.assign(ns * per, 0.0);
+        const cd ep = std::polar(hn, -k * zv.node(n)), em = std::conj(ep);
+        double* base = &D.rslices[jp * per];
+        for (int m = 1; m <= M; ++m)
+          for (int q = 0; q < 2 * N; ++q) {
+            const bool face = q < N;
+            const size_t j = face ? fold.f(m, n, q + 1) : fold.c(m, n, q - N);
+            const cd R = face ? fold.Rr[j] : fold.Rp[j], L = face ? fold.Lr[j] : fold.Lp[j];
+            const cd v[4] = {R * ep, R * em, L * ep, L * em};
+            double* b = base + (size_t(m - 1) * 2 * N + q) * 8;
+            for (int t = 0; t < 4; ++t) { b[2 * t] += v[t].real(); b[2 * t + 1] += v[t].imag(); }
+          }
+      }
     }
   }
   return D;
@@ -197,7 +221,7 @@ void Simulation::report(const DiagSums& D, bool files) {
 // interrupted run: keep the comments and the lines of steps <= N.
 void Simulation::trimTables() {
   if (comm::rank() != 0) return;  // only rank 0 writes the output
-  for (const char* t : {"/bunches.txt", "/ionization.txt", "/fel.txt"}) {
+  for (const char* t : {"/bunches.txt", "/ionization.txt", "/fel.txt", "/fel_power.txt"}) {
     const std::string name = cfg.output.dir + t;
     FILE* fp = std::fopen(name.c_str(), "r");
     if (!fp) continue;
@@ -224,17 +248,41 @@ void Simulation::writeFelTable(const DiagSums& D) {
   const Units& u = cfg.units;
   const double L = u.k0inv_um() * 1e-6, E0 = MC2_MEV * 1e6 / L, eps0 = 8.8541878128e-12;
   const double WJ = eps0 * E0 * E0 * L * L * L, PW = eps0 * C_LIGHT * E0 * E0 * L * L;
+  // resonant power per slice: |<F exp(-+ i k zeta)>|^2 of R and L (the radiation at fel_wavelength)
+  const int N = g.N;
+  const size_t nsl = D.pslices.size() / 2, per = size_t(M) * 2 * N * 8;
+  std::vector<double> Pres(nsl, 0.0);
+  double PresMax = 0.0, zPres = 0.0;
+  if (M >= 1 && D.rslices.size() >= nsl * per) {
+    for (size_t jb = 0; jb < nsl; ++jb) {
+      const double H = D.pslices[2 * jb + 1];
+      if (!(H > 0)) continue;
+      double s = 0.0;
+      for (int m = 1; m <= M; ++m)
+        for (int q = 0; q < 2 * N; ++q) {
+          const double* b = &D.rslices[jb * per + (size_t(m - 1) * 2 * N + q) * 8];
+          const double A = q < N ? g.Af[q + 1] : g.Ac[q - N];
+          s += A * (b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3] - b[4] * b[4] - b[5] * b[5] - b[6] * b[6] -
+                    b[7] * b[7]);
+        }
+      Pres[jb] = PI * s / (H * H) * PW;
+      if (Pres[jb] > PresMax) { PresMax = Pres[jb]; zPres = (jb + 0.5) * cfg.output.fel_slice; }
+    }
+  }
   if (fresh) {
     std::fprintf(fp, "# FEL diagnostics at lambda = %.6g um (bunching b = |<exp(i 2 pi zeta / lambda)>|, charge-weighted)\n",
                  cfg.output.fel_wavelength * u.k0inv_um());
     std::fprintf(fp, "# b_max: largest bunching over slices of %.4g um holding >= half the charge of the fullest slice\n",
                  cfg.output.fel_slice * u.k0inv_um());
-    std::fprintf(fp, "# step  z[mm]  W_rad[J](m>=1)  P_max[W](m>=1)  zeta(P_max)[um]  W_m0[J]");
+    std::fprintf(fp, "# P_res: power of the radiation at lambda (modes m >= 1, demodulated over the slices; without the\n"
+                     "#        fields that move with the bunch), largest over the slices, and the centre of that slice\n");
+    std::fprintf(fp, "# step  z[mm]  W_rad[J](m>=1)  P_max[W](m>=1)  zeta(P_max)[um]  W_m0[J]  P_res_max[W]  zeta(P_res_max)[um]");
     for (const auto& B : cfg.bunches) std::fprintf(fp, "  b_%s  b_max_%s", B.name.c_str(), B.name.c_str());
     std::fprintf(fp, "\n");
   }
   std::fprintf(fp, "%6d %10.5f %13.5e %13.5e %10.4f %13.5e", step_no, s0 * u.k0inv_um() * 1e-3, D.Wrad * WJ,
                D.Pmax * PW, D.zPmax * u.k0inv_um(), D.W0 * WJ);
+  std::fprintf(fp, " %13.5e %10.4f", PresMax, zPres * u.k0inv_um());
   for (size_t b = 0; b < cfg.bunches.size(); ++b) {
     const auto it = D.moments.find(int(b));
     const double bf = (it == D.moments.end() || it->second.Q <= 0)
@@ -252,6 +300,22 @@ void Simulation::writeFelTable(const DiagSums& D) {
   }
   std::fprintf(fp, "\n");
   std::fclose(fp);
+  // fel_power.txt: mean power of the modes m >= 1 in every slice of fel_slice, per step
+  FILE* fq = std::fopen((cfg.output.dir + "/fel_power.txt").c_str(), fresh ? "w" : "a");
+  if (!fq) return;
+  if (fresh) {
+    std::fprintf(fq, "# power [W] of the radiation at lambda = %.6g um (modes m >= 1, demodulated) in the slices "
+                     "zeta_j <= zeta < zeta_j + %.4g um\n",
+                 cfg.output.fel_wavelength * u.k0inv_um(), cfg.output.fel_slice * u.k0inv_um());
+    std::fprintf(fq, "# step  z[mm]  then one column per slice; zeta_j [um]:");
+    for (size_t j = 0; j < nsl; ++j) std::fprintf(fq, " %.4g", j * cfg.output.fel_slice * u.k0inv_um());
+    std::fprintf(fq, "\n");
+  }
+  std::fprintf(fq, "%6d %10.5f", step_no, s0 * u.k0inv_um() * 1e-3);
+  for (size_t j = 0; j < nsl; ++j)
+    std::fprintf(fq, " %12.5e", Pres[j]);
+  std::fprintf(fq, "\n");
+  std::fclose(fq);
 }
 
 void Simulation::writeBunchTable(const DiagSums& D) {

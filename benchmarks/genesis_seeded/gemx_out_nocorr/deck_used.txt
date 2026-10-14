@@ -1,0 +1,65 @@
+# deck gem_x.deck after command-line overrides
+
+grid {
+  lambda0       = 0.8 nm
+  m_max         = 1
+  radial_grid   = table
+  r_points      = 0 40 200 950 um
+  dr_points     = 1 1 10 40 um
+  r_max         = 950 um
+  dzeta         = 0.05 nm
+  window_length = 680 nm
+  dz            = 1.25 mm
+  z_end         = 2.8 m
+  r_absorber    = 2 mm
+}
+
+undulator {
+  type         = helical
+  period       = 2 cm
+  k            = 1
+  periods      = 140
+  ramp_periods = 1
+}
+
+bunch {
+  name             = b
+  charge           = 2.2682 pC
+  gamma            = 5000
+  sigma_x          = 10 um
+  emittance_x      = 0 um
+  distribution_z   = function
+  profile_z        = "zeta < 315 nm ? sin(pi / 2 * (zeta - 305 nm) / (10 nm))^2 : zeta > 475 nm ? sin(pi / 2 * (485 nm - zeta) / (10 nm))^2 : 1"
+  zeta_min         = 305 nm
+  zeta_max         = 485 nm
+  macroparticles   = 440000
+  shot_noise       = fawley
+  noise_wavelength = 0.8 nm
+}
+
+laser {
+  a0                = 4.067e-7
+  waist             = 30 um
+  envelope_function = "zeta < 285 nm ? 0 : zeta < 295 nm ? sin(pi / 2 * (zeta - 285 nm) / (10 nm))^2 : zeta < 495 nm ? 1 : zeta < 505 nm ? sin(pi / 2 * (505 nm - zeta) / (10 nm))^2 : 0"
+  zeta_center       = 390 nm
+  polarization      = circular
+  helicity          = -1
+}
+
+output {
+  dir       = gemx_out
+  every     = 0
+  format    = text
+  maps      = false
+  axis      = false
+  particles = false
+  fel_slice = 8 nm
+}
+
+numerics {
+  iterations  = 1
+  beam_dz_max = 1.25 mm
+  beam_filter = 0
+  backend     = openmp
+}
+

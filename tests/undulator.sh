@@ -35,7 +35,7 @@ check "slippage" "$S" 8.260 0.03 um
 WF=$(awk '!/^#/ { w = $3 } END { print w }' undulator_out/fel.txt)
 WH=$("$H5X" $F energy | awk '!/^#/ { printf "%.6e", $6 * 2.943736e-7 }')
 check "fel.txt radiation energy / data file" "$(awk -v a="$WF" -v b="$WH" 'BEGIN { printf "%.5f", a / b }')" 1 0.0005 ""
-check "fel.txt bunching" "$(awk '!/^#/ { b = $7 } END { printf "%.4f", b }' undulator_out/fel.txt)" 0.7346 0.002 ""
+check "fel.txt bunching" "$(awk '!/^#/ { b = $9 } END { printf "%.4f", b }' undulator_out/fel.txt)" 0.7346 0.002 ""
 cd - > /dev/null
 rm -rf "$WORK"
 echo "undulator test passed"

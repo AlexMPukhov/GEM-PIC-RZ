@@ -3,3 +3,6 @@ build*/
 # run output
 *_out/
 *.h5
+# benchmark results are kept
+!benchmarks/*/*_out/
+!benchmarks/**/*.out.h5

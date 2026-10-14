@@ -196,6 +196,8 @@ class PipelineRun {
     for (const auto& kv : D.moments) { B.put(kv.first); B.put(kv.second); }
     B.putVec(D.freed);
     B.put(D.Wrad); B.put(D.W0); B.put(D.Pmax); B.put(D.zPmax);
+    B.putVec(D.pslices);
+    B.putVec(D.rslices);
     B.put<unsigned long long>(D.slices.size());
     for (const auto& kv : D.slices) { B.put(kv.first); B.putVec(kv.second); }
   }
@@ -209,6 +211,8 @@ class PipelineRun {
     }
     D.freed = B.getVec<double>();
     D.Wrad = B.get<double>(); D.W0 = B.get<double>(); D.Pmax = B.get<double>(); D.zPmax = B.get<double>();
+    D.pslices = B.getVec<double>();
+    D.rslices = B.getVec<double>();
     const size_t ns = size_t(B.get<unsigned long long>());
     for (size_t i = 0; i < ns; ++i) {
       const int sp = B.get<int>();
@@ -350,7 +354,7 @@ void PipelineRun::step() {
       const int na = zv.cell(p.zeta, w);
       if (na < 0 || na >= Nz) { p.status = 2; break; }
       EB f = S.gather(S.fold, na, 1.0 - w, na + 1, w, p.x, p.y);
-      addExternal(S.ext, p.x, p.y, p.z, f);
+      addExternal(S.ext, p.x, p.y, p.z, f, dz);
       if (num.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
       else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
       gm = gammaOf(p);
