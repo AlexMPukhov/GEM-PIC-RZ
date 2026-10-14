@@ -51,17 +51,25 @@ build/gempic_rz my.deck --restart latest                        # continue from 
 The input is a structured ASCII deck with one block per kind of object:
 
 ```
+constants{ ... }    named values for expressions       (optional)
 grid     { ... }    gridding, modes, window, steps     (once)
 laser    { ... }    one block per laser pulse          (0 ... N)
 plasma   { ... }    background plasma profile          (0 or 1)
 ion      { ... }    one block per mobile ion species   (0 ... N)
 bunch    { ... }    one block per particle bunch       (0 ... N)
+undulator{ ... }    one block per undulator section    (0 ... N)
 output   { ... }    diagnostics                        (optional)
 numerics { ... }    algorithm parameters               (optional)
 ```
 
 - **Units:** values are given in physical units (`um`, `fs`, `cm^-3`, `pC`, `MeV`, …) or in normalized code units (`k0^-1`, `n_c`). A dimensional value without a unit is an error.
 - **Error messages:** unknown keys, a unit of the wrong kind, and missing or conflicting keys are reported with file and line number.
+- **Functions:** profiles can be given as expressions, as in HiPACE++ and QUARZ: the plasma density
+  `density_function(x, y, z, r)`, the laser `profile_function(r)` and `envelope_function(zeta)`, the bunch current
+  `profile_z(zeta)` and energy chirp `gamma_function(zeta)`, and an undulator taper `K_function(z)`. Expressions accept
+  numbers with units (`r / (20 um)`), the usual functions and operators, and the named values of the block
+  `constants`; any single value of the deck may be an expression of them (`waist = "2 * w0"`). See
+  [Functions and expressions](docs/input_deck.md#functions-and-expressions).
 - **Reference:** all keys, units and defaults are listed in [`docs/input_deck.md`](docs/input_deck.md).
 
 | example | shows |
@@ -70,6 +78,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `examples/fel_sase.deck` | compact high-gain FEL (SASE from the macroparticle noise): gain length against Ming Xie |
 | `examples/undulator_emission.deck` | coherent spontaneous emission of a short bunch in a planar undulator (λ_r resolved on the ζ grid) |
 | `examples/lwfa_flexgrid.deck` | the same on free-hand grids along ζ and z (fewer slices and steps, small steps in the up-ramp) |
+| `examples/function_profiles.deck` | profiles as functions: density up-ramp and channel, super-Gaussian laser with a sin² envelope, ramped and chirped witness |
 | `examples/pwfa_driver_witness.deck` | beam-driven wake with drive and witness bunches, flat-top witness, m = 0 only |
 | `examples/two_pulses_channel.deck` | two laser pulses (focused drive pulse, circularly polarized 2nd harmonic), parabolic channel, trapezoidal profile |
 | `examples/ion_collapse.deck` | mobile hydrogen ions collapsing inside a dense electron bunch (Rosenzweig et al. 2005) |
@@ -81,6 +90,7 @@ numerics { ... }    algorithm parameters               (optional)
 |---|---|
 | `src/deck.*` | generic parser: blocks, `key = value`, lists, strings, comments, line numbers, command-line overrides |
 | `src/units.*` | unit table and conversion to code units |
+| `src/expr.*` | function parser: expressions of the deck (profiles, constants) compiled to a stack program |
 | `src/config.*` | typed structures `GridConfig`, `LaserConfig`, `PlasmaConfig`, `BunchConfig`, `OutputConfig`, `NumericsConfig`; reading, validation, summary |
 | `src/atomic_data.*` | NIST ionization energies of all charge states of 21 elements, standard atomic masses |
 | `src/ionization.*` | ADK tunnel-ionization rates per level (SI reference function and code-unit tables) |
@@ -524,6 +534,7 @@ earlier versions except in the rearmost slice.
 - **Several bunches:** electrons or positrons (the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
+- **Function parser:** profiles of plasmas, lasers, bunches and undulator tapers as expressions in the deck.
 - **GPU and multi-core:** the parallel engine runs the time step on an NVIDIA GPU (`cuda`) or on CPU threads (`openmp`); see above.
 - **Diagnostics:** `bunches.txt` holds the statistics of every bunch and of the self-trapped charge at every step. The output is in µm and pC. Each run saves `deck_used.txt` and `summary.txt`.
 
@@ -538,11 +549,12 @@ earlier versions except in the rearmost slice.
 - **Field ionization, nitrogen:** N⁵⁺ → N⁶⁺ → N⁷⁺ at a0 = 2.2, mobile ions. The charge-state fractions agree with the rate equations: 0.93568 / 0.05995 / 0.00437 (scatter about ± 0.001 / 0.001 / 0.0003) against 0.93667 / 0.05927 / 0.00406.
 - **Laser focusing in vacuum:** a pulse started 0.2 mm before focus (w0 = 5 µm, zR = 98 µm) follows a0/√(1+((z−z_f)/zR)²) to within 3% over 0.4 mm. At focus it reaches 0.098 instead of 0.100.
 - **Bunch initialization:** the initial rms sizes, emittances, energy spread and flat-top length agree with the deck.
+- **Function profiles:** a deck with the plasma ramp, the Gaussian laser and a flat-top bunch written as functions (`tests/functions.sh`) reproduces the built-in profiles to rounding. In a tapered undulator, K = 0.5 → 0.8, the slippage is 8.83 µm against 8.78 µm from ∫(1 + K²/2)/(2γ²)dz.
 - **Sign checks:** in the PWFA example the electron witness is accelerated and focused. The same bunch as positrons is decelerated and defocused.
 
 ## Known limitations
 
 - **Performance:** the ζ-march is sequential within a step. Parallelism comes from the particles and the radial grid within a slice (OpenMP/GPU), or from the pipeline over steps (MPI, serial step per rank). MPI and the OpenMP/GPU engine cannot be combined yet.
 - **Missing physics:** the energy that ionization takes from the laser (ionization current) and collisional ionization are not modelled. Field-ionizable species follow the plasma profile; a separate dopant profile is not yet possible.
-- **Laser envelope:** the laser is initialized as a paraxial Gaussian beam. The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle.
+- **Laser envelope:** the laser is initialized as a paraxial Gaussian beam (or, with `profile_function`, as the given field at z = 0 with flat phase fronts). The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle.
 - **Radial absorber:** it is a simple damping of R and has not been tested for reflection.

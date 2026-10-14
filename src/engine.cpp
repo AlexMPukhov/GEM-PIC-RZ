@@ -630,6 +630,7 @@ struct EngineState {
   par::Array<double> zz, zhs, zzc, zwlo, zwhi;  // longitudinal grid
   par::Array<int> cls;                          // matrix class of the slices
   par::Array<UndulatorV> und;                   // external fields
+  par::Array<double> undK;                      // taper tables
   // factorized matrices of the solver -> triData (same layout for every step)
   void uploadMatrices(const FieldSolver& fs, int M) {
     std::vector<double> td;
@@ -757,7 +758,9 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   P.cls = E.cls.data();
   P.vay = sim.cfg.numerics.beam_vay ? 1 : 0;
   if (!sim.undV.empty()) E.und.assign(sim.undV.data(), sim.undV.size());
-  P.ext = ExternalV{int(sim.undV.size()), sim.undV.empty() ? nullptr : E.und.data()};
+  if (!sim.undK.empty()) E.undK.assign(sim.undK.data(), sim.undK.size());
+  P.ext = ExternalV{int(sim.undV.size()), sim.undV.empty() ? nullptr : E.und.data(),
+                    sim.undK.empty() ? nullptr : E.undK.data()};
   P.g = {N, E.rho.data(), E.c.data(), E.Af.data(), E.Ac.data(), E.Vf.data(), E.Vc.data(), E.kC.data(), E.kF.data()};
   P.nIons = int(ionsCfg.size());
   P.ions = E.ions.data();

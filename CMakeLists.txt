@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp)
+  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -116,7 +116,7 @@ elseif(GEMPIC_OPENMP)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
       src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp
-      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp)
+      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
     target_include_directories(gempic_rz_gpuemu PRIVATE src)
@@ -195,6 +195,11 @@ if(GEMPIC_HAVE_HDF5)
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flexgrid.sh $<TARGET_FILE:gempic_rz_gpuemu> $<TARGET_FILE:compare_columns>
               openmp)
   endif()
+  # profiles given as functions (function parser) against the built-in profiles; undulator taper
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME functions_${b}
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/functions.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
+  endforeach()
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   add_test(NAME cherenkov

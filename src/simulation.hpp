@@ -107,6 +107,7 @@ class Simulation {
   ZetaGrid zg;       // longitudinal grid of the window
   ZetaView zv;       // view of zg
   std::vector<UndulatorV> undV;  // external fields (undulators)
+  std::vector<double> undK;      // tapered undulators: tables of B0(z)
   ExternalV ext;                 // view of undV
 
   void beginStep();  // Delta of this step, matrices of the field solver

@@ -1,0 +1,35 @@
+# Profiles given as functions (see docs/input_deck.md, "Functions and expressions"):
+# a plasma with a linear up-ramp and a parabolic channel, a super-Gaussian laser
+# with a sin^2 envelope, and a witness bunch with a ramped current and an energy
+# chirp. All lengths in expressions carry units; constants are shared.
+constants {
+  n0  = 1e18 cm^-3
+  w0  = 15 um
+  Lup = 200 um
+  rc  = 30 um
+}
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = table;  r_points = 0, 20, 80 um;  dr_points = 0.4, 0.4, 2 um;  r_max = 80 um
+  zeta_grid = table;  zeta_points = 0, 30, 45, 80 um;  dzeta_points = 0.1, 0.1, 0.04, 0.04 um;  window_length = 80 um
+  dz = 20 um;  z_end = 2 mm
+}
+plasma {
+  density          = n0
+  density_function = "min(max(z / Lup, 0), 1) * (1 + 0.3 * (r / rc)^2)"
+  r_max            = 60 um
+}
+laser {
+  a0 = 2
+  profile_function  = "exp(-(r / w0)^4)"
+  envelope_function = "sin(pi * (zeta - 50 um) / (24 um))^2 * rect(zeta - 62 um, 24 um)"
+  zeta_center       = 62 um
+}
+bunch {
+  name = witness; charge = 10 pC; sigma_x = 1 um; emittance_x = 1 um; macroparticles = 50000
+  distribution_z = function
+  profile_z      = "zeta < 22 um ? (zeta - 20 um) / (2 um) : 1"
+  zeta_min = 20 um;  zeta_max = 24 um
+  gamma_function = "400 * (1 + 0.01 * (zeta - 22 um) / (1 um))"
+}
+output { dir = function_profiles_out; every = 20 }

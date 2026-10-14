@@ -14,6 +14,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 
 | block      | count   | content                                          |
 |------------|---------|--------------------------------------------------|
+| `constants`| 0 or 1  | named values for the expressions of all blocks   |
 | `grid`     | 1       | reference wavelength, modes, radial grid, window, steps, absorber |
 | `laser`    | 0 … N   | one block per laser pulse                        |
 | `plasma`   | 0 or 1  | background plasma: density and profiles, macroparticles |
@@ -31,6 +32,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 - **Repeated blocks are numbered:** blocks of the same type are numbered in order of appearance, `laser[0]`, `laser[1]`, …
 - **Strings:** quote a string that contains blanks, e.g. `dir = "run 1"`.
 - **Unit suffix:** a unit may follow the last number directly, e.g. `5nm`.
+- **Expressions:** a single value may be an expression, e.g. `waist = "2 * w0"` (see [Functions and expressions](#functions-and-expressions)).
 
 ### Units
 
@@ -55,6 +57,72 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | field | m c ω0/e (so the laser field amplitude equals a0) |
 | density | n_c = 1.1148·10²¹ cm⁻³ / λ0[µm]² |
 | charge | e n_c k0⁻³ |
+
+## Functions and expressions
+
+Profiles of plasmas, bunches, lasers and undulators can be given as mathematical functions of the position, as in
+HiPACE++ and QUARZ. A function is a quoted expression:
+
+```
+constants {                        # named values, usable in every expression below
+  n0   = 1e18 cm^-3
+  w0   = 8 um
+  Lup  = 200 um
+}
+plasma {
+  density          = n0
+  density_function = "min(z / Lup, 1) * (1 + 0.2 * (r / (20 um))^2)"
+}
+laser {
+  a0 = 2
+  profile_function  = "exp(-(r / w0)^4)"                                # super-Gaussian, at z = 0
+  envelope_function = "sin(pi * (zeta - 20 um) / (30 um))^2 * rect(zeta - 35 um, 30 um)"
+  zeta_center       = 35 um                                           # reference of the carrier phase
+}
+bunch {
+  charge = 20 pC; sigma_x = 1 um; macroparticles = 100000
+  distribution_z = function
+  profile_z      = "zeta < 12 um ? (zeta - 10 um) / (2 um) : 1"     # a ramped current
+  zeta_min = 10 um;  zeta_max = 14 um
+  gamma_function = "400 * (1 + 0.01 * (zeta - 12 um) / (1 um))"      # energy chirp
+}
+undulator { period = 2 cm; periods = 100; K_function = "1.2 * (1 - 0.05 * max(z - 1 m, 0) / (1 m))" }
+```
+
+**Syntax.**
+
+| element | forms |
+|---------|-------|
+| numbers | `2`, `1.5e-3`, and numbers with a unit: `10 um`, `10um`, `3e18 cm^-3`, `5 fs`, `0.2 k0^-1`, `50%`. Every unit of the deck is accepted and converted to code units |
+| variables | depend on the key (table below), in code units (lengths in 1/k0) |
+| constants | `pi`, and the entries of the block `constants` |
+| operators | `+ - * /`, `^` (also `**`, right-associative, `-x^2 = -(x^2)`), comparisons `< <= > >= == !=` (give 1 or 0), `&& || !`, `cond ? a : b` |
+| functions | `sin cos tan asin acos atan sinh cosh tanh exp log` (= `ln`) `log10 sqrt abs floor ceil sign`, `step(x)` (1 for x ≥ 0), `atan2(y, x) min(a, b) max(a, b) pow(a, b)`, `if(cond, a, b)`, `gauss(x, s)` = exp(−x²/2s²), `rect(x, w)` = 1 for \|x\| ≤ w/2 |
+
+- **Units in expressions:** write every dimensional number with its unit, e.g. `r / (20 um)`. The variables are in
+  code units, so `r / 20` would mean r/(20 k0⁻¹). The result of an expression is taken in code units as it is.
+- **Quotes:** expressions must be quoted when they contain blanks, commas, `=`, `!` or `#` (the deck syntax uses
+  these characters). Names are case-insensitive.
+- **Errors:** an unknown name, an unknown function or a syntax error is reported with the line of the deck and
+  the position in the expression.
+- **Command line:** expressions can be overridden like any value, e.g. `'plasma.density_function="exp(-z/(1 mm))"'`.
+
+**Keys that take functions.**
+
+| block | key | variables | meaning |
+|-------|-----|-----------|---------|
+| `constants` | any name | — | a value (number with unit, or expression of the constants above it), code units |
+| any | any single value | — | an expression of the constants, e.g. `waist = w0` or `length_1e = "L / 4"` |
+| `plasma` | `density_function` | x, y, z, r | factor of the density: n = density · f(z) · g(r) · density_function. It may break the axial symmetry (x, y): the weights of the macroparticles then vary along φ. Values < 0 count as 0 |
+| `laser` | `profile_function` | r | transverse field profile at z = 0, replaces `waist` and the Gaussian beam (no `z_focus`: the field is given where the simulation starts) |
+| `laser` | `envelope_function` | zeta | longitudinal envelope of the field, replaces `tau_fwhm` / `length_1e`. `zeta_center` is then optional: the reference of the carrier phase (default: the centre of the intensity) |
+| `bunch` | `profile_z` (with `distribution_z = function`) | zeta | current profile on [`zeta_min`, `zeta_max`], any normalization, ≥ 0. Sampled by the inverse of its cumulative distribution |
+| `bunch` | `gamma_function` | zeta | γ(ζ) (energy chirp), replaces `energy` / `gamma`; `energy_spread` is relative to the local value. The bunch's γ (self-field, messages) is the mean over the profile |
+| `undulator` | `K_function` | z | K(z) (taper), replaces `K`; z is the lab position. The ramps multiply it. Tabulated with 32 points per period |
+
+The laser field is a0 ω · profile_function(r) · envelope_function(ζ) · cos(ω(ζ − ζ_c) + cep) (linear) and the
+peak of the product should be 1 for the amplitude a0. The summary prints every function and the estimates it
+uses for the checks (w0 from the 1/e radius of the profile, τ from the rms length of the envelope).
 
 ## `grid` (required, once)
 
@@ -129,8 +197,8 @@ z_end         = 0.5 mm
 |-----|------|---------|---------|
 | `a0` | number | — | normalized peak amplitude (per component for circular polarization) |
 | `wavelength` | length | `lambda0` | laser wavelength (another harmonic or colour is allowed) |
-| `waist` | length | — | w0: 1/e field radius at focus |
-| `tau_fwhm` *or* `length_1e` | time / length | — | FWHM of the intensity, or 1/e half-length of the field envelope (L = τ_FWHM·c/√(2 ln 2)) |
+| `waist` | length | — | w0: 1/e field radius at focus (or `profile_function`, see [Functions](#functions-and-expressions)) |
+| `tau_fwhm` *or* `length_1e` *or* `envelope_function` | time / length / function | — | FWHM of the intensity, or 1/e half-length of the field envelope (L = τ_FWHM·c/√(2 ln 2)) |
 | `zeta_center` | length | — | envelope centre, measured from the rear end of the window |
 | `z_focus` | length | 0 | position of the focal plane; z = 0 is the start of the simulation. Before focus the pulse is initialized with wavefront curvature and Gouy phase |
 | `cep` | angle | 0 | carrier-envelope phase |
@@ -149,6 +217,7 @@ The density is `n(r, z) = density · f(z) · g(r)` for `r < r_max`, and 0 outsid
 |-----|------|---------|---------|
 | `density` | density | — | reference density n0 (also the normalization of the `n_e/n0` output) |
 | `z_points`, `z_values` | length list, number list | constant 1 | piecewise-linear f(z), constant beyond the end points |
+| `density_function` | function of x, y, z, r | 1 | a further factor, see [Functions](#functions-and-expressions) |
 | `radial_profile` | `uniform` \| `parabolic` \| `table` | `uniform` | form of g(r) |
 | `channel_depth`, `r_channel` | number, length | — | parabolic: g = 1 + depth · r²/r_channel² |
 | `r_points`, `r_values` | length list, number list | — | table: piecewise-linear g(r) |
@@ -206,7 +275,7 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | `energy_spread` | number | 0 | relative rms spread of p_z (e.g. `0.1 %`) |
 | `sigma_x`, `sigma_y` | length | —, `sigma_x` | rms transverse size at the waist |
 | `emittance_x`, `emittance_y` | length | 0, `emittance_x` | normalized rms emittance (`0.3 um` = 0.3 mm mrad) |
-| `distribution_z` | `gaussian` \| `flattop` | `gaussian` | longitudinal shape |
+| `distribution_z` | `gaussian` \| `flattop` \| `function` | `gaussian` | longitudinal shape. `function`: `profile_z`, `zeta_min`, `zeta_max` (and optionally `gamma_function`), see [Functions](#functions-and-expressions); `zeta_center` is not used |
 | `sigma_z` | length | — | gaussian: rms length |
 | `length` | length | — | flat-top: full length |
 | `zeta_center` | length | — | centre, measured from the rear end of the window |
@@ -240,7 +309,7 @@ A static undulator field that acts on all particles (bunches, trapped and plasma
 |-----|------|---------|---------|
 | `type` | `planar` \| `helical` | `planar` | planar: B_y = B0 cosh(k_u y) cos(ψ), B_z = −B0 sinh(k_u y) sin(ψ). Helical: B_x = B0 cos ψ, B_y = B0 sin ψ (on-axis field). ψ = k_u (z − z_start), B0 = K k_u m_e c/e |
 | `period` | length | — | undulator period λ_u |
-| `K` | number | — | peak deflection parameter, K = 0.934 B0[T] λ_u[cm] |
+| `K` *or* `K_function` | number / function of z | — | peak deflection parameter, K = 0.934 B0[T] λ_u[cm]; `K_function`: a taper K(z) |
 | `periods` *or* `length` | integer / length | — | number of periods, or magnetic length (including the ramps) |
 | `z_start` | length | 0 | entrance |
 | `ramp_periods` | integer | 1 | the field amplitude rises and falls linearly over this many periods at both ends. With whole periods the orbit has no net angle; a planar orbit is offset by K/(γ k_u). Helical: ≥ 1 |

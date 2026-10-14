@@ -26,10 +26,18 @@ Simulation::Simulation(const Config& c, const std::string& restartFile) : cfg(c)
     zv = zg.view();
   }
   Delta = cfg.grid.stepAt(0.0);
-  for (const auto& U : cfg.undulators)
-    undV.push_back(UndulatorV{U.type == UndulatorConfig::Type::Helical ? 1 : 0, U.focusing ? 1 : 0, U.ku(), U.B0(),
-                              U.z_start, U.z_start + U.length, U.ramp});
-  ext = ExternalV{int(undV.size()), undV.data()};
+  for (const auto& U : cfg.undulators) {
+    UndulatorV v{U.type == UndulatorConfig::Type::Helical ? 1 : 0, U.focusing ? 1 : 0, U.ku(), U.B0(),
+                 U.z_start, U.z_start + U.length, U.ramp, 0, 0, 0.0};
+    if (!U.K_fn.empty()) {  // taper: table of B0(z) = K(z) k_u, 32 points per period
+      v.nk = int(std::min(4.0e6, std::ceil(32.0 * U.length / U.period))) + 1;
+      v.koff = int(undK.size());
+      v.dzk = U.length / (v.nk - 1);
+      for (int j = 0; j < v.nk; ++j) undK.push_back(U.K_fn({U.z_start + j * v.dzk}) * U.ku());
+    }
+    undV.push_back(v);
+  }
+  ext = ExternalV{int(undV.size()), undV.data(), undK.data()};
   n_ref = cfg.plasma.present ? cfg.plasma.n0 : 1.0;
   rng.seed(cfg.numerics.seed);
   g.build(cfg.grid);
@@ -89,10 +97,18 @@ void Simulation::initLasers() {
     const bool linear = (L.pol == LaserConfig::Pol::Linear);
     const cd rot(std::cos(L.pol_angle), -std::sin(L.pol_angle));  // e^{-i theta}
 
+    const bool userEnv = !L.envelope_fn.empty(), userProf = !L.profile_fn.empty();
     // returns R_r,1 at (r, zeta)
     auto Rr1 = [&](double r, double zeta) -> cd {
       const double d = zeta - L.zeta_center;
-      const double env = std::exp(-d * d / (L.length_1e * L.length_1e));
+      const double env = userEnv ? L.envelope_fn({zeta}) : std::exp(-d * d / (L.length_1e * L.length_1e));
+      if (userProf) {
+        // field g(r) env(zeta) cos(omega d + cep) at the start (no focusing applied); the phase is
+        // taken from zeta_center (the centre of the envelope) as for the Gaussian pulse
+        const cd E = amp * env * L.profile_fn({r}) * std::exp(cd(0.0, L.omega * d + L.cep));
+        if (linear) return E.real() * rot;
+        return (L.helicity > 0) ? std::conj(E) : E;
+      }
       if (linear && atFocus) {
         // real arithmetic at focus (identical to the original prototype)
         const double E = amp * std::exp(-r * r / (L.waist * L.waist)) * env * std::cos(L.omega * d + L.cep);
@@ -123,15 +139,43 @@ void Simulation::initBunches() {
     const auto& B = cfg.bunches[b];
     const double sux = B.emittance_x / B.sigma_x, suy = B.emittance_y / B.sigma_y;
     const double uz0 = std::sqrt(B.gamma * B.gamma - 1.0);
+    // Function: inverse of the cumulative distribution of profile_z on a fine table
+    // (piecewise-linear density: the inverse is exact within a table cell up to a quadratic)
+    std::vector<double> zt, cdf;
+    if (B.shape == BunchConfig::Shape::Function) {
+      const int nt = 20000;
+      zt.resize(nt + 1);
+      cdf.assign(nt + 1, 0.0);
+      double fprev = 0.0;
+      for (int j = 0; j <= nt; ++j) {
+        zt[j] = B.zeta_min + (B.zeta_max - B.zeta_min) * j / nt;
+        const double f = std::max(0.0, B.profile_z({zt[j]}));
+        if (j > 0) cdf[j] = cdf[j - 1] + 0.5 * (f + fprev) * (zt[j] - zt[j - 1]);
+        fprev = f;
+      }
+      for (auto& c : cdf) c /= cdf.back();
+    }
+    auto sampleZeta = [&](double u) {
+      const size_t j = std::min(size_t(std::upper_bound(cdf.begin(), cdf.end(), u) - cdf.begin()), cdf.size() - 1);
+      const size_t i = (j == 0) ? 0 : j - 1;
+      const double dc = cdf[i + 1] - cdf[i];
+      return zt[i] + (dc > 0 ? (u - cdf[i]) / dc : 0.5) * (zt[i + 1] - zt[i]);
+    };
     for (int k = 0; k < B.macroparticles; ++k) {
       Particle p{};
       p.x = B.sigma_x * nd(rng);
       p.y = B.sigma_y * nd(rng);
       p.zeta = (B.shape == BunchConfig::Shape::Gaussian) ? B.zeta_center + B.sigma_z * nd(rng)
-                                                         : B.zeta_center + B.length * (ud(rng) - 0.5);
+               : (B.shape == BunchConfig::Shape::Flattop) ? B.zeta_center + B.length * (ud(rng) - 0.5)
+                                                          : sampleZeta(ud(rng));
       p.ux = sux * nd(rng);
       p.uy = suy * nd(rng);
-      p.uz = uz0 * (1.0 + B.energy_spread * nd(rng));
+      if (B.gamma_fn.empty()) {
+        p.uz = uz0 * (1.0 + B.energy_spread * nd(rng));
+      } else {  // gamma(zeta): energy chirp; energy_spread is relative to the local value
+        const double gz = B.gamma_fn({p.zeta});
+        p.uz = std::sqrt(gz * gz - 1.0) * (1.0 + B.energy_spread * nd(rng));
+      }
       if (B.z_waist != 0.0) {  // drift back from the waist
         p.x -= p.ux / p.uz * B.z_waist;
         p.y -= p.uy / p.uz * B.z_waist;
@@ -499,14 +543,18 @@ void Simulation::loadFresh() {
     const int nph = ax ? std::max(P.ppc_phi, P.ppc_phi_axis) : P.ppc_phi;
     for (int j = 0; j < npr; ++j) {
       double r = std::sqrt(r2a + (j + 0.5) / npr * (r2b - r2a));
-      double n = P.density(r, zmid);
-      if (n <= 0.0) continue;
-      double Q = -n * PI * (r2b - r2a) * Delta / (npr * nph);  // free-electron macro charge
+      const double nAx = P.density(r, zmid);  // axisymmetric part n0 f(z) g(r)
+      if (nAx <= 0.0) continue;
+      const double Q0 = -PI * (r2b - r2a) * Delta / (npr * nph);  // free-electron macro charge per unit density
       double ph0 = 2.0 * PI * ud(rng);
       for (int k = 0; k < nph; ++k) {
         double ph = ph0 + 2.0 * PI * k / nph;
         Particle p{};
         p.x = r * std::cos(ph); p.y = r * std::sin(ph); p.z = s0;
+        // density_function(x, y, z, r): the weight of each particle (may break the axial symmetry)
+        const double n = P.fn.empty() ? nAx : P.density(p.x, p.y, zmid);
+        if (n <= 0.0) continue;
+        const double Q = n * Q0;
         p.q = Q; p.qm = -1.0; p.zeta = zv.node(Nz); p.status = 0; p.sp = SPECIES_PLASMA; p.w = -Q;
         if (P.free_electrons) { p.id = idBase + stream.size(); stream.push_back(p); }
         for (size_t s = 0; s < cfg.ions.size(); ++s) {

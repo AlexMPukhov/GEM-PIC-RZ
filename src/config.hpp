@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "deck.hpp"
+#include "expr.hpp"
 #include "mapping.hpp"
 #include "units.hpp"
 
@@ -82,9 +83,11 @@ struct LaserConfig {
   double omega = 1.0;      // laser frequency / omega0
   double waist = 10.0;     // w0: 1/e field radius at focus
   double length_1e = 10.0; // 1/e half length of the field envelope
-  double zeta_center = 0;  // envelope centre in the window
+  double zeta_center = 0;  // envelope centre in the window (envelope_function: phase reference)
   double z_focus = 0;      // focal plane (z = 0 at simulation start)
   double cep = 0;          // carrier-envelope phase [rad]
+  Expr envelope_fn;        // optional envelope f(zeta) of the field (replaces the Gaussian in zeta)
+  Expr profile_fn;         // optional transverse profile g(r) at z = 0 (replaces the Gaussian beam)
   Pol pol = Pol::Linear;
   double pol_angle = 0;    // linear: angle of E to the x axis [rad]
   int helicity = 1;        // circular: +1 or -1
@@ -109,9 +112,11 @@ struct PlasmaConfig {
   int ppc_r_axis = 4, ppc_phi_axis = 16;   // for cells with rho_{i+1} <= r_axis_refine
   double r_axis_refine = 10.0;
 
+  Expr fn;                         // density_function(x, y, z, r): further factor (empty: 1)
   double longitudinal(double z) const;  // relative profile f(z)
   double radialFactor(double r) const;  // relative profile g(r)
-  double density(double r, double z) const;  // n0 f(z) g(r), 0 outside r_max
+  double density(double r, double z) const;  // n0 f(z) g(r), 0 outside r_max (axisymmetric part)
+  double density(double x, double y, double z) const;  // ... times density_function(x, y, z, r)
 };
 
 // ---------------------------------------------------------------- ions
@@ -140,7 +145,7 @@ struct IonConfig {
 
 // ---------------------------------------------------------------- bunch
 struct BunchConfig {
-  enum class Shape { Gaussian, Flattop };
+  enum class Shape { Gaussian, Flattop, Function };
   std::string name;
   double qm = -1.0;         // charge-to-mass ratio: -1 electron, +1 positron
   double charge = 0.0;      // total charge [code units], signed
@@ -153,6 +158,9 @@ struct BunchConfig {
   double sigma_z = 1;       // Gaussian: rms length
   double length = 1;        // flat-top: full length
   double zeta_center = 0;
+  Expr profile_z;           // Function: current profile f(zeta) on [zeta_min, zeta_max]
+  double zeta_min = 0, zeta_max = 0;
+  Expr gamma_fn;            // optional gamma(zeta) (energy chirp); empty: gamma
   double x0 = 0, y0 = 0;    // transverse offset
   double z_waist = 0;       // position of the beta waist (z = 0: at start)
   int macroparticles = 10000;
@@ -169,6 +177,8 @@ struct UndulatorConfig {
   double length = 1.0;     // magnetic length, including the ramps
   double ramp = 0.0;       // linear ramps of the field amplitude at both ends
   bool focusing = true;    // planar: natural focusing (off-axis field)
+  Expr K_fn;               // optional K(z) (taper); empty: K
+  double Kat(double z) const { return K_fn.empty() ? K : K_fn({z}); }
   double ku() const;
   double B0() const { return K * ku(); }  // code units
   // on-axis resonant wavelength for an electron of energy gamma
@@ -220,6 +230,7 @@ struct Config {
   std::vector<IonConfig> ions;
   std::vector<BunchConfig> bunches;
   std::vector<UndulatorConfig> undulators;
+  std::map<std::string, double> constants;  // block 'constants' (code units)
   OutputConfig output;
   NumericsConfig numerics;
 

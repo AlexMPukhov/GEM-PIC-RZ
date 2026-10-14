@@ -15,6 +15,7 @@
 //
 //  An electron (q/m = -1) entering with u_x = 0 follows
 //  u_x = K g sin(psi) (planar): no drift if the ramp is slow.
+//  A taper K(z) (deck: K_function) replaces B0 by K(z) k_u from a table.
 // ============================================================================
 #pragma once
 #include <math.h>
@@ -30,11 +31,14 @@ struct UndulatorV {
   double ku, B0;  // wavenumber, peak field (code units)
   double z0, z1;  // start and end (lab z)
   double ramp;    // length of the linear ramps at both ends
+  int nk, koff;   // taper: nk > 0 values B0(z0 + j dzk) at ExternalV::k[koff + j]
+  double dzk;
 };
 
 struct ExternalV {
   int n = 0;
   const UndulatorV* u = nullptr;
+  const double* k = nullptr;  // taper tables
 };
 
 GEM_HD inline double undulatorEnvelope(const UndulatorV& U, double z) {
@@ -50,7 +54,14 @@ GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z,
     const UndulatorV& U = X.u[k];
     const double g = undulatorEnvelope(U, z);
     if (g == 0.0) continue;
-    const double psi = U.ku * (z - U.z0), b = U.B0 * g;
+    const double psi = U.ku * (z - U.z0);
+    double b = U.B0 * g;
+    if (U.nk > 0) {  // K(z): linear interpolation in the table
+      const double t = (z - U.z0) / U.dzk;
+      const int j = t < double(U.nk - 2) ? int(t) : U.nk - 2;
+      const double w = t - j;
+      b = g * ((1.0 - w) * X.k[U.koff + j] + w * X.k[U.koff + j + 1]);
+    }
     if (U.helical) {
       f.Bx += b * cos(psi);
       f.By += b * sin(psi);

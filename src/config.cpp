@@ -19,6 +19,10 @@ namespace gem {
 // ============================================================================
 namespace {
 
+// constants of the deck (block 'constants'), visible to every expression
+const std::map<std::string, double>* g_consts = nullptr;
+const std::map<std::string, double> NO_CONSTS;
+
 class BlockReader {
  public:
   BlockReader(const Block& b, const Deck& d, const Units& u) : b_(b), d_(d), u_(u) {}
@@ -39,6 +43,23 @@ class BlockReader {
   std::vector<double> vec(const std::string& key, Dim dim) const {
     return numbers(*get(key, true), dim);
   }
+  // a function of the variables `vars` (a quoted expression, see expr.hpp)
+  Expr expr(const std::string& key, const std::vector<std::string>& vars) const {
+    const Entry* e = get(key, true);
+    std::string text;
+    for (const auto& t : e->tokens) text += (text.empty() ? "" : " ") + t;
+    try {
+      Expr x(text, vars, g_consts ? *g_consts : NO_CONSTS, u_);
+      std::vector<double> probe(vars.size(), 0.0);
+      (void)x(probe.data());
+      return x;
+    } catch (const std::invalid_argument& ex) {
+      fail(e, std::string(ex.what()) +
+                  (e->tokens.size() > 1 ? " (put expressions with commas in quotes: \"...\")" : ""));
+    }
+  }
+  bool hasExpr(const std::string& key) const { return has(key); }
+
   long integer(const std::string& key) const {
     const Entry* e = get(key, true);
     if (e->tokens.size() != 1) fail(e, "expects a single integer");
@@ -142,6 +163,15 @@ class BlockReader {
     return "";
   }
 
+  // a number, optionally with a unit suffix ("5um") - anything else is an expression
+  static bool isPlainNumber(const std::string& t) {
+    char* end = nullptr;
+    std::strtod(t.c_str(), &end);
+    if (end == t.c_str()) return false;
+    UnitInfo inf;
+    return *end == '\0' || findUnit(end, inf);
+  }
+
   // numbers followed by an optional unit (last token, or suffix of the last number)
   void split(const Entry& e, std::vector<double>& v, std::string& unit) const {
     v.clear();
@@ -171,6 +201,16 @@ class BlockReader {
   std::vector<double> numbers(const Entry& e, Dim dim) const {
     std::vector<double> v;
     std::string unit;
+    // a single value may be an expression with units and constants, e.g. "2 * w0"
+    // (its result is taken in code units, like the deck's own conversions)
+    if (e.tokens.size() == 1 && !isPlainNumber(e.tokens[0])) {
+      try {
+        Expr x(e.tokens[0], {}, g_consts ? *g_consts : NO_CONSTS, u_);
+        return {x(nullptr)};
+      } catch (const std::invalid_argument& ex) {
+        fail(&e, ex.what());
+      }
+    }
     split(e, v, unit);
     try {
       for (auto& x : v) x = toCode(x, unit, dim, u_);
@@ -243,6 +283,14 @@ double PlasmaConfig::radialFactor(double r) const {
 double PlasmaConfig::density(double r, double z) const {
   if (!present || r >= r_max) return 0.0;
   return n0 * longitudinal(z) * radialFactor(r);
+}
+
+double PlasmaConfig::density(double x, double y, double z) const {
+  const double r = std::sqrt(x * x + y * y);
+  const double n = density(r, z);
+  if (n <= 0.0 || fn.empty()) return n;
+  const double v[4] = {x, y, z, r};
+  return std::max(0.0, n * fn(v));
 }
 
 // ============================================================================
@@ -400,6 +448,20 @@ void readGrid(const Block& b, const Deck& d, const Units& u, GridConfig& g, std:
   if (g.r_absorber >= g.r_max) warn.push_back("grid.r_absorber >= r_max: the radial absorber is off");
 }
 
+// block 'constants': named values (numbers with units or expressions of the
+// constants above them), in code units, e.g.  w0 = 8 um;  zr = pi * w0^2 / (0.8 um)
+void readConstants(const Block& b, const Deck& d, const Units& u, std::map<std::string, double>& C) {
+  BlockReader r(b, d, u);
+  static const char* reserved[] = {"pi", "x", "y", "z", "r", "zeta", "if"};
+  for (const auto& e : b.entries) {
+    for (const char* w : reserved)
+      if (e.key == w) r.fail(&e, "'" + e.key + "' is reserved (a variable or built-in name)");
+    if (e.key.empty() || !(std::isalpha(static_cast<unsigned char>(e.key[0])) || e.key[0] == '_'))
+      r.fail(&e, "a constant name must start with a letter");
+    C[e.key] = r.expr(e.key, {})(nullptr);  // "8 um", "3e18 cm^-3", "2 * w0": code units
+  }
+}
+
 void readLaser(const Block& b, const Deck& d, const Units& u, const GridConfig& g, LaserConfig& L,
                std::vector<std::string>& warn) {
   BlockReader r(b, d, u);
@@ -409,16 +471,59 @@ void readLaser(const Block& b, const Deck& d, const Units& u, const GridConfig& 
     if (!(lam > 0)) r.failKey("wavelength", "must be positive");
     L.omega = 2.0 * PI / lam;
   }
-  L.waist = r.num("waist", Dim::Length);
-  if (!(L.waist > 0)) r.failKey("waist", "must be positive");
-  if (r.oneOf("tau_fwhm", "length_1e") == 0) {
-    // intensity FWHM -> 1/e half length of the field: FWHM_I = L sqrt(2 ln 2)
-    L.length_1e = r.num("tau_fwhm", Dim::Time) / std::sqrt(2.0 * std::log(2.0));
+  // transverse profile: Gaussian beam (waist, z_focus) or profile_function(r) at the start
+  if (r.has("profile_function")) {
+    if (r.has("waist")) r.failKey("waist", "give either 'waist' or 'profile_function', not both");
+    if (r.has("z_focus"))
+      r.failKey("z_focus", "profile_function is the field at the start (z = 0): no focus position can be applied");
+    L.profile_fn = r.expr("profile_function", {"r"});
+    // 1/e radius of |g| for the checks (relative to the largest value on [0, 1e4])
+    double gmax = 0.0;
+    for (int k = 0; k <= 4000; ++k) gmax = std::max(gmax, std::fabs(L.profile_fn({0.25 * k})));
+    if (!(gmax > 0) || !std::isfinite(gmax)) r.failKey("profile_function", "must be finite and not zero everywhere");
+    L.waist = 0.0;
+    for (int k = 0; k <= 4000; ++k)
+      if (std::fabs(L.profile_fn({0.25 * k})) >= gmax / std::exp(1.0)) L.waist = 0.25 * k;
+    L.waist = std::max(L.waist, 0.25);
   } else {
-    L.length_1e = r.num("length_1e", Dim::Length);
+    L.waist = r.num("waist", Dim::Length);
+    if (!(L.waist > 0)) r.failKey("waist", "must be positive");
   }
-  if (!(L.length_1e > 0)) r.failKey(r.has("tau_fwhm") ? "tau_fwhm" : "length_1e", "must be positive");
-  L.zeta_center = r.num("zeta_center", Dim::Length);
+  // longitudinal envelope: Gaussian (tau_fwhm or length_1e) or envelope_function(zeta)
+  if (r.has("envelope_function")) {
+    if (r.has("tau_fwhm") || r.has("length_1e"))
+      r.failKey("envelope_function", "replaces tau_fwhm / length_1e: give only one of them");
+    L.envelope_fn = r.expr("envelope_function", {"zeta"});
+  } else {
+    if (r.oneOf("tau_fwhm", "length_1e") == 0) {
+      // intensity FWHM -> 1/e half length of the field: FWHM_I = L sqrt(2 ln 2)
+      L.length_1e = r.num("tau_fwhm", Dim::Time) / std::sqrt(2.0 * std::log(2.0));
+    } else {
+      L.length_1e = r.num("length_1e", Dim::Length);
+    }
+    if (!(L.length_1e > 0)) r.failKey(r.has("tau_fwhm") ? "tau_fwhm" : "length_1e", "must be positive");
+  }
+  if (L.envelope_fn.empty()) {
+    L.zeta_center = r.num("zeta_center", Dim::Length);
+  } else {
+    // envelope_function is a function of the window coordinate zeta itself;
+    // zeta_center (optional) is then only the reference of the carrier phase
+    const double W = g.window();
+    double fmax = 0.0, s0 = 0.0, s1 = 0.0, s2 = 0.0;
+    for (int k = 0; k <= 4000; ++k) {
+      const double z = W * k / 4000.0, f = L.envelope_fn({z});
+      if (!std::isfinite(f)) r.failKey("envelope_function", "is not finite in the window");
+      fmax = std::max(fmax, std::fabs(f));
+      s0 += f * f; s1 += f * f * z; s2 += f * f * z * z;
+    }
+    if (!(fmax > 0)) r.failKey("envelope_function", "is zero everywhere in the window");
+    // centre and 1/e length of the intensity-weighted envelope (for the checks below)
+    const double zc = s1 / s0;
+    L.length_1e = std::max(2.0 * std::sqrt(std::max(0.0, s2 / s0 - zc * zc)), 1e-3);
+    L.zeta_center = r.num("zeta_center", Dim::Length, zc);
+    if (std::fabs(L.envelope_fn({W})) > 1e-3 * fmax)
+      warn.push_back(b.label() + ": envelope_function is not small at the front of the window");
+  }
   L.z_focus = r.num("z_focus", Dim::Length, 0.0);
   L.cep = r.num("cep", Dim::Angle, 0.0);
   const std::string pol = r.word("polarization", "linear", {"linear", "circular"});
@@ -431,7 +536,7 @@ void readLaser(const Block& b, const Deck& d, const Units& u, const GridConfig& 
 
   if (L.zeta_center < 0 || L.zeta_center > g.window())
     r.failKey("zeta_center", "lies outside the window [0, window_length]");
-  if (L.zeta_center + 3.0 * L.length_1e > g.window())
+  if (L.envelope_fn.empty() && L.zeta_center + 3.0 * L.length_1e > g.window())
     warn.push_back(b.label() + ": the pulse front is closer than 3 length_1e to the front of the window");
   if (2.0 * L.waist > g.r_max) warn.push_back(b.label() + ": 2 x waist exceeds the radial box r_max");
   double hmax = g.zetaStep(L.zeta_center);  // largest step over the pulse (+- 2 length_1e)
@@ -463,6 +568,9 @@ void readPlasma(const Block& b, const Deck& d, const Units& u, const GridConfig&
     for (double v : P.z_values)
       if (v < 0) r.failKey("z_values", "must not be negative");
   }
+
+  // any profile: a further factor density_function(x, y, z, r)
+  if (r.has("density_function")) P.fn = r.expr("density_function", {"x", "y", "z", "r"});
 
   // radial profile
   const std::string rad = r.word("radial_profile", "uniform", {"uniform", "parabolic", "table"});
@@ -588,33 +696,70 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   if (!(q > 0)) r.failKey("charge", "must not be zero");
   B.charge = (B.qm < 0) ? -q : q;
   B.charge_pC = u.codeToPC(q);
-  if (r.oneOf("energy", "gamma") == 0) {
+  const int eg = r.oneOf("energy", "gamma", !r.has("gamma_function"));
+  if (eg == 0) {
     const double E = r.num("energy", Dim::Energy);
     B.gamma = 1.0 + E / MC2_MEV;
-  } else {
+  } else if (eg == 1) {
     B.gamma = r.num("gamma", Dim::None);
+  } else {
+    B.gamma = 2.0;  // gamma_function: replaced below by the mean over the profile
   }
   if (!(B.gamma > 1.0)) r.failKey(r.has("gamma") ? "gamma" : "energy", "the bunch must be relativistic (gamma > 1)");
-  if (B.gamma < 10.0)
-    warn.push_back(b.label() + ": gamma < 10 - the bunch self-field is initialized for v = c and the beam push "
-                               "assumes v_z close to c");
+  if (eg >= 0 && B.gamma < 10.0)
+    warn.push_back(b.label() + ": gamma < 10 - the beam push along s assumes v_z close to c");
   B.energy_spread = r.num("energy_spread", Dim::None, 0.0);
   B.sigma_x = r.num("sigma_x", Dim::Length);
   B.sigma_y = r.num("sigma_y", Dim::Length, B.sigma_x);
   B.emittance_x = r.num("emittance_x", Dim::Length, 0.0);
   B.emittance_y = r.num("emittance_y", Dim::Length, B.emittance_x);
   if (!(B.sigma_x > 0) || !(B.sigma_y > 0)) r.failKey("sigma_x", "must be positive");
-  const std::string shape = r.word("distribution_z", "gaussian", {"gaussian", "flattop"});
+  const std::string shape = r.word("distribution_z", "gaussian", {"gaussian", "flattop", "function"});
   if (shape == "gaussian") {
     B.shape = BunchConfig::Shape::Gaussian;
     B.sigma_z = r.num("sigma_z", Dim::Length);
     if (!(B.sigma_z > 0)) r.failKey("sigma_z", "must be positive");
-  } else {
+  } else if (shape == "flattop") {
     B.shape = BunchConfig::Shape::Flattop;
     B.length = r.num("length", Dim::Length);
     if (!(B.length > 0)) r.failKey("length", "must be positive");
+  } else {
+    // current profile f(zeta) (any normalization) on [zeta_min, zeta_max]
+    B.shape = BunchConfig::Shape::Function;
+    B.profile_z = r.expr("profile_z", {"zeta"});
+    B.zeta_min = r.num("zeta_min", Dim::Length);
+    B.zeta_max = r.num("zeta_max", Dim::Length);
+    if (!(B.zeta_max > B.zeta_min)) r.failKey("zeta_max", "must be larger than zeta_min");
+    double sum = 0.0;
+    for (int k = 0; k <= 1000; ++k) {
+      const double v = B.profile_z({B.zeta_min + (B.zeta_max - B.zeta_min) * k / 1000.0});
+      if (v < 0 || !std::isfinite(v)) r.failKey("profile_z", "must be finite and >= 0 on [zeta_min, zeta_max]");
+      sum += v;
+    }
+    if (!(sum > 0)) r.failKey("profile_z", "is zero everywhere on [zeta_min, zeta_max]");
+    B.zeta_center = 0.5 * (B.zeta_min + B.zeta_max);  // for messages and the box advice
+    B.length = B.zeta_max - B.zeta_min;
   }
-  B.zeta_center = r.num("zeta_center", Dim::Length);
+  if (r.has("gamma_function")) {
+    if (shape != "function") r.failKey("gamma_function", "needs distribution_z = function");
+    B.gamma_fn = r.expr("gamma_function", {"zeta"});
+    for (int k = 0; k <= 100; ++k)
+      if (!(B.gamma_fn({B.zeta_min + (B.zeta_max - B.zeta_min) * k / 100.0}) > 1.0))
+        r.failKey("gamma_function", "must be > 1 on [zeta_min, zeta_max]");
+    if (r.has("energy") || r.has("gamma"))
+      r.failKey("gamma_function", "replaces 'energy' / 'gamma': give only one of them");
+    // the bunch's gamma (self-fields, box advice, messages): mean over the current profile
+    double sw = 0.0, sg = 0.0;
+    for (int k = 0; k <= 1000; ++k) {
+      const double z = B.zeta_min + (B.zeta_max - B.zeta_min) * k / 1000.0, w = B.profile_z({z});
+      sw += w;
+      sg += w * B.gamma_fn({z});
+    }
+    B.gamma = sg / sw;
+    if (B.gamma < 10.0)
+      warn.push_back(b.label() + ": gamma < 10 - the beam push along s assumes v_z close to c");
+  }
+  if (shape != "function") B.zeta_center = r.num("zeta_center", Dim::Length);
   B.x0 = r.num("x0", Dim::Length, 0.0);
   B.y0 = r.num("y0", Dim::Length, 0.0);
   B.z_waist = r.num("z_waist", Dim::Length, 0.0);
@@ -668,8 +813,6 @@ void readUndulator(const Block& b, const Deck& d, const Units& u, UndulatorConfi
   U.type = (t == "planar") ? UndulatorConfig::Type::Planar : UndulatorConfig::Type::Helical;
   U.period = r.num("period", Dim::Length);
   if (!(U.period > 0)) r.failKey("period", "must be positive");
-  U.K = r.num("k", Dim::None);  // keys are case-insensitive: K
-  if (!(U.K >= 0)) r.failKey("k", "must not be negative");
   U.z_start = r.num("z_start", Dim::Length, 0.0);
   if (r.oneOf("periods", "length") == 0) {
     const long n = r.integer("periods");
@@ -678,6 +821,19 @@ void readUndulator(const Block& b, const Deck& d, const Units& u, UndulatorConfi
   } else {
     U.length = r.num("length", Dim::Length);
     if (!(U.length > 0)) r.failKey("length", "must be positive");
+  }
+  // keys are case-insensitive: K, K_function
+  if (r.oneOf("k", "k_function") == 0) {
+    U.K = r.num("k", Dim::None);
+    if (!(U.K >= 0)) r.failKey("k", "must not be negative");
+  } else {
+    // taper: K(z) of the lab position z (the ramps multiply it as usual)
+    U.K_fn = r.expr("k_function", {"z"});
+    for (int k = 0; k <= 1000; ++k) {
+      const double v = U.K_fn({U.z_start + U.length * k / 1000.0});
+      if (!(v >= 0) || !std::isfinite(v)) r.failKey("k_function", "must be finite and >= 0 inside the undulator");
+    }
+    U.K = U.K_fn({U.z_start});  // entrance value: resonance and messages
   }
   // whole periods: then the linear ramps leave no net transverse momentum (no drift of the orbit)
   const long rp = r.integer("ramp_periods", 1);
@@ -779,7 +935,12 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
     double slip = grid.z_end / g2;
     for (const auto& U : undulators) {
       const double Z = std::max(0.0, std::min(grid.z_end, U.z_start + U.length) - U.z_start);
-      slip += Z * ((U.type == UndulatorConfig::Type::Planar) ? 0.5 * U.K * U.K : U.K * U.K) / g2;
+      double k2 = 0.0;  // mean K^2 over the part inside the run (taper: K(z))
+      for (int j = 0; j < 200; ++j) {
+        const double Kz = U.Kat(U.z_start + (j + 0.5) / 200.0 * Z);
+        k2 += Kz * Kz / 200.0;
+      }
+      slip += Z * ((U.type == UndulatorConfig::Type::Planar) ? 0.5 * k2 : k2) / g2;
     }
     A.slip = slip;
     A.front_now = grid.window() - (B.zeta_center + half);
@@ -794,12 +955,15 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 // ============================================================================
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
-  deck.checkBlockNames({"grid", "laser", "plasma", "ion", "bunch", "undulator", "output", "numerics"});
+  deck.checkBlockNames({"constants", "grid", "laser", "plasma", "ion", "bunch", "undulator", "output", "numerics"});
   Config c;
+  g_consts = &c.constants;  // the expressions of all blocks see the constants
+  struct Reset { ~Reset() { g_consts = nullptr; } } reset;
   const Block* grid = deck.single("grid");
   if (!grid) throw DeckError(deck.source + ": the deck needs a 'grid' block");
   c.units.lambda0_um = readLambda0(deck, grid);
 
+  if (const Block* b = deck.single("constants")) readConstants(*b, deck, c.units, c.constants);
   readGrid(*grid, deck, c.units, c.grid, warn);
   for (const Block* b : deck.all("laser")) {
     LaserConfig L;
@@ -945,6 +1109,11 @@ std::string Config::summary() const {
          i, L.a0, lam_um, L.waist * um, L.zR() * um * 1e-3, L.length_1e * std::sqrt(2.0 * std::log(2.0)) * fs,
          L.zeta_center * um, L.z_focus * um * 1e-3, L.pol == LaserConfig::Pol::Linear ? "linear" : "circular",
          P_TW);
+    if (!L.profile_fn.empty())
+      line("        profile_function(r) = %s (field at z = 0; w0, zR, P: estimates from its 1/e radius)",
+           L.profile_fn.text().c_str());
+    if (!L.envelope_fn.empty())
+      line("        envelope_function(zeta) = %s (tau_FWHM: estimate)", L.envelope_fn.text().c_str());
   }
   for (const auto& A : boxAdvice())
     line("box for bunch '%s' (v < c): r_max >= %s (%s; now %s), gaps >= %s at both ends (now %s ahead, %s behind "
@@ -966,6 +1135,7 @@ std::string Config::summary() const {
          U.B0() * units.B0_T(), U.z_start * um * 1e-3, (U.z_start + U.length) * um * 1e-3, U.length / U.period,
          U.ramp / U.period,
          U.type == UndulatorConfig::Type::Planar ? (U.focusing ? ", natural focusing" : ", no focusing") : "");
+    if (!U.K_fn.empty()) line("        taper K_function(z) = %s (K above: at the entrance)", U.K_fn.text().c_str());
     if (!res.empty()) line("        resonant wavelength (on axis): %s", res.c_str());
   }
   if (plasma.present) {
@@ -987,6 +1157,7 @@ std::string Config::summary() const {
       }
       line("        longitudinal profile: %s", s.c_str());
     }
+    if (!plasma.fn.empty()) line("        times density_function(x, y, z, r) = %s", plasma.fn.text().c_str());
     line("        macroparticles per cell: %d x %d, and %d x %d for r < %.4g um", plasma.ppc_r, plasma.ppc_phi,
          plasma.ppc_r_axis, plasma.ppc_phi_axis, plasma.r_axis_refine * um);
   }
@@ -1023,6 +1194,19 @@ std::string Config::summary() const {
          B.shape == BunchConfig::Shape::Gaussian ? "sigma_z" : "length",
          (B.shape == BunchConfig::Shape::Gaussian ? B.sigma_z : B.length) * um, B.zeta_center * um,
          B.macroparticles);
+    if (B.shape == BunchConfig::Shape::Function)
+      line("        profile_z(zeta) = %s on %.4g ... %.4g um", B.profile_z.text().c_str(), B.zeta_min * um,
+           B.zeta_max * um);
+    if (!B.gamma_fn.empty())
+      line("        gamma_function(zeta) = %s (gamma above: mean over the profile)", B.gamma_fn.text().c_str());
+  }
+  if (!constants.empty()) {
+    std::string s;
+    for (const auto& kv : constants) {
+      std::snprintf(buf, sizeof buf, "%s%s = %.6g", s.empty() ? "" : ", ", kv.first.c_str(), kv.second);
+      s += buf;
+    }
+    line("constants (code units): %s", s.c_str());
   }
   if (output.hdf5)
     line("output format: %s (HDF5 %s precision, compression %d)", output.text ? "text + hdf5" : "hdf5",
