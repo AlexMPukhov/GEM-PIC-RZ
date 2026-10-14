@@ -145,7 +145,7 @@ struct IonConfig {
 
 // ---------------------------------------------------------------- bunch
 struct BunchConfig {
-  enum class Shape { Gaussian, Flattop, Function };
+  enum class Shape { Gaussian, Flattop, Function, File };
   std::string name;
   double qm = -1.0;         // charge-to-mass ratio: -1 electron, +1 positron
   double charge = 0.0;      // total charge [code units], signed
@@ -164,6 +164,18 @@ struct BunchConfig {
   double x0 = 0, y0 = 0;    // transverse offset
   double z_waist = 0;       // position of the beta waist (z = 0: at start)
   int macroparticles = 10000;
+  // File: particles read from an openPMD / native file (bunch.file), after selection and
+  // placement: x, y, zeta, ux, uy, uz [code units] and |charge| per macroparticle [code units]
+  struct FileParticle { double x, y, zeta, ux, uy, uz, q; };
+  std::vector<FileParticle> file_particles;
+  std::string file_info;              // for the summary
+  double file_center = 0.0;           // centroid (zeta_center of the deck)
+  double resample_smoothing = 0.0;    // jitter of resampled particles, in units of the rms per coordinate
+  // shot noise: random positions (noise of the macroparticles), or Fawley's beamlets
+  // with the bunching noise of the real number of electrons at noise_wavelength
+  bool fawley = false;
+  double noise_wavelength = 0.0;
+  int beamlet = 4;
 };
 
 // ---------------------------------------------------------------- undulator

@@ -90,6 +90,7 @@ numerics { ... }    algorithm parameters               (optional)
 |---|---|
 | `src/deck.*` | generic parser: blocks, `key = value`, lists, strings, comments, line numbers, command-line overrides |
 | `src/units.*` | unit table and conversion to code units |
+| `src/beam_import.*` | reading particle beams from openPMD and native HDF5 files |
 | `src/expr.*` | function parser: expressions of the deck (profiles, constants) compiled to a stack program |
 | `src/config.*` | typed structures `GridConfig`, `LaserConfig`, `PlasmaConfig`, `BunchConfig`, `OutputConfig`, `NumericsConfig`; reading, validation, summary |
 | `src/atomic_data.*` | NIST ionization energies of all charge states of 21 elements, standard atomic masses |
@@ -543,6 +544,7 @@ earlier versions except in the rearmost slice.
 - **Several bunches:** electrons or positrons (the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
+- **Beams from files:** a bunch can be read from an openPMD file of any code or from a native data file (selection, placement, resampling), and **Fawley shot noise** gives the bunching noise of the real electrons for FEL start-up.
 - **Function parser:** profiles of plasmas, lasers, bunches and undulator tapers as expressions in the deck.
 - **GPU and multi-core:** the parallel engine runs the time step on an NVIDIA GPU (`cuda`) or on CPU threads (`openmp`); see above.
 - **Diagnostics:** `bunches.txt` holds the statistics of every bunch and of the self-trapped charge at every step. The output is in µm and pC. Each run saves `deck_used.txt` and `summary.txt`.

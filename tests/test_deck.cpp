@@ -809,6 +809,23 @@ int main() {
     CHECK_NEAR(fz.By, 0.95 * U.ku(), 1e-9);
   }
 
+  // ------------------------------------------------------------ shot noise, beams from files
+  {
+    const std::string Bk = "bunch { charge = 1 pC; gamma = 100; sigma_x = 2 um; sigma_z = 1 um; zeta_center = 20 um;";
+    Config c = cfgOf(std::string(BASE) + Bk + " macroparticles = 400; shot_noise = fawley; noise_wavelength = 0.8 um }");
+    CHECK(c.bunches[0].fawley && c.bunches[0].beamlet == 4);
+    CHECK_NEAR(c.bunches[0].noise_wavelength, 2.0 * PI, 1e-14);
+    EXPECT_ERROR(cfgOf(std::string(BASE) + Bk + " macroparticles = 401; shot_noise = fawley; noise_wavelength = 0.8 um }"),
+                 "multiple of beamlet");
+    EXPECT_ERROR(cfgOf(std::string(BASE) + Bk + " shot_noise = fawley }"), "noise_wavelength");
+    EXPECT_ERROR(cfgOf(std::string(BASE) + Bk + " noise_wavelength = 1 um }"), "shot_noise = fawley");
+#if defined(GEMPIC_HAVE_HDF5)
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "bunch { file = /nonexistent.h5; zeta_center = 10 um }"), "cannot open");
+#else
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "bunch { file = /nonexistent.h5; zeta_center = 10 um }"), "needs HDF5");
+#endif
+  }
+
   // ------------------------------------------------------------ output formats
 #if defined(GEMPIC_HAVE_HDF5)
   {

@@ -4,12 +4,14 @@
 #include "config.hpp"
 
 #include "atomic_data.hpp"
+#include "beam_import.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 
 namespace gem {
@@ -685,10 +687,133 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
   if (I.mass < 100.0) warn.push_back(b.label() + " (" + I.name + "): mass below 100 m_e - is the unit right?");
 }
 
+// shot-noise model (all bunch kinds)
+void readShotNoise(const BlockReader& r, BunchConfig& B) {
+  B.fawley = r.word("shot_noise", "random", {"random", "fawley"}) == "fawley";
+  if (B.fawley) {
+    B.noise_wavelength = r.num("noise_wavelength", Dim::Length);
+    if (!(B.noise_wavelength > 0)) r.failKey("noise_wavelength", "must be positive");
+    B.beamlet = int(r.integer("beamlet", 4));
+    if (B.beamlet < 3) r.failKey("beamlet", "must be >= 3 (macroparticles per beamlet)");
+    if (B.macroparticles % B.beamlet != 0)
+      r.failKey("macroparticles", "must be a multiple of beamlet = " + std::to_string(B.beamlet) +
+                                      " with shot_noise = fawley");
+  } else {
+    if (r.has("noise_wavelength")) r.failKey("noise_wavelength", "is used with shot_noise = fawley");
+    if (r.has("beamlet")) r.failKey("beamlet", "is used with shot_noise = fawley");
+  }
+}
+
+// bunch read from a file (bunch.file): select, place at zeta_center, rescale charge
+void readBunchFile(const Block& b, const Deck& d, const Units& u, const GridConfig& g, BunchConfig& B,
+                   std::vector<std::string>& warn) {
+  BlockReader r(b, d, u);
+  B.shape = BunchConfig::Shape::File;
+  std::string path = r.str("file", "");
+  if (!std::filesystem::exists(path)) {  // relative to the directory of the deck
+    const std::filesystem::path alt = std::filesystem::path(d.source).parent_path() / path;
+    if (std::filesystem::exists(alt)) path = alt.string();
+  }
+  ImportedBeam imp;
+  try {
+    imp = importBeam(path, r.str("file_species", ""), r.integer("file_iteration", -1));
+  } catch (const std::exception& e) {
+    r.failKey("file", e.what());
+  }
+  const double L = u.k0inv_um() * 1e-6;  // code length [m]
+  const double Qc = 1.602176634e-19 / (u.codeToPC(1.0) * 1e-12);  // one electron in code charge units
+  // longitudinal coordinate relative to the charge centroid of the species
+  double sw = 0.0, sz = 0.0;
+  for (const auto& p : imp.p) { sw += p.w; sz += p.w * p.z; }
+  const double zc = sz / sw;
+  Expr sel;
+  if (r.has("select")) sel = r.expr("select", {"x", "y", "z", "ux", "uy", "uz", "gamma"});
+  std::vector<BunchConfig::FileParticle> v;
+  v.reserve(imp.p.size());
+  for (const auto& p : imp.p) {
+    const BunchConfig::FileParticle f{p.x / L, p.y / L, (p.z - zc) / L, p.ux, p.uy, p.uz, p.w * Qc};
+    if (!sel.empty()) {
+      const double vars[7] = {f.x, f.y, f.zeta, f.ux, f.uy, f.uz, std::sqrt(1.0 + f.ux * f.ux + f.uy * f.uy + f.uz * f.uz)};
+      if (sel(vars) == 0.0) continue;
+    }
+    v.push_back(f);
+  }
+  if (v.empty()) r.failKey("select", "no particle of the file passes the selection");
+  // place the centroid of the selected particles at zeta_center (plus x0, y0)
+  B.x0 = r.num("x0", Dim::Length, 0.0);
+  B.y0 = r.num("y0", Dim::Length, 0.0);
+  const double zcen = r.num("zeta_center", Dim::Length);
+  double Q = 0.0, mz = 0.0;
+  for (const auto& f : v) { Q += f.q; mz += f.q * f.zeta; }
+  mz /= Q;
+  double scale = 1.0;
+  if (r.has("charge")) {
+    const double q = std::fabs(r.num("charge", Dim::Charge));
+    if (!(q > 0)) r.failKey("charge", "must not be zero");
+    scale = q / Q;
+  }
+  for (auto& f : v) { f.zeta += zcen - mz; f.x += B.x0; f.y += B.y0; f.q *= scale; }
+  Q *= scale;
+  // statistics for the summary, the checks and the self-fields
+  double g1 = 0, x1 = 0, x2 = 0, y1 = 0, y2 = 0, z2 = 0, zmin = 1e300, zmax = -1e300;
+  double xu = 0, ux1 = 0, ux2 = 0, yu = 0, uy1 = 0, uy2 = 0;
+  for (const auto& f : v) {
+    const double gm = std::sqrt(1.0 + f.ux * f.ux + f.uy * f.uy + f.uz * f.uz), w = f.q / Q;
+    g1 += w * gm; x1 += w * f.x; x2 += w * f.x * f.x; y1 += w * f.y; y2 += w * f.y * f.y;
+    z2 += w * (f.zeta - zcen) * (f.zeta - zcen); ux1 += w * f.ux; ux2 += w * f.ux * f.ux; xu += w * f.x * f.ux;
+    uy1 += w * f.uy; uy2 += w * f.uy * f.uy; yu += w * f.y * f.uy;
+    zmin = std::min(zmin, f.zeta); zmax = std::max(zmax, f.zeta);
+  }
+  double g2 = 0;
+  for (const auto& f : v) {
+    const double gm = std::sqrt(1.0 + f.ux * f.ux + f.uy * f.uy + f.uz * f.uz);
+    g2 += f.q / Q * (gm - g1) * (gm - g1);
+  }
+  B.qm = imp.charge_sign;
+  B.charge = imp.charge_sign * Q;
+  B.charge_pC = u.codeToPC(Q);
+  B.gamma = g1;
+  if (!(B.gamma > 1.0)) r.failKey("file", "the mean gamma of the beam is not > 1");
+  B.energy_spread = std::sqrt(g2) / g1;
+  B.sigma_x = std::max(1e-12, std::sqrt(std::max(0.0, x2 - x1 * x1)));
+  B.sigma_y = std::max(1e-12, std::sqrt(std::max(0.0, y2 - y1 * y1)));
+  B.sigma_z = std::max(1e-12, std::sqrt(z2));
+  const double cx = x2 - x1 * x1, cu = ux2 - ux1 * ux1, cxu = xu - x1 * ux1;
+  B.emittance_x = std::sqrt(std::max(0.0, cx * cu - cxu * cxu));
+  const double cy = y2 - y1 * y1, cv = uy2 - uy1 * uy1, cyv = yu - y1 * uy1;
+  B.emittance_y = std::sqrt(std::max(0.0, cy * cv - cyv * cyv));
+  B.file_center = zcen;
+  B.zeta_min = zmin;
+  B.zeta_max = zmax;
+  B.length = std::max(zmax - zmin, 1e-12);
+  B.zeta_center = 0.5 * (zmin + zmax);  // the checks use the extent
+  B.macroparticles = int(r.integer("macroparticles", long(v.size())));
+  if (B.macroparticles < 1) r.failKey("macroparticles", "must be >= 1");
+  B.resample_smoothing = r.num("resample_smoothing", Dim::None, 0.0);
+  if (B.resample_smoothing < 0) r.failKey("resample_smoothing", "must be >= 0");
+  readShotNoise(r, B);
+  B.file_particles.swap(v);
+  char buf[512];
+  std::snprintf(buf, sizeof buf, "%s, %s '%s'%s: %zu of %zu particles%s", path.c_str(), imp.format.c_str(),
+                imp.species.c_str(), imp.iteration >= 0 ? (" iteration " + std::to_string(imp.iteration)).c_str() : "",
+                B.file_particles.size(), imp.p.size(), sel.empty() ? "" : (" (select: " + sel.text() + ")").c_str());
+  B.file_info = buf;
+  if (B.macroparticles != int(B.file_particles.size()) || B.fawley)
+    B.file_info += ", resampled to " + std::to_string(B.macroparticles) + " macroparticles";
+  if (B.zeta_min < 0 || B.zeta_max > g.window())
+    warn.push_back(b.label() + " (" + B.name + ") extends beyond the window (particles outside are removed)");
+  if (std::max(B.sigma_x, B.sigma_y) < 2.0 * g.dr_min)
+    warn.push_back(b.label() + " (" + B.name + "): sigma < 2 dr_min, the bunch is not resolved radially");
+}
+
 void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& g, BunchConfig& B,
                std::vector<std::string>& warn) {
   BlockReader r(b, d, u);
   B.name = r.str("name", "bunch" + std::to_string(b.index));
+  if (r.has("file")) {
+    readBunchFile(b, d, u, g, B, warn);
+    return;
+  }
   const std::string sp = r.word("species", "electron", {"electron", "positron"});
   B.qm = (sp == "electron") ? -1.0 : 1.0;
   // charge: magnitude from the deck, sign from the species
@@ -765,6 +890,7 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   B.z_waist = r.num("z_waist", Dim::Length, 0.0);
   B.macroparticles = int(r.integer("macroparticles", 10000));
   if (B.macroparticles < 1) r.failKey("macroparticles", "must be >= 1");
+  readShotNoise(r, B);
 
   const double half = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
   if (B.zeta_center - half < 0 || B.zeta_center + half > g.window())
@@ -1209,9 +1335,15 @@ std::string Config::summary() const {
          "eps_n = %.4g, %.4g um, %s %.4g um at zeta = %.4g um, %d macroparticles",
          i, B.name.c_str(), B.qm < 0 ? "electrons" : "positrons", B.charge_pC, (B.gamma - 1.0) * MC2_MEV, B.gamma,
          B.energy_spread, B.sigma_x * um, B.sigma_y * um, B.emittance_x * um, B.emittance_y * um,
-         B.shape == BunchConfig::Shape::Gaussian ? "sigma_z" : "length",
-         (B.shape == BunchConfig::Shape::Gaussian ? B.sigma_z : B.length) * um, B.zeta_center * um,
+         B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? "sigma_z" : "length",
+         (B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? B.sigma_z : B.length) * um,
+         (B.shape == BunchConfig::Shape::File ? B.file_center : B.zeta_center) * um,
          B.macroparticles);
+    if (B.shape == BunchConfig::Shape::File)
+      line("        from %s (rms length %.4g um, extent %.4g ... %.4g um)", B.file_info.c_str(), B.sigma_z * um,
+           B.zeta_min * um, B.zeta_max * um);
+    if (B.fawley)
+      line("        shot noise: Fawley beamlets of %d macroparticles at %.4g um", B.beamlet, B.noise_wavelength * um);
     if (B.shape == BunchConfig::Shape::Function)
       line("        profile_z(zeta) = %s on %.4g ... %.4g um", B.profile_z.text().c_str(), B.zeta_min * um,
            B.zeta_max * um);

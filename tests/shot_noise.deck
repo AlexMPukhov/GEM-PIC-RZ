@@ -1,0 +1,12 @@
+# Shot-noise test (tests/beam_import.sh): a long flat-top bunch with Fawley beamlets at 0.8 um.
+# The bunching in Hann windows of 16 wavelengths must equal that of the real electrons, <|b|^2> = 1.5/N_e.
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = uniform; dr = 5 um; r_max = 100 um
+  dzeta = 0.2 um;  window_length = 1700 um
+  dz = 10 um;  z_end = 10 um
+}
+bunch { name = b; charge = 5 pC; gamma = 1e6; sigma_x = 20 um
+        distribution_z = flattop; length = 1600 um; zeta_center = 850 um; macroparticles = 1600000
+        shot_noise = fawley; noise_wavelength = 0.8 um }
+output { dir = out; every = 0; format = hdf5; axis = false; maps = false }

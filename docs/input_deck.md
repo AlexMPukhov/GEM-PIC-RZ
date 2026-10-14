@@ -283,6 +283,57 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | `z_waist` | length | 0 | position of the beta waist. The bunch is drifted ballistically back to z = 0 |
 | `macroparticles` | integer | 10000 | number of macroparticles |
 
+**Shot noise.** By default the macroparticles are placed at random, so the bunching noise at any wavelength is that
+of N_macro independent particles, much larger than that of the real electrons. For FEL start-up from noise use
+
+| key | kind | default | meaning |
+|-----|------|---------|---------|
+| `shot_noise` | `random` \| `fawley` | `random` | `fawley`: beamlets of `beamlet` macroparticles spread evenly over one `noise_wavelength` (no bunching), displaced by random amounts such that the bunching at the wavelength and its harmonics h < beamlet/2 equals that of the real number of electrons, ⟨\|b_h\|²⟩ = 1/N_e (W. Fawley, PRST-AB 5, 070701 (2002)) |
+| `noise_wavelength` | length | — | the wavelength of the noise model, usually the resonant wavelength λ_r |
+| `beamlet` | integer ≥ 3 | 4 | macroparticles per beamlet; `macroparticles` must be a multiple of it |
+
+The beamlet members share x, y and the momentum. Checked in `tests/beam_import.sh`: N_e⟨\|b\|²⟩ = 1.08 (Fawley) and
+N_macro⟨\|b\|²⟩ = 0.93 (random), against 1 ± 0.1.
+
+### Bunches from files (`file`)
+
+A bunch can be read from the particle output of an earlier stage, of this code or of any code that writes openPMD
+(FBPIC, HiPACE++, WarpX, …). Then the shape keys (`charge`, `energy`, `sigma_*`, `emittance_*`, `distribution_z`)
+are not used: everything comes from the file.
+
+```
+bunch {
+  name        = witness
+  file        = stage1/diag/openpmd/openpmd_2000.h5   # relative to the working directory or to the deck
+  file_species = witness                  # needed if the file holds several species
+  select      = "uz > 300 && abs(z) < 5 um"   # keep these (z: relative to the charge centroid)
+  zeta_center = 25 um                      # centroid of the selected particles in the new window
+  macroparticles = 200000                  # resample (default: the particles of the file as they are)
+  shot_noise  = fawley;  noise_wavelength = 0.4 um
+}
+```
+
+| key | kind | default | meaning |
+|-----|------|---------|---------|
+| `file` | path | — | openPMD file (one iteration per file or all in one) or a native `data_NNNNN.h5` |
+| `file_species` | name | the only species | openPMD species; native files: a bunch name, `trapped` or `inj_<ion>` |
+| `file_iteration` | integer | the last | openPMD iteration |
+| `select` | function of x, y, z, ux, uy, uz, gamma | all | particles with a non-zero value are kept. z is the lab position relative to the charge centroid of the species, momenta in m_e c |
+| `zeta_center` | length | — | the charge centroid of the selected particles is placed here |
+| `x0`, `y0` | length | 0 | transverse shift |
+| `charge` | charge | from the file | rescales the weights to this total charge |
+| `macroparticles` | integer | as in the file | resample to this number: systematic resampling with probabilities ∝ charge, equal weights |
+| `resample_smoothing` | number | 0 | Gaussian jitter of resampled particles, in units of the rms of each coordinate (avoids identical copies when the number grows; keep it small, it adds to the slice energy spread) |
+
+- **Coordinates:** positions and momenta are converted to this run's units (the files carry SI factors). The
+  longitudinal position is taken relative to the centroid, so the time of the file does not matter.
+- **Species:** electrons and positrons only (charge and mass are checked).
+- **Moments:** the summary prints the charge, energy, spread, rms sizes and emittances of the imported bunch, which
+  also define its initial self-field (γ: the mean).
+- **Restart:** a restarted run reads the beam from its checkpoint; the file is opened again only for the checks.
+- **Check:** a bunch written by a run (openPMD or native) and read into a new run has the same moments to all
+  printed digits (`tests/beam_import.sh`).
+
 Each bunch starts with its relativistic vacuum self-field: E⊥ = −∇⊥ψ with −Δ⊥ψ = j_z, and B = ẑ × E. This assumes γ ≫ 1; a warning is printed for γ < 10. The field is initialized even if the plasma begins at z = 0: the bunch then enters the plasma with its vacuum field.
 
 **Self-field of a bunch.** Every bunch starts with the field of a charge distribution moving with its own β:

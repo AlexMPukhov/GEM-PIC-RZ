@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp)
+  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -116,7 +116,7 @@ elseif(GEMPIC_OPENMP)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
       src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp
-      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp)
+      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
     target_include_directories(gempic_rz_gpuemu PRIVATE src)
@@ -200,6 +200,9 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME functions_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/functions.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
   endforeach()
+  # beams from files (openPMD, native), selection, resampling, Fawley shot noise
+  add_test(NAME beam_import
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/beam_import.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>)
   # openPMD output: validator (if installed), fields and particles against the native files
   add_test(NAME openpmd
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
