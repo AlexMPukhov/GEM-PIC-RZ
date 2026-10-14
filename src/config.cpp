@@ -624,23 +624,6 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   const double half = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
   if (B.zeta_center - half < 0 || B.zeta_center + half > g.window())
     warn.push_back(b.label() + " (" + B.name + ") extends beyond the window (particles outside are removed)");
-  // The longitudinal space-charge field of a bunch with v < c reaches the
-  // distance d ahead of it with E_z(d) / E_z(head) ~ L r / (gamma d^2). The
-  // scheme sets E_z = 0 at the front of the window; a field cut off there acts
-  // as a uniform E_z on the whole bunch (it changes the bunch energy).
-  if (B.gamma < 1e5) {
-    const double L = 2.0 * half, rb = std::max(B.sigma_x, B.sigma_y);
-    // (the same reach behind the bunch: the initial field is computed with psi = 0 at the rear end)
-    const double front = g.window() - (B.zeta_center + half), rear = B.zeta_center - half;
-    const double need = std::sqrt(100.0 * L * rb / B.gamma);  // E_z(gap) / E_z(edge) = 1 %
-    if (std::min(front, rear) < need) {
-      char buf[256];
-      std::snprintf(buf, sizeof buf, "%.3g um from the front and %.3g um from the rear; give it >= %.3g um on both sides",
-                    front * u.k0inv_um(), rear * u.k0inv_um(), need * u.k0inv_um());
-      warn.push_back(b.label() + " (" + B.name + "): its space-charge field (gamma = " +
-                     std::to_string(int(B.gamma)) + ") reaches the ends of the window: the bunch is " + buf);
-    }
-  }
   if (3.0 * std::max(B.sigma_x, B.sigma_y) > g.r_max)
     warn.push_back(b.label() + " (" + B.name + ") is wider than the radial box");
   if (std::max(B.sigma_x, B.sigma_y) < 2.0 * g.dr_min)
@@ -743,6 +726,72 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
 }  // namespace
 
 // ============================================================================
+//  box size for bunches with v < c
+//
+//  Radial: the field of a bunch of length L reaches the radius ~ gamma L (rest
+//  frame: rod of length gamma L). A wall at r_max < gamma L shields the
+//  longitudinal space charge, g = 1 + 2 ln(min(r_max, gamma L)/a) (a beam
+//  pipe); r_max >= gamma L gives the free-space field. In an undulator the
+//  radiation needs r_max >= 5 w with w^2 = a^2 + (lambda_r Z / (4 pi a))^2 at
+//  the end of the undulator (Z: distance from its entrance).
+//  (Checked with a gamma = 100 bunch: r_max = gamma L shields the energy
+//  spread from the space charge by 1.4 %, 2 gamma L by 0.3 %.)
+//  Window: the longitudinal field reaches the distance d beyond the ends of
+//  the bunch. In free space E_z(d) = Q/(4 pi eps0 gamma^2 d^2), against
+//  E_z(edge) ~ Q/(4 pi eps0 a max(a, gamma L)) (rod or disk in the rest
+//  frame); inside the wall it decays as exp(-2.405 gamma d / r_max). 1 %:
+//      d = min( 10 sqrt(a max(a, gamma L)) / gamma, ln(100) r_max / (2.405 gamma) ).
+//  Inside a plasma the field is screened over c/omega_p: no advice then.
+//  The bunch slips back by int (1 + K_eff^2)/(2 gamma^2) dz (K_eff^2 = K^2/2
+//  planar, K^2 helical), so the gap behind it is checked at the end of the run.
+// ============================================================================
+namespace {
+std::string fmtUm(double x, const Units& u) {
+  char buf[64];
+  const double um = x * u.k0inv_um();
+  if (um >= 1e4) std::snprintf(buf, sizeof buf, "%.3g mm", um * 1e-3);
+  else std::snprintf(buf, sizeof buf, "%.3g um", um);
+  return buf;
+}
+}  // namespace
+
+std::vector<Config::BoxAdvice> Config::boxAdvice() const {
+  std::vector<BoxAdvice> out;
+  if (plasma.present) return out;  // fields screened over c / omega_p
+  for (const auto& B : bunches) {
+    if (!(B.gamma < 1e5)) continue;
+    BoxAdvice A;
+    A.name = B.name;
+    const double half = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
+    const double L = 2.0 * half, a = std::max(B.sigma_x, B.sigma_y), g2 = 2.0 * B.gamma * B.gamma;
+    A.rmax_need = B.gamma * L;
+    A.rmax_why = "gamma L";
+    for (const auto& U : undulators) {
+      const double Z = std::max(0.0, std::min(grid.z_end, U.z_start + U.length) - U.z_start);
+      const double lr = U.resonance(B.gamma), d = lr * Z / (4.0 * PI * a);
+      const double w5 = 5.0 * std::sqrt(a * a + d * d);
+      if (w5 > A.rmax_need) { A.rmax_need = w5; A.rmax_why = "5 x the size of the undulator radiation"; }
+    }
+    A.rmax_now = grid.r_max;
+    A.gap_need = std::min(10.0 * std::sqrt(a * std::max(a, B.gamma * L)) / B.gamma,
+                          std::log(100.0) * grid.r_max / (2.405 * B.gamma));
+    // slippage over the run
+    double slip = grid.z_end / g2;
+    for (const auto& U : undulators) {
+      const double Z = std::max(0.0, std::min(grid.z_end, U.z_start + U.length) - U.z_start);
+      slip += Z * ((U.type == UndulatorConfig::Type::Planar) ? 0.5 * U.K * U.K : U.K * U.K) / g2;
+    }
+    A.slip = slip;
+    A.front_now = grid.window() - (B.zeta_center + half);
+    A.rear_end = B.zeta_center - half - slip;
+    // smallest window that keeps both gaps
+    A.window_need = A.gap_need + slip + L + A.gap_need;
+    out.push_back(A);
+  }
+  return out;
+}
+
+// ============================================================================
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
   deck.checkBlockNames({"grid", "laser", "plasma", "ion", "bunch", "undulator", "output", "numerics"});
@@ -795,6 +844,17 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   if (const Block* b = deck.single("output")) readOutput(*b, deck, c.units, c.output);
   if (const Block* b = deck.single("numerics")) readNumerics(*b, deck, c.units, c.numerics);
   deck.checkAllUsed();
+  // box size for bunches with v < c (Config::boxAdvice): warn if too small
+  for (const auto& A : c.boxAdvice()) {
+    if (A.rmax_now < A.rmax_need)
+      warn.push_back("bunch '" + A.name + "': the radial boundary is closer than the reach of its fields: r_max = " +
+                     fmtUm(A.rmax_now, c.units) + " < " + fmtUm(A.rmax_need, c.units) + " (" + A.rmax_why +
+                     "); a wall closer than gamma L shields the space charge like a beam pipe");
+    if (A.front_now < A.gap_need || A.rear_end < A.gap_need)
+      warn.push_back("bunch '" + A.name + "': its space-charge field reaches the ends of the window (gap ahead " +
+                     fmtUm(A.front_now, c.units) + ", behind at the end " + fmtUm(A.rear_end, c.units) +
+                     "; needed " + fmtUm(A.gap_need, c.units) + "): E_z = 0 at the front acts as a uniform E_z");
+  }
   // resolution of an undulator: the steps along z and the sub-steps of the
   // beam push must follow the wiggling (period / 16), the zeta grid the
   // radiation (resonant wavelength / 12)
@@ -886,6 +946,12 @@ std::string Config::summary() const {
          L.zeta_center * um, L.z_focus * um * 1e-3, L.pol == LaserConfig::Pol::Linear ? "linear" : "circular",
          P_TW);
   }
+  for (const auto& A : boxAdvice())
+    line("box for bunch '%s' (v < c): r_max >= %s (%s; now %s), gaps >= %s at both ends (now %s ahead, %s behind "
+         "after %s slippage): window >= %s (now %s)",
+         A.name.c_str(), fmtUm(A.rmax_need, units).c_str(), A.rmax_why.c_str(), fmtUm(A.rmax_now, units).c_str(),
+         fmtUm(A.gap_need, units).c_str(), fmtUm(A.front_now, units).c_str(), fmtUm(A.rear_end, units).c_str(),
+         fmtUm(A.slip, units).c_str(), fmtUm(A.window_need, units).c_str(), fmtUm(grid.window(), units).c_str());
   for (size_t k = 0; k < undulators.size(); ++k) {
     const auto& U = undulators[k];
     std::string res;

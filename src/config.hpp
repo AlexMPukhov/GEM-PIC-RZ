@@ -229,6 +229,18 @@ struct Config {
 
   // Human-readable summary in physical and code units.
   std::string summary() const;
+
+  // smallest box for the fields of every bunch with v < c (see config.cpp)
+  struct BoxAdvice {
+    std::string name;
+    double rmax_need = 0, rmax_now = 0;  // radial boundary
+    std::string rmax_why;
+    double gap_need = 0;                 // gap at both ends of the window
+    double front_now = 0, rear_end = 0;  // gap ahead at the start, behind at the end of the run
+    double slip = 0;                     // slippage of the bunch over the run
+    double window_need = 0;              // smallest window length with both gaps
+  };
+  std::vector<BoxAdvice> boxAdvice() const;
 };
 
 }  // namespace gem

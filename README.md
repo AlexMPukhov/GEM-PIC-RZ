@@ -334,11 +334,11 @@ bunch form factor exp(−k²σ_z² − k²θ²σ_r²), integrated over 0.6 < k/k
 - **ctest `undulator`:** 10 periods, 15 s. It checks the energy (±5%), the spectral peak (±0.3%) and the slippage of
   the bunch (8.264 µm vs 8.260 µm from the trajectory).
 
-**Test: high-gain FEL (SASE)** (`examples/fel_sase.deck`, 7.5 min on 2 cores). The setup:
+**Test: high-gain FEL (SASE)** (`examples/fel_sase.deck`, 6.3 min on 2 cores). The setup:
 - helical undulator, period 1 cm, K = 1, 60 periods;
 - bunch at γ = 1000, 4 kA, σ_r = 10 µm, zero emittance, flat-top over 1.3 µm = 130 λ_r;
 - λ_r = 10 nm, resolved by 16 slices;
-- radial boundary at 2 cm.
+- radial boundary at 1.5 mm, just beyond γL = 1.3 mm.
 
 The FEL parameter is ρ = 0.009. The 1D power gain length is 5.1 periods, and Ming Xie's formula gives 6.4
 (diffraction η_d = 0.40). 2πL_c = 55 λ_r. The amplification starts from the macroparticle noise. A copy with
@@ -486,14 +486,25 @@ earlier versions except in the rearmost slice.
    own β: −(Lap_⊥ + γ⁻²∂_ζ²)ψ = j_z/β, R = (1 + β)E_⊥, L = (1 − β)E_⊥,
    E_z = −γ⁻²∂_ζψ. This is solved with the radial eigenmodes of the
    discrete Laplacian and a tridiagonal solve along ζ (`src/eigen.*`).
-   - **Window ahead of the bunch:** the space-charge field of such a bunch
-     reaches ahead of it, E_z(d)/E_z(head) ~ L r/(γ d²). The scheme sets
-     E_z = 0 at the front of the window, and a field cut off there acts as a
-     uniform E_z on the whole bunch. The summary warns if the gap is smaller
-     than √(100 L r/γ).
+   - **Box size:** the box must hold the field of such a bunch, and the
+     summary prints the smallest box that does (`docs/input_deck.md`, bunch
+     block).
+     - Radial: r_max ≥ γL; a closer wall shields the space charge like a beam
+       pipe, by 1.4 % at r_max = γL for a γ = 100 bunch.
+     - Window: gaps of min(10 √(a·max(a, γL))/γ, ln(100) r_max/(2.405 γ)) at
+       both ends; behind the bunch after its slippage. The scheme sets E_z = 0
+       at the front of the window, and a field cut off there acts as a uniform
+       E_z on the whole bunch.
+     - A larger box changes nothing: the FEL example gives the same bunching
+       and radiation (3 digits) with r_max = 1.5 mm as with 2 cm, and runs
+       16 % faster.
+     - A capacitor estimate of the wall field, E_z ≈ Q/(ε0 π r_max²), does not
+       apply: the field lines end radially on the wall. At r_max = 1 mm the
+       capacitor estimate predicts ΔE/E = 3 × 10⁻³ for the bunch below; the
+       code gives 1.6 × 10⁻⁵.
    - **Test (same bunch, no undulator, 8 cm):** mean energy 50.5889 →
      50.5899 MeV (2 × 10⁻⁵); field energy within 2 %. The gap was 70 µm, and
-     the radial boundary was at 10 cm with a free-hand grid of 5 µm → 5 mm.
+     the radial boundary was at 10 cm with a free-hand grid of 5 µm → 5 mm (the same with 2 mm ≥ γL).
      With a 2 µm gap the bunch loses 1.2 × 10⁻³ instead.
    - **Bunches with γ > 10⁵:** they keep the v = c field, unchanged.
 

@@ -22,9 +22,9 @@ check() {  # <label> <value> <expected> <tolerance> <unit>
     echo "  $1 = $2 $5, expected $3 +- $4  FAILED"; exit 1
   fi
 }
-W=$("$H5X" $F energy 0 21 | awk '!/^#/ { printf "%.4e", $6 }')
+W=$("$H5X" $F energy 0 30 | awk '!/^#/ { printf "%.4e", $6 }')
 check "radiated energy" "$W" 1.103e-8 0.055e-8 "(code units)"
-K=$("$H5X" $F spectrum 0 21 0.90 1.06 161 | awk '!/^#/ && $3 > best { best = $3; k = $1 } END { printf "%.4f", k }')
+K=$("$H5X" $F spectrum 0 30 0.90 1.06 161 | awk '!/^#/ && $3 > best { best = $3; k = $1 } END { printf "%.4f", k }')
 check "peak of the spectrum k/k0" "$K" 0.981 0.003 ""
 S=$(awk '!/^#/ && $3 == "b" { if (!seen) z0 = $12; seen = 1; z1 = $12 } END { printf "%.3f", z0 - z1 }' \
   undulator_out/bunches.txt)

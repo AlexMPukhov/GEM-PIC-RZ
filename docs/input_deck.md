@@ -218,13 +218,19 @@ Each bunch starts with its relativistic vacuum self-field: E⊥ = −∇⊥ψ wi
 
 **Self-field of a bunch.** Every bunch starts with the field of a charge distribution moving with its own β:
 −(Lap⊥ + γ⁻²∂ζ²)ψ = j_z/β, E⊥ = −∇⊥ψ, E_z = −γ⁻²∂ζψ, B = β ẑ × E. (For γ > 10⁵ this is the v = c field,
-R = 2E⊥.) For γ of order 100 two things matter:
-- **Gap ahead of the bunch:** the longitudinal space-charge field reaches a distance d ahead of the bunch with
-  E_z(d)/E_z(head) ~ L r/(γ d²), where L is the bunch length and r its radius. The scheme sets E_z = 0 at the front
-  of the window, so the window must extend ahead of the bunch by at least √(100 L r/γ). The summary warns
-  otherwise.
-- **Radial boundary:** the outer boundary is a conducting wall. For a bunch in free space, put it far outside γ L
-  (e.g. a free-hand grid growing geometrically to centimetres), and switch the absorber off (`r_absorber > r_max`).
+R = 2E⊥.) For γ ≲ 10⁴ in vacuum the box must hold this field, but not much more. The summary prints the smallest box for
+every such bunch ("box for bunch …") and warns if the box is smaller:
+- **Radial boundary** (a conducting wall): r_max ≥ γL, the reach of the field of a bunch of length L. A closer wall
+  shields the longitudinal space charge like a beam pipe, g = 1 + 2 ln(min(r_max, γL)/a). For a γ = 100 bunch the
+  energy spread changes by 1.4 % at r_max = γL and by 0.3 % at 2γL. With undulators also r_max ≥ 5w, where w is the
+  size of the radiation at the end of the undulator. Switch the absorber off (`r_absorber > r_max`): it would damp
+  the self-field.
+- **Gaps at both ends of the window:** the scheme sets E_z = 0 at the front, so a field cut off there acts as a
+  uniform E_z on the whole bunch. The gap needed for E_z(d)/E_z(edge) = 1 % is
+  d = min( 10 √(a·max(a, γL))/γ , ln(100) r_max/(2.405 γ) ). The first term is for free space, the second for the
+  field inside the wall. The gap behind the bunch is checked at the end of the run, after the slippage
+  ∫(1 + K_eff²)/(2γ²) dz.
+- **No check in a plasma:** there the field is screened over c/ω_p.
 
 ## `undulator` (0 … N blocks)
 

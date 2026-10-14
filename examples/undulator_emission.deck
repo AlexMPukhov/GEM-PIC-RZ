@@ -11,8 +11,8 @@
 #  with dzeta = 12.5 nm).  About 2 minutes on 2 cores.
 #
 #  run:      gempic_rz examples/undulator_emission.deck
-#  analyse:  h5_extract undulator_emission/data_01041.h5 energy 5.5 48    (W(m>=1): radiation)
-#            h5_extract undulator_emission/data_01041.h5 spectrum 5.5 48 0.9 1.05 301
+#  analyse:  h5_extract undulator_emission/data_01041.h5 energy 0 63    (W(m>=1): radiation)
+#            h5_extract undulator_emission/data_01041.h5 spectrum 0 63 0.9 1.05 301
 #            h5_extract undulator_emission/data_01041.h5 lineout 0 0     (E_x on axis)
 # ============================================================================
 
@@ -24,7 +24,7 @@ grid {
   dr_points     = 20, 20, 100 um
   r_max         = 5 mm
   dzeta         = 25 nm           # 32 points per resonant wavelength
-  window_length = 54 um           # slippage 50 lambda_r = 40 um + bunch + space-charge margin ahead
+  window_length = 63 um           # slippage 50 lambda_r = 40 um + bunch + space-charge margin ahead
   dz            = 0.7111 mm       # 20 steps per undulator period
   z_end         = 0.74 m
   r_absorber    = 4.2 mm
@@ -46,7 +46,7 @@ bunch {
   sigma_x        = 100 um
   emittance_x    = 0 um
   sigma_z        = 0.1 um         # longitudinal form factor exp(-k^2 sigma_z^2) = 0.54
-  zeta_center    = 45 um          # near the front: the bunch slips backwards
+  zeta_center    = 52 um          # near the front: the bunch slips backwards
   macroparticles = 100000
 }
 
