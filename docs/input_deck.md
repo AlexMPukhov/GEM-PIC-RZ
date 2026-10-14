@@ -413,6 +413,9 @@ all particles, like the undulators; the field solver does not see them. Several 
 | `openpmd_dr`, `openpmd_dzeta` | length | smallest dr / dzeta of the grid | spacing of the uniform r–ζ grid of the openPMD fields |
 | `hdf5_precision` | `double` \| `single` | `double` | floating-point precision of the HDF5 datasets (single: half the size) |
 | `hdf5_compression` | integer 0 … 9 | 0 | gzip level of the HDF5 datasets (0: none; the files of the examples shrink by about 3.5× with `single` + 6) |
+| `fel` | `auto` \| `true` \| `false` | `auto` | FEL table `fel.txt` every step (auto: on when there are undulator and bunch blocks) |
+| `fel_wavelength` | length | resonance of `undulator[0]` for `bunch[0]` | wavelength of the bunching factor in `fel.txt` |
+| `fel_slice` | length | 20 `fel_wavelength` | slice length for the largest bunching `b_max` in `fel.txt` |
 | `checkpoint_every` | integer | 0 | write a checkpoint `checkpoint_NNNNN.h5` every N steps and at the end of the run (0: none; needs HDF5) |
 | `checkpoint_keep` | integer | 2 | keep only the newest N checkpoints (0: all) |
 | `walltime_hours` | number | 0 | stop with a checkpoint (exit code 3) before this wall-clock time is exceeded (0: no limit) |
@@ -424,6 +427,7 @@ Every run writes:
 | `deck_used.txt` | the deck after command-line overrides |
 | `summary.txt` | the parameters in physical units |
 | `bunches.txt` | one line per step and bunch: charge, energy, energy spread, sizes, emittances, bunch length; also the self-trapped plasma electrons (`trapped`) and the trapped electrons freed by ionization (`inj_<ion name>`) |
+| `fel.txt` | (with `output.fel`) per step: field energy of the modes m ≥ 1 (the radiation of a centred beam) [J], the largest power through a slice, ∫S_z dA over the modes m ≥ 1 [W], and its ζ, the energy of mode 0 [J] (self-fields, wake), the bunching factor \|⟨e^{ikζ}⟩\| of every bunch at `fel_wavelength`, and its largest value over slices of `fel_slice` (slices with at least half the charge of the fullest one). Checked against the data files (energy) and the form factor of a short bunch (bunching) in `tests/undulator.sh`; MPI runs give the same table |
 | `ionization.txt` | per step and ionizing species: mean charge state and charge-state fractions of the ions leaving the window, freed charge |
 | `axis_NNNNN.txt` | on-axis E_x, E_z, n_e/n0, Z n_i/n0 (mobile ions) versus ζ [µm] |
 | `map_NNNNN.txt` | E_x, E_z, n_e/n0, Z n_i/n0 in the x–ζ plane (gnuplot `pm3d` format) |

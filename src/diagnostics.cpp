@@ -75,12 +75,21 @@ void Moments::add(const Particle& p) {
 void Moments::add(const Moments& o) {
   n += o.n; Q += o.Q; g1 += o.g1; g2 += o.g2; x1 += o.x1; x2 += o.x2; u1 += o.u1; u2 += o.u2; xu += o.xu;
   y1 += o.y1; y2 += o.y2; v1 += o.v1; v2 += o.v2; yv += o.yv; z1 += o.z1; z2 += o.z2;
+  br += o.br; bi += o.bi;
 }
 void DiagSums::add(const DiagSums& o) {
   maxEx = std::max(maxEx, o.maxEx);
   minEz = std::min(minEz, o.minEz);
   maxEz = std::max(maxEz, o.maxEz);
   nimax = std::max(nimax, o.nimax);
+  Wrad += o.Wrad;
+  W0 += o.W0;
+  if (o.Pmax > Pmax) { Pmax = o.Pmax; zPmax = o.zPmax; }
+  for (const auto& kv : o.slices) {
+    auto& v = slices[kv.first];
+    if (v.size() < kv.second.size()) v.resize(kv.second.size(), 0.0);
+    for (size_t j = 0; j < kv.second.size(); ++j) v[j] += kv.second[j];
+  }
   for (const auto& kv : o.moments) moments[kv.first].add(kv.second);
   for (size_t s = 0; s < o.freed.size(); ++s) {
     if (freed.size() <= s) freed.resize(s + 1, 0.0);
@@ -101,6 +110,48 @@ DiagSums Simulation::diagSums(int n0, int n1) const {
     D.nimax = std::max(D.nimax, (c0s.rhoi[size_t(k) * g.N] + c0b.rhoi[size_t(k) * g.N]) / n_ref);
   for (const auto& p : beam) D.moments[p.sp].add(p);
   D.freed = freedCharge;
+  if (cfg.output.fel) {
+    // bunching at the FEL wavelength
+    const double k = 2.0 * PI / cfg.output.fel_wavelength;
+    const double ls = cfg.output.fel_slice;
+    const size_t ns = size_t(std::ceil(zv.node(Nz) / ls)) + 1;
+    for (const auto& p : beam) {
+      Moments& m = D.moments[p.sp];
+      const double w = std::fabs(p.q), c = w * std::cos(k * p.zeta), s = w * std::sin(k * p.zeta);
+      m.br += c;
+      m.bi += s;
+      if (p.sp < 0) continue;
+      auto& v = D.slices[p.sp];
+      if (v.empty()) v.assign(3 * ns, 0.0);
+      const size_t j = std::min(ns - 1, size_t(std::max(0.0, p.zeta / ls)));
+      v[3 * j] += w; v[3 * j + 1] += c; v[3 * j + 2] += s;
+    }
+    // energy and power: |E_r|^2 + |B_phi|^2 = (|R_r|^2 + |L_r|^2) / 2, E_r B_phi* (real part) = (|R_r|^2 - |L_r|^2) / 4
+    const int N = g.N;
+    for (int n = n0; n < std::min(n1, Nz); ++n) {
+      const double hn = zv.len(n);
+      double P = 0.0;
+      for (int m = 0; m <= M; ++m) {
+        const double fac = (m == 0) ? 1.0 : 2.0;
+        double e = 0.0, s = 0.0;
+        for (int i = 1; i <= N; ++i) {
+          const size_t j = fold.f(m, n, i);
+          const double R = std::norm(fold.Rr[j]), L = std::norm(fold.Lr[j]);
+          e += g.Af[i] * (0.5 * (R + L) + std::norm(fold.Bz[j]));
+          s += g.Af[i] * (R - L);
+        }
+        for (int i = 0; i < N; ++i) {
+          const size_t j = fold.c(m, n, i);
+          const double R = std::norm(fold.Rp[j]), L = std::norm(fold.Lp[j]);
+          e += g.Ac[i] * (0.5 * (R + L) + std::norm(fold.Ez[j]));
+          s += g.Ac[i] * (R - L);
+        }
+        if (m == 0) D.W0 += PI * fac * hn * e;
+        else { D.Wrad += PI * fac * hn * e; P += PI * s; }
+      }
+      if (P > D.Pmax) { D.Pmax = P; D.zPmax = zv.node(n); }
+    }
+  }
   return D;
 }
 
@@ -136,6 +187,7 @@ void Simulation::report(const DiagSums& D, bool files) {
   std::fflush(stdout);
   writeBunchTable(D);
   writeIonizationTable(D);
+  if (cfg.output.fel) writeFelTable(D);
   if (files && cfg.output.text) writeFiles();
   if (files && cfg.output.hdf5) writeHdf5();
   if (files && cfg.output.openpmd) writeOpenPMD();
@@ -145,7 +197,7 @@ void Simulation::report(const DiagSums& D, bool files) {
 // interrupted run: keep the comments and the lines of steps <= N.
 void Simulation::trimTables() {
   if (comm::rank() != 0) return;  // only rank 0 writes the output
-  for (const char* t : {"/bunches.txt", "/ionization.txt"}) {
+  for (const char* t : {"/bunches.txt", "/ionization.txt", "/fel.txt"}) {
     const std::string name = cfg.output.dir + t;
     FILE* fp = std::fopen(name.c_str(), "r");
     if (!fp) continue;
@@ -161,6 +213,45 @@ void Simulation::trimTables() {
       std::fclose(out);
     }
   }
+}
+
+// fel.txt: radiation energy and peak power (modes m >= 1), bunching factor of every bunch
+void Simulation::writeFelTable(const DiagSums& D) {
+  const std::string name = cfg.output.dir + "/fel.txt";
+  const bool fresh = (step_no == 0) || !std::filesystem::exists(name);
+  FILE* fp = std::fopen(name.c_str(), fresh ? "w" : "a");
+  if (!fp) return;
+  const Units& u = cfg.units;
+  const double L = u.k0inv_um() * 1e-6, E0 = MC2_MEV * 1e6 / L, eps0 = 8.8541878128e-12;
+  const double WJ = eps0 * E0 * E0 * L * L * L, PW = eps0 * C_LIGHT * E0 * E0 * L * L;
+  if (fresh) {
+    std::fprintf(fp, "# FEL diagnostics at lambda = %.6g um (bunching b = |<exp(i 2 pi zeta / lambda)>|, charge-weighted)\n",
+                 cfg.output.fel_wavelength * u.k0inv_um());
+    std::fprintf(fp, "# b_max: largest bunching over slices of %.4g um holding >= half the charge of the fullest slice\n",
+                 cfg.output.fel_slice * u.k0inv_um());
+    std::fprintf(fp, "# step  z[mm]  W_rad[J](m>=1)  P_max[W](m>=1)  zeta(P_max)[um]  W_m0[J]");
+    for (const auto& B : cfg.bunches) std::fprintf(fp, "  b_%s  b_max_%s", B.name.c_str(), B.name.c_str());
+    std::fprintf(fp, "\n");
+  }
+  std::fprintf(fp, "%6d %10.5f %13.5e %13.5e %10.4f %13.5e", step_no, s0 * u.k0inv_um() * 1e-3, D.Wrad * WJ,
+               D.Pmax * PW, D.zPmax * u.k0inv_um(), D.W0 * WJ);
+  for (size_t b = 0; b < cfg.bunches.size(); ++b) {
+    const auto it = D.moments.find(int(b));
+    const double bf = (it == D.moments.end() || it->second.Q <= 0)
+                          ? 0.0 : std::hypot(it->second.br, it->second.bi) / it->second.Q;
+    double bmax = 0.0;
+    const auto sl = D.slices.find(int(b));
+    if (sl != D.slices.end()) {
+      const auto& v = sl->second;
+      double qmax = 0.0;
+      for (size_t j = 0; j < v.size(); j += 3) qmax = std::max(qmax, v[j]);
+      for (size_t j = 0; j < v.size(); j += 3)
+        if (v[j] > 0 && v[j] >= 0.5 * qmax) bmax = std::max(bmax, std::hypot(v[j + 1], v[j + 2]) / v[j]);
+    }
+    std::fprintf(fp, " %12.5e %12.5e", bf, bmax);
+  }
+  std::fprintf(fp, "\n");
+  std::fclose(fp);
 }
 
 void Simulation::writeBunchTable(const DiagSums& D) {

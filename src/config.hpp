@@ -231,6 +231,11 @@ struct OutputConfig {
   // thetaMode, interpolated to a uniform r-z grid; the beam list per species
   bool openpmd = false;
   double openpmd_dr = 0, openpmd_dzeta = 0;  // output grid (0: smallest steps of the grid)
+  // fel.txt every step: radiation energy, peak power, bunching (default: on with undulators)
+  bool fel = false;
+  double fel_wavelength = 0;  // bunching wavelength (default: resonance of undulator[0] for bunch[0])
+  int fel_mode = -1;          // deck: -1 auto, 0 off, 1 on
+  double fel_slice = 0;       // slices for the largest bunching (default 20 fel_wavelength)
   bool hdf5_single = false;  // store floating-point data in single precision
   int hdf5_compression = 0;  // gzip level 0..9 (0: none)
   // checkpoints for restarts (checkpoint_NNNNN.h5, complete state in double precision)

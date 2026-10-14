@@ -948,6 +948,12 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   if (O.walltime_hours > 0) r.failKey("walltime_hours", "the checkpoint at the wall-time limit needs HDF5 support");
 #endif
   if (O.every < 0) r.failKey("every", "must be >= 0");
+  const std::string fel = r.word("fel", "auto", {"auto", "true", "false", "yes", "no", "on", "off"});
+  O.fel_mode = (fel == "auto") ? -1 : (fel == "true" || fel == "yes" || fel == "on") ? 1 : 0;
+  O.fel_wavelength = r.num("fel_wavelength", Dim::Length, 0.0);
+  if (O.fel_wavelength < 0) r.failKey("fel_wavelength", "must be positive");
+  O.fel_slice = r.num("fel_slice", Dim::Length, 0.0);
+  if (O.fel_slice < 0) r.failKey("fel_slice", "must be positive");
   if (O.map_stride < 1) r.failKey("map_stride", "must be >= 1");
 }
 
@@ -1196,6 +1202,18 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   }
   std::sort(c.chicanes.begin(), c.chicanes.end(), [](const ChicaneConfig& a, const ChicaneConfig& b) { return a.z < b.z; });
   if (const Block* b = deck.single("output")) readOutput(*b, deck, c.units, c.output);
+  // FEL diagnostics: on with undulators unless switched off; wavelength of the bunching
+  {
+    auto& O = c.output;
+    O.fel = (O.fel_mode == 1) || (O.fel_mode == -1 && !c.undulators.empty() && !c.bunches.empty());
+    if (O.fel && !(O.fel_wavelength > 0)) {
+      if (c.undulators.empty() || c.bunches.empty())
+        throw DeckError(deck.source + ": output.fel needs output.fel_wavelength (no undulator and bunch to take the "
+                        "resonant wavelength from)");
+      O.fel_wavelength = c.undulators[0].resonance(c.bunches[0].gamma);
+    }
+    if (!(O.fel_slice > 0)) O.fel_slice = 20.0 * O.fel_wavelength;
+  }
   if (const Block* b = deck.single("numerics")) readNumerics(*b, deck, c.units, c.numerics);
   deck.checkAllUsed();
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
@@ -1438,6 +1456,8 @@ std::string Config::summary() const {
     line("output format: %s (HDF5 %s precision, compression %d)", f.c_str(), output.hdf5_single ? "single" : "double",
          output.hdf5_compression);
   }
+  if (output.fel)
+    line("FEL diagnostics: fel.txt every step, bunching at %.5g um", output.fel_wavelength * um);
   if (output.openpmd) {
     const double dr = output.openpmd_dr > 0 ? output.openpmd_dr : grid.dr_min;
     double dzt = output.openpmd_dzeta;

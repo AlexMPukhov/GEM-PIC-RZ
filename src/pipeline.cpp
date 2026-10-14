@@ -191,6 +191,9 @@ class PipelineRun {
     B.put<unsigned long long>(D.moments.size());
     for (const auto& kv : D.moments) { B.put(kv.first); B.put(kv.second); }
     B.putVec(D.freed);
+    B.put(D.Wrad); B.put(D.W0); B.put(D.Pmax); B.put(D.zPmax);
+    B.put<unsigned long long>(D.slices.size());
+    for (const auto& kv : D.slices) { B.put(kv.first); B.putVec(kv.second); }
   }
   static DiagSums getDiag(Buffer& B) {
     DiagSums D;
@@ -201,6 +204,12 @@ class PipelineRun {
       D.moments[sp] = B.get<Moments>();
     }
     D.freed = B.getVec<double>();
+    D.Wrad = B.get<double>(); D.W0 = B.get<double>(); D.Pmax = B.get<double>(); D.zPmax = B.get<double>();
+    const size_t ns = size_t(B.get<unsigned long long>());
+    for (size_t i = 0; i < ns; ++i) {
+      const int sp = B.get<int>();
+      D.slices[sp] = B.getVec<double>();
+    }
     return D;
   }
 };

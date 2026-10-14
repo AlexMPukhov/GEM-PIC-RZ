@@ -38,6 +38,7 @@ struct Moments {
   long long n = 0;
   double Q = 0, g1 = 0, g2 = 0, x1 = 0, x2 = 0, u1 = 0, u2 = 0, xu = 0, y1 = 0, y2 = 0, v1 = 0, v2 = 0, yv = 0,
          z1 = 0, z2 = 0;
+  double br = 0, bi = 0;  // sum |q| exp(i k zeta) at the FEL wavelength (bunching factor)
   void add(const Particle& p);
   void add(const Moments& o);
 };
@@ -48,6 +49,11 @@ struct DiagSums {
   double maxEx = 0, minEz = 0, maxEz = 0, nimax = 0;  // on-axis fields, mobile-ion density
   std::map<int, Moments> moments;                      // per species id of the beam list
   std::vector<double> freed;                           // per ion block: charge freed in the step
+  // FEL diagnostics (output.fel): field energy of the modes m >= 1 (radiation of a centred beam)
+  // and m = 0, largest power of the modes m >= 1 through a slice, and its zeta
+  double Wrad = 0, W0 = 0, Pmax = 0, zPmax = 0;
+  // bunching per bunch in slices of output.fel_slice: {Q, sum |q| cos, sum |q| sin} per slice
+  std::map<int, std::vector<double>> slices;
   void add(const DiagSums& o);
 };
 
@@ -145,6 +151,7 @@ class Simulation {
   void readCheckpoint(const std::string& path);
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt
   void writeBunchTable(const DiagSums& D);
+  void writeFelTable(const DiagSums& D);
   void writeIonizationTable(const DiagSums& D);
 };
 
