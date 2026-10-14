@@ -235,6 +235,9 @@ struct OutputConfig {
   // thetaMode, interpolated to a uniform r-z grid; the beam list per species
   bool openpmd = false;
   double openpmd_dr = 0, openpmd_dzeta = 0;  // output grid (0: smallest steps of the grid)
+  // openpmd_grid: uniform (interpolated, for any openPMD reader), native (the code's own nodes,
+  // rectilinear-mesh records "native_*"), both
+  bool openpmd_uniform = true, openpmd_native = true;
   // fel.txt every step: radiation energy, peak power, bunching (default: on with undulators)
   bool fel = false;
   double fel_wavelength = 0;  // bunching wavelength (default: resonance of undulator[0] for bunch[0])

@@ -949,6 +949,10 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   O.openpmd_dzeta = r.num("openpmd_dzeta", Dim::Length, 0.0);
   if (O.openpmd_dr < 0) r.failKey("openpmd_dr", "must be positive");
   if (O.openpmd_dzeta < 0) r.failKey("openpmd_dzeta", "must be positive");
+  const std::string og = r.word("openpmd_grid", "both", {"uniform", "native", "both"});
+  O.openpmd_uniform = (og != "native");
+  O.openpmd_native = (og != "uniform");
+  if (!O.openpmd && r.has("openpmd_grid")) r.failKey("openpmd_grid", "needs format = openpmd");
   if (!O.openpmd && (r.has("openpmd_dr") || r.has("openpmd_dzeta")))
     r.failKey(r.has("openpmd_dr") ? "openpmd_dr" : "openpmd_dzeta", "needs format = openpmd");
   O.hdf5_single = r.word("hdf5_precision", "double", {"double", "single"}) == "single";
@@ -1488,9 +1492,14 @@ std::string Config::summary() const {
       for (int n = 0; n < grid.Nz; ++n) dzt = std::min(dzt, grid.zetaNode(n + 1) - grid.zetaNode(n));
     }
     const long nr = long(std::floor(grid.r_max / dr + 1e-9)) + 1, nz = long(std::floor(grid.window() / dzt + 1e-9)) + 1;
-    line("openPMD: %s/openpmd/openpmd_%%T.h5, fields on a uniform grid dr = %.4g um, dzeta = %.4g um (%ld x %ld "
-         "points, %d modes)",
-         output.dir.c_str(), dr * um, dzt * um, nr, nz, 2 * grid.M + 1);
+    if (output.openpmd_uniform)
+      line("openPMD: %s/openpmd/openpmd_%%T.h5, fields on a uniform grid dr = %.4g um, dzeta = %.4g um (%ld x %ld "
+           "points, %d modes)%s",
+           output.dir.c_str(), dr * um, dzt * um, nr, nz, 2 * grid.M + 1,
+           output.openpmd_native ? ", and on the native grid (records native_*)" : "");
+    else
+      line("openPMD: %s/openpmd/openpmd_%%T.h5, fields on the native grid (records native_*, %d modes)",
+           output.dir.c_str(), 2 * grid.M + 1);
   }
   if (output.checkpoint_every > 0 || output.walltime_hours > 0)
     line("checkpoints: every %d steps (keep %d)%s", output.checkpoint_every, output.checkpoint_keep,

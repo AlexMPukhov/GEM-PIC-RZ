@@ -1,5 +1,5 @@
 """Check an openPMD file of GEM-PIC-RZ against the native HDF5 file of the same step.
-usage: python3 openpmd_check.py <output dir> <step> <h5_extract>"""
+usage: python3 openpmd_check.py <output dir> <step> <h5_extract> [<tools dir>]"""
 import subprocess
 import sys
 
@@ -68,6 +68,22 @@ need(abs(q - 5.0) < 1e-6, "witness charge 5 pC")
 zlab = w["position/z"][...] * w["position/z"].attrs["unitSI"] + w["positionOffset/z"].attrs["value"] * L
 zn = g["particles/beam/zeta"][...] * L + s
 need(abs(np.mean(zlab) - np.mean(zn)) < 1e-12, "lab z of the particles")
+
+# native records (rectilinear meshes) through the generic reader: exact native data
+if len(sys.argv) > 4:
+    sys.path.insert(0, sys.argv[4])
+    from openpmd_rectilinear import read_mesh, theta_slice
+    m = read_mesh(f"{out}/openpmd/openpmd_{step}.h5", "native_E_z")
+    rc = g["grid/r_centres"][...] * L
+    need(np.allclose(m.axes["r"], rc, rtol=1e-12), "native_E_z: radial nodes = cell centres")
+    need(np.allclose(m.axes["z"] - s, g["grid/zeta_slices"][...] * L, rtol=0, atol=1e-18), "native_E_z: zeta nodes")
+    th = np.deg2rad(30.0)
+    Fz = theta_slice(m, th)
+    Ez = g["fields/Ez"][...]  # [m][n][i] complex code units
+    ref = Ez[0].real + 2 * sum((Ez[k] * np.exp(1j * k * th)).real for k in range(1, Ez.shape[0]))
+    err = np.max(np.abs(Fz.T / E0 - ref)) / np.max(np.abs(ref))
+    print(f"  native_E_z (rectilinear record) against the data file: max difference {err:.1e}")
+    need(err < 1e-12, "native_E_z values")
 
 if fails:
     print("FAILED:", ", ".join(fails))

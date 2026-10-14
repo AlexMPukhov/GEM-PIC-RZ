@@ -2,6 +2,9 @@
 //  h5_extract.cpp -- read a GEM-PIC-RZ HDF5 file (data_NNNNN.h5) and print
 //  ASCII tables; also an example of how to read the files from C++.
 //
+//  <file>: data_NNNNN.h5, or an openPMD file openpmd_<step>.h5 written with the native records
+//  (output.openpmd_grid = native | both; all commands except beam)
+//
 //  h5_extract <file> info                  attributes and datasets
 //  h5_extract <file> axis                  zeta[um] Ex Ez ne/n0 Zni/n0 on the axis
 //  h5_extract <file> map [stride]          zeta[um] x[um] Ex Ez ne/n0 Zni/n0 in the
@@ -75,6 +78,26 @@ struct File {
     return s.c_str();
   }
   bool exists(const char* path) const { return H5Lexists(id, path, H5P_DEFAULT) > 0; }
+  bool hasAttr(const char* name, const char* obj = "/") const { return H5Aexists_by_name(id, obj, name, H5P_DEFAULT) > 0; }
+  std::vector<double> attrVec(const char* name, const char* obj) const {
+    hid_t a = H5Aopen_by_name(id, obj, name, H5P_DEFAULT, H5P_DEFAULT);
+    if (a < 0) throw std::runtime_error(std::string("attribute ") + obj + ":" + name);
+    hid_t sp = H5Aget_space(a);
+    std::vector<double> v(size_t(H5Sget_simple_extent_npoints(sp)));
+    H5Aread(a, H5T_NATIVE_DOUBLE, v.data());
+    H5Sclose(sp);
+    H5Aclose(a);
+    return v;
+  }
+  // openPMD: name of the (first) iteration group under /data
+  std::string firstIteration() const {
+    hid_t g = H5Gopen2(id, "/data", H5P_DEFAULT);
+    if (g < 0) throw std::runtime_error("no /data group");
+    char buf[64] = {0};
+    H5Lget_name_by_idx(g, ".", H5_INDEX_NAME, H5_ITER_INC, 0, buf, sizeof buf, H5P_DEFAULT);
+    H5Gclose(g);
+    return buf;
+  }
 
   // dataset -> vector (converted to double / complex<double>), dims returned
   template <class T>
@@ -117,7 +140,16 @@ struct Data {
   cd face(const std::vector<cd>& F, int m, int n, int i) const { return F[(size_t(m) * (Nz + 1) + n) * (N + 1) + i]; }
   cd cent(const std::vector<cd>& F, int m, int n, int i) const { return F[(size_t(m) * (Nz + 1) + n) * N + i]; }
 
+  // file metadata used by the commands (both formats)
+  long long step = 0;
+  double z_m = 0, E0 = 0, L = 0;  // propagation distance [m], field unit [V/m], length unit [m]
+
   explicit Data(const File& f) {
+    if (f.hasAttr("openPMD")) { fromOpenPMD(f); return; }
+    step = f.attrI("step");
+    z_m = f.attrD("z_m");
+    E0 = f.attrD("E0_V_per_m");
+    L = f.attrD("k0inv_m");
     M = int(f.attrI("modes")) - 1;
     N = int(f.attrI("Nr"));
     Nz = int(f.attrI("Nzeta"));
@@ -129,6 +161,52 @@ struct Data {
     Ephi = f.read<cd>("/fields/Ephi"); Br = f.read<cd>("/fields/Br"); Ez = f.read<cd>("/fields/Ez");
     ne = f.read<double>("/densities/ne_over_n0");
     ni = f.read<double>("/densities/Zni_over_n0");
+  }
+
+  // openPMD file of GEM-PIC-RZ with the native records (output.openpmd_grid = native | both):
+  // rectilinear meshes native_<name> with the node positions in gridCoordinates_r / _z and the modes
+  // as cos / sin parts, F_0 = A_0, F_m = (A_{2m-1} - i A_{2m}) / 2 (docs/openpmd_rectilinear.md)
+  void fromOpenPMD(const File& f) {
+    const std::string it = f.firstIteration(), base = "/data/" + it + "/meshes/";
+    if (!f.exists((base + "native_E_r").c_str()))
+      throw std::runtime_error("openPMD file without the native records: write it with output.openpmd_grid = native "
+                               "or both");
+    step = std::atoll(it.c_str());
+    const std::string er = base + "native_E_r";
+    L = f.attrD("gridUnitSI", er.c_str());
+    E0 = f.attrD("unitSI", er.c_str());
+    z_m = f.attrVec("gridGlobalOffset", er.c_str())[1] * L;
+    um = L * 1e6;
+    rho = f.attrVec("gridCoordinates_r", er.c_str());
+    c = f.attrVec("gridCoordinates_r", (base + "native_E_t").c_str());
+    zs = f.attrVec("gridCoordinates_z", er.c_str());
+    N = int(c.size());
+    Nz = int(zs.size()) - 1;
+    auto modes = [&](const char* nm, int L_) {
+      std::vector<hsize_t> d;
+      const std::vector<double> a = f.read<double>((base + nm).c_str(), &d);
+      M = (int(d[0]) - 1) / 2;
+      std::vector<cd> F(size_t(M + 1) * (Nz + 1) * L_);
+      for (int m = 0; m <= M; ++m)
+        for (int n = 0; n <= Nz; ++n)
+          for (int i = 0; i < L_; ++i) {
+            auto A = [&](int k) { return a[(size_t(k) * L_ + i) * (Nz + 1) + n]; };
+            F[(size_t(m) * (Nz + 1) + n) * L_ + i] = (m == 0) ? cd(A(0), 0.0) : 0.5 * cd(A(2 * m - 1), -A(2 * m));
+          }
+      return F;
+    };
+    Er = modes("native_E_r", N + 1); Bphi = modes("native_B_t", N + 1); Bz = modes("native_B_z", N + 1);
+    Ephi = modes("native_E_t", N); Br = modes("native_B_r", N); Ez = modes("native_E_z", N);
+    auto dens = [&](const char* nm) {
+      std::vector<double> v(size_t(Nz) * N, 0.0);
+      if (!f.exists((base + nm).c_str())) return v;
+      const std::vector<double> a = f.read<double>((base + nm).c_str());
+      for (int i = 0; i < N; ++i)
+        for (int k = 0; k < Nz; ++k) v[size_t(k) * N + i] = a[size_t(i) * Nz + k];
+      return v;
+    };
+    ne = dens("native_n_e");
+    ni = dens("native_Zn_i");
   }
 
   // Cartesian E, B at (x, y) on slice n
@@ -269,6 +347,15 @@ int main(int argc, char** argv) {
   try {
     File f(argv[1]);
     const std::string what = argv[2];
+    const bool opmd = f.hasAttr("openPMD");
+    if (what == "info" && opmd) {
+      const Data D(f);
+      std::printf("%s: openPMD file of %s, iteration %lld, z = %.6g mm, %d modes, Nr = %d, Nzeta = %d (native records)\n",
+                  argv[1], f.attrS("software").c_str(), D.step, D.z_m * 1e3, D.M + 1, D.N, D.Nz);
+      return 0;
+    }
+    if (what == "beam" && opmd)
+      throw std::runtime_error("beam: read the particles of an openPMD file with openPMD tools (or bunch.file = ...)");
     if (what == "info") {
       std::printf("%s: %s, step %lld, z = %.6g mm, %lld modes, Nr = %lld, Nzeta = %lld\n", argv[1],
                   f.attrS("code").c_str(), f.attrI("step"), f.attrD("z_m") * 1e3, f.attrI("modes"), f.attrI("Nr"),
@@ -323,10 +410,9 @@ int main(int argc, char** argv) {
       if (argc >= 5) { zlo = std::atof(argv[3]) / D.um; zhi = std::atof(argv[4]) / D.um; }
       D.energy(wt, wn, w0, w1, zlo, zhi);
       // SI: W [J] = eps0 E0^2 / k0^3 * W (code)
-      const double E0 = f.attrD("E0_V_per_m"), L = f.attrD("k0inv_m");
-      const double J = 8.8541878128e-12 * E0 * E0 * L * L * L;
+      const double J = 8.8541878128e-12 * D.E0 * D.E0 * D.L * D.L * D.L;
       std::printf("# step  z[mm]  W_total  W_nyquist  W(m=0)  W(m>=1)  (code units; 1 = %.6e J)\n"
-                  "%lld %.6g %.6e %.6e %.6e %.6e\n", J, f.attrI("step"), f.attrD("z_m") * 1e3, wt, wn, w0, w1);
+                  "%lld %.6g %.6e %.6e %.6e %.6e\n", J, D.step, D.z_m * 1e3, wt, wn, w0, w1);
     } else if (what == "spectrum") {
       if (argc < 5) throw std::runtime_error("spectrum needs <zeta_lo_um> <zeta_hi_um> [k_min k_max nk]");
       const double zlo = std::atof(argv[3]) / D.um, zhi = std::atof(argv[4]) / D.um;

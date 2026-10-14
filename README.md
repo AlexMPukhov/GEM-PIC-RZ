@@ -114,7 +114,8 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
 | `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); a γ = 100 bunch keeps its energy in its own field; ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
-| `tools/h5_extract.cpp` | reads the HDF5 files: tables of axis, map, beam, field line-outs (also an example reader) |
+| `tools/h5_extract.cpp` | reads the HDF5 files and the native records of the openPMD files: tables of axis, map, beam, field line-outs (also an example reader) |
+| `tools/openpmd_rectilinear.py` | Python reader of openPMD meshes on regular and rectilinear (non-uniform) grids, GEM-PIC-RZ and QUARZ |
 | `tests/hdf5.sh` | HDF5 files read back against the text output (double and single precision) |
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
@@ -243,6 +244,12 @@ are written in `thetaMode` on a uniform r–ζ grid (`openpmd_dr`, `openpmd_dzet
 gather), the lab position is z = ζ + s and the time s/c, and each bunch is a particle species with SI units. The
 files pass the openPMD validator without errors or warnings; details in
 [`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
+
+openPMD 1.1 has no non-uniform grids. Besides the interpolated fields the files therefore hold the exact data
+on the code's own nodes (`output.openpmd_grid = both`, the default; or `native`): records `native_*` with the
+node positions in `gridCoordinates_r` / `gridCoordinates_z`. This is the form we propose as an extension of the
+standard ([`docs/openpmd_rectilinear.md`](docs/openpmd_rectilinear.md)); QUARZ writes the same. `h5_extract`
+and `tools/openpmd_rectilinear.py` read these records.
 
 ## Checkpoints and restart
 

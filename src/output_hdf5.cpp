@@ -71,9 +71,10 @@ class Handle {
 
 class Writer {
  public:
-  Writer(const std::string& path, bool single, int level)
-      : file_(H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT), H5Fclose, "cannot create " + path),
-        single_(single), level_(level) {}
+  // largeAttributes: file format of HDF5 >= 1.8, which stores attributes larger than 64 kB
+  // (the node coordinates of the native openPMD records)
+  Writer(const std::string& path, bool single, int level, bool largeAttributes = false)
+      : file_(create(path, largeAttributes), H5Fclose, "cannot create " + path), single_(single), level_(level) {}
 
   hid_t file() const { return file_; }
 
@@ -193,6 +194,14 @@ class Writer {
   bool single_;
   int level_;
 
+  static hid_t create(const std::string& path, bool largeAttributes) {
+    if (!largeAttributes) return H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    const hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
+    H5Pset_libver_bounds(fapl, H5F_LIBVER_V18, H5F_LIBVER_LATEST);
+    const hid_t f = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
+    H5Pclose(fapl);
+    return f;
+  }
   // {r, i} compound with members of type `base` (std::complex<double> layout for doubles)
   static hid_t complexType(hid_t base) {
     const size_t sz = H5Tget_size(base);
@@ -506,7 +515,7 @@ void Simulation::writeOpenPMD() {
   fs::create_directories(dir);
   const std::string name = dir + "/openpmd_" + std::to_string(step_no) + ".h5";
   H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
-  Writer W(name, O.hdf5_single, O.hdf5_compression);
+  Writer W(name, O.hdf5_single, O.hdf5_compression, true);
 
   const Units& u = cfg.units;
   const double L = u.k0inv_um() * 1e-6;                // length unit [m]
@@ -623,7 +632,7 @@ void Simulation::writeOpenPMD() {
   const std::vector<std::string> axes = {"r", "z"};
   auto meshAttrs = [&](hid_t obj, int modes, const std::vector<double>& dim) {
     Writer::attr(obj, "geometry", std::string("thetaMode"));
-    Writer::attr(obj, "geometryParameters", "m=" + std::to_string(modes - 1) + ";imag=+");
+    Writer::attr(obj, "geometryParameters", "m=" + std::to_string(modes) + ";imag=+");
     Writer::attr(obj, "dataOrder", std::string("C"));
     Writer::attr(obj, "axisLabels", axes);
     Writer::attr(obj, "gridSpacing", std::vector<double>{dr, dzo});
@@ -634,79 +643,166 @@ void Simulation::writeOpenPMD() {
   };
   const std::string mp = base + "/meshes";
   { Handle h(W.groups(mp), H5Gclose, "group " + mp); }
-  std::vector<double> out(size_t(NM) * nr * nz);
-  std::vector<cd> slab(size_t(Nz + 1) * nr);  // one mode of one quantity on all slices, output radii
-  const char* comp[3] = {"r", "t", "z"};
-  for (int vec = 0; vec < 2; ++vec) {  // E, B
-    const std::string rec = mp + (vec == 0 ? "/E" : "/B");
-    {
-      Handle h(W.groups(rec), H5Gclose, "group " + rec);
-      meshAttrs(h, M + 1, vec == 0 ? unitDim(1, 1, -3, -1) : unitDim(0, 1, -2, -1));
+  if (O.openpmd_uniform) {
+    std::vector<double> out(size_t(NM) * nr * nz);
+    std::vector<cd> slab(size_t(Nz + 1) * nr);  // one mode of one quantity on all slices, output radii
+    const char* comp[3] = {"r", "t", "z"};
+    for (int vec = 0; vec < 2; ++vec) {  // E, B
+      const std::string rec = mp + (vec == 0 ? "/E" : "/B");
+      {
+        Handle h(W.groups(rec), H5Gclose, "group " + rec);
+        meshAttrs(h, M + 1, vec == 0 ? unitDim(1, 1, -3, -1) : unitDim(0, 1, -2, -1));
+      }
+      for (int cpt = 0; cpt < 3; ++cpt) {
+        const int q = 3 * vec + cpt;
+        for (int m = 0; m <= M; ++m) {
+          for (int n = 0; n <= Nz; ++n)
+            for (int j = 0; j < nr; ++j) slab[size_t(n) * nr + j] = mode(q, m, n, rs[j]);
+          for (int j = 0; j < nr; ++j)
+            for (int k = 0; k < nz; ++k) {
+              const cd v = (1.0 - zw[k]) * slab[size_t(zn[k]) * nr + j] + zw[k] * slab[size_t(zn[k] + 1) * nr + j];
+              if (m == 0) {
+                out[(size_t(0) * nr + j) * nz + k] = v.real();
+              } else {
+                out[(size_t(2 * m - 1) * nr + j) * nz + k] = 2.0 * v.real();
+                out[(size_t(2 * m) * nr + j) * nz + k] = -2.0 * v.imag();
+              }
+            }
+        }
+        Handle ds(W.plain(rec + "/" + comp[cpt], {hsize_t(NM), hsize_t(nr), hsize_t(nz)}, out.data()), H5Dclose, "E/B");
+        Writer::attr(ds, "unitSI", vec == 0 ? E0 : B0);
+        Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
+      }
     }
-    for (int cpt = 0; cpt < 3; ++cpt) {
-      const int q = 3 * vec + cpt;
-      for (int m = 0; m <= M; ++m) {
-        for (int n = 0; n <= Nz; ++n)
-          for (int j = 0; j < nr; ++j) slab[size_t(n) * nr + j] = mode(q, m, n, rs[j]);
-        for (int j = 0; j < nr; ++j)
-          for (int k = 0; k < nz; ++k) {
-            const cd v = (1.0 - zw[k]) * slab[size_t(zn[k]) * nr + j] + zw[k] * slab[size_t(zn[k] + 1) * nr + j];
-            if (m == 0) {
-              out[(size_t(0) * nr + j) * nz + k] = v.real();
-            } else {
-              out[(size_t(2 * m - 1) * nr + j) * nz + k] = 2.0 * v.real();
-              out[(size_t(2 * m) * nr + j) * nz + k] = -2.0 * v.imag();
+    // densities (m = 0, on half-cells x centres): electrons and the charge of the mobile ions
+    auto density = [&](const std::string& nm, bool ions) {
+      std::vector<double> d(size_t(nr) * nz);
+      std::vector<double> zc(Nz);
+      for (int kk = 0; kk < Nz; ++kk) zc[kk] = zv.centre(kk);
+      for (int j = 0; j < nr; ++j) {
+        const double r = j * dr;
+        int a = 0;
+        double w = 0.0;
+        if (r >= g.c[N - 1]) { a = N - 2; w = 1.0; }
+        else if (r > g.c[0]) {
+          a = int(std::upper_bound(g.c.begin(), g.c.begin() + N, r) - g.c.begin()) - 1;
+          w = (r - g.c[a]) / (g.c[a + 1] - g.c[a]);
+        }
+        if (N < 2) { a = 0; w = 0.0; }
+        for (int k = 0; k < nz; ++k) {
+          const double z = k * dzo;
+          int b = int(std::upper_bound(zc.begin(), zc.end(), z) - zc.begin()) - 1;
+          double v;
+          auto val = [&](int kk, int i) {
+            const size_t idx = size_t(kk) * N + i;
+            return ions ? (c0s.rhoi[idx] + c0b.rhoi[idx]) : -(c0s.rho[idx] + c0b.rho[idx]);
+          };
+          auto rad = [&](int kk) { return N < 2 ? val(kk, 0) : (1.0 - w) * val(kk, a) + w * val(kk, a + 1); };
+          if (b < 0) v = rad(0);
+          else if (b >= Nz - 1) v = rad(Nz - 1);
+          else {
+            const double wz = (z - zc[b]) / (zc[b + 1] - zc[b]);
+            v = (1.0 - wz) * rad(b) + wz * rad(b + 1);
+          }
+          d[size_t(j) * nz + k] = v;
+        }
+      }
+      Handle ds(W.plain(mp + "/" + nm, {1, hsize_t(nr), hsize_t(nz)}, d.data()), H5Dclose, nm);
+      meshAttrs(ds, 1, unitDim(-3, 0, 0, 0));
+      Writer::attr(ds, "unitSI", nc);
+      Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
+    };
+    density("n_e", false);
+    if (!cfg.ions.empty()) density("Zn_i", true);
+  }
+
+  // ---- native records (output.openpmd_grid = native | both): every mode on the code's own staggered,
+  // possibly non-uniform r-zeta nodes, without interpolation. Scalar meshes "native_<name>" with the node
+  // positions in the attributes gridCoordinates_r and gridCoordinates_z, following the proposal for
+  // rectilinear meshes (docs/openpmd_rectilinear.md); geometry "other" until it is part of the standard,
+  // so that readers that only know regular grids do not misplace the data. Fields in m c omega0 / e and
+  // m omega0 / e, densities in units of n0 (unitSI converts to SI). E_r and B_phi on the axis (face 0):
+  // the regular limit, -i E_phi and i B_r of mode 1 extrapolated to r = 0, else 0.
+  if (O.openpmd_native) {
+    const std::vector<double> rf(g.rho.begin(), g.rho.begin() + N + 1), rcn(g.c.begin(), g.c.begin() + N);
+    std::vector<double> zsl(Nz + 1), zh(Nz);
+    for (int n = 0; n <= Nz; ++n) zsl[n] = zv.node(n);
+    for (int k = 0; k < Nz; ++k) zh[k] = zv.centre(k);
+    auto minStep = [](const std::vector<double>& x) {
+      double d = 1e300;
+      for (size_t k = 1; k < x.size(); ++k) d = std::min(d, x[k] - x[k - 1]);
+      return x.size() > 1 ? d : 1.0;
+    };
+    auto nativeMesh = [&](const std::string& nm, int modes, const std::vector<double>& rr,
+                          const std::vector<double>& zz, const std::vector<double>& data,
+                          const std::vector<double>& dim, double unitSI) {
+      Handle ds(W.plain(mp + "/" + nm, {hsize_t(2 * modes - 1), hsize_t(rr.size()), hsize_t(zz.size())}, data.data()),
+                H5Dclose, nm);
+      Writer::attr(ds, "geometry", std::string("other"));
+      Writer::attr(ds, "geometryParameters", "thetaMode;m=" + std::to_string(modes) + ";imag=+");
+      Writer::attr(ds, "gridType", std::string("rectilinear"));
+      Writer::attr(ds, "dataOrder", std::string("C"));
+      Writer::attr(ds, "axisLabels", axes);
+      Writer::attr(ds, "gridSpacing", std::vector<double>{minStep(rr), minStep(zz)});
+      Writer::attr(ds, "gridGlobalOffset", std::vector<double>{0.0, s0});
+      Writer::attr(ds, "gridUnitSI", L);
+      Writer::attr(ds, "gridCoordinates_r", rr);
+      Writer::attr(ds, "gridCoordinates_z", zz);
+      Writer::attr(ds, "unitDimension", dim);
+      Writer::attr(ds, "timeOffset", 0.0);
+      Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
+      Writer::attr(ds, "unitSI", unitSI);
+    };
+    // q: 0 E_r 1 E_phi 2 E_z 3 B_r 4 B_phi 5 B_z
+    auto native = [&](int q, int m, int n, int i) -> cd {
+      switch (q) {
+        case 0: return i > 0 ? Erad(m, n, i) : (m == 1 && N > 1 ? -I * lin0(Ephi(m, n, 0), Ephi(m, n, 1)) : cd(0.0));
+        case 1: return Ephi(m, n, i);
+        case 2: return Ezc(m, n, i);
+        case 3: return Brad(m, n, i);
+        case 4: return i > 0 ? Bphi(m, n, i) : (m == 1 && N > 1 ? I * lin0(Brad(m, n, 0), Brad(m, n, 1)) : cd(0.0));
+        default: return Bzf(m, n, i);
+      }
+    };
+    const char* nname[6] = {"native_E_r", "native_E_t", "native_E_z", "native_B_r", "native_B_t", "native_B_z"};
+    const bool onFaces[6] = {true, false, false, false, true, true};
+    for (int q = 0; q < 6; ++q) {
+      const std::vector<double>& rr = onFaces[q] ? rf : rcn;
+      const size_t NR = rr.size(), NZ = size_t(Nz) + 1;
+      std::vector<double> d(size_t(NM) * NR * NZ);
+      for (int m = 0; m <= M; ++m)
+        for (size_t i = 0; i < NR; ++i)
+          for (size_t n = 0; n < NZ; ++n) {
+            const cd v = native(q, m, int(n), int(i));
+            if (m == 0) d[i * NZ + n] = v.real();
+            else {
+              d[(size_t(2 * m - 1) * NR + i) * NZ + n] = 2.0 * v.real();
+              d[(size_t(2 * m) * NR + i) * NZ + n] = -2.0 * v.imag();
             }
           }
+      nativeMesh(nname[q], M + 1, rr, zsl, d, q < 3 ? unitDim(1, 1, -3, -1) : unitDim(0, 1, -2, -1), q < 3 ? E0 : B0);
+    }
+    // densities, mode 0, on the radial centres and the half-cells
+    std::vector<double> d(size_t(N) * Nz);
+    for (int i = 0; i < N; ++i)
+      for (int k = 0; k < Nz; ++k) {
+        const size_t idx = size_t(k) * N + i;
+        d[size_t(i) * Nz + k] = -(c0s.rho[idx] + c0b.rho[idx]) / n_ref;
       }
-      Handle ds(W.plain(rec + "/" + comp[cpt], {hsize_t(NM), hsize_t(nr), hsize_t(nz)}, out.data()), H5Dclose, "E/B");
-      Writer::attr(ds, "unitSI", vec == 0 ? E0 : B0);
-      Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
+    nativeMesh("native_n_e", 1, rcn, zh, d, unitDim(-3, 0, 0, 0), n_ref * nc);
+    if (!cfg.ions.empty()) {
+      for (int i = 0; i < N; ++i)
+        for (int k = 0; k < Nz; ++k) {
+          const size_t idx = size_t(k) * N + i;
+          d[size_t(i) * Nz + k] = (c0s.rhoi[idx] + c0b.rhoi[idx]) / n_ref;
+        }
+      nativeMesh("native_Zn_i", 1, rcn, zh, d, unitDim(-3, 0, 0, 0), n_ref * nc);
     }
   }
-  // densities (m = 0, on half-cells x centres): electrons and the charge of the mobile ions
-  auto density = [&](const std::string& nm, bool ions) {
-    std::vector<double> d(size_t(nr) * nz);
-    std::vector<double> zc(Nz);
-    for (int kk = 0; kk < Nz; ++kk) zc[kk] = zv.centre(kk);
-    for (int j = 0; j < nr; ++j) {
-      const double r = j * dr;
-      int a = 0;
-      double w = 0.0;
-      if (r >= g.c[N - 1]) { a = N - 2; w = 1.0; }
-      else if (r > g.c[0]) {
-        a = int(std::upper_bound(g.c.begin(), g.c.begin() + N, r) - g.c.begin()) - 1;
-        w = (r - g.c[a]) / (g.c[a + 1] - g.c[a]);
-      }
-      if (N < 2) { a = 0; w = 0.0; }
-      for (int k = 0; k < nz; ++k) {
-        const double z = k * dzo;
-        int b = int(std::upper_bound(zc.begin(), zc.end(), z) - zc.begin()) - 1;
-        double v;
-        auto val = [&](int kk, int i) {
-          const size_t idx = size_t(kk) * N + i;
-          return ions ? (c0s.rhoi[idx] + c0b.rhoi[idx]) : -(c0s.rho[idx] + c0b.rho[idx]);
-        };
-        auto rad = [&](int kk) { return N < 2 ? val(kk, 0) : (1.0 - w) * val(kk, a) + w * val(kk, a + 1); };
-        if (b < 0) v = rad(0);
-        else if (b >= Nz - 1) v = rad(Nz - 1);
-        else {
-          const double wz = (z - zc[b]) / (zc[b + 1] - zc[b]);
-          v = (1.0 - wz) * rad(b) + wz * rad(b + 1);
-        }
-        d[size_t(j) * nz + k] = v;
-      }
-    }
-    Handle ds(W.plain(mp + "/" + nm, {1, hsize_t(nr), hsize_t(nz)}, d.data()), H5Dclose, nm);
-    meshAttrs(ds, 1, unitDim(-3, 0, 0, 0));
-    Writer::attr(ds, "unitSI", nc);
-    Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
-  };
-  density("n_e", false);
-  if (!cfg.ions.empty()) density("Zn_i", true);
 
   // ---- particles
-  if (!O.particles) return;
+  // particlesPath only when the iteration has particles (the standard requires the path to exist)
+  if (!O.particles) { H5Adelete(root, "particlesPath"); return; }
   struct Sp { std::string name; int id; };
   std::vector<Sp> species;
   for (size_t b = 0; b < cfg.bunches.size(); ++b) species.push_back({cfg.bunches[b].name, int(b)});
@@ -816,6 +912,7 @@ void Simulation::writeOpenPMD() {
       Writer::attr(h, "unitSI", 1.0);
     }
   }
+  if (first) H5Adelete(root, "particlesPath");
 }
 
 // ============================================================================
