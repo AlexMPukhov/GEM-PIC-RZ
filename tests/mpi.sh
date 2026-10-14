@@ -4,6 +4,8 @@
 #   2. 2, 3 and 4 ranks agree with the serial run (to rounding: 1e-6 relative)
 #   3. checkpoint on 3 ranks, restart on 2 ranks / serially; wall-time stop on 3 ranks
 #   4. free-hand zeta and z grids (tests/flexgrid.deck): 3 ranks agree with the serial run
+#   5. hybrid: 2 ranks x 2 OpenMP threads (backend = openmp) agree with the serial run, also with
+#      field ionization (tests/ionization_N.deck) and a beam-dominated undulator run
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -39,6 +41,19 @@ F="numerics.backend=serial output.map_stride=8"
 "$EXE" "$SRC/tests/flexgrid.deck" $F output.dir=fser > fser.log
 run 3 "$SRC/tests/flexgrid.deck" $F output.dir=fmp3 > fmp3.log
 for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" fser/$f fmp3/$f 1e-6 1e-9; done
+# hybrid MPI + OpenMP threads
+H="numerics.backend=openmp output.every=1 output.map_stride=8 grid.z_end=160k0^-1"
+OMP_NUM_THREADS=2 run 2 "$DECK" $H output.dir=hy > hy.log
+grep -q "openmp on 2 MPI ranks, 2 threads per rank" hy.log
+compare hy 1e-6 1e-9
+N="output.every=1 grid.z_end=6k0^-1"
+"$EXE" "$SRC/tests/ionization_N.deck" $N numerics.backend=serial output.dir=nser > nser.log
+OMP_NUM_THREADS=2 run 2 "$SRC/tests/ionization_N.deck" $N numerics.backend=openmp output.dir=nhy > nhy.log
+for f in ionization.txt axis_00006.txt; do "$CMP" nser/$f nhy/$f 1e-6 1e-12; done
+U="grid.z_end=10mm bunch.macroparticles=20000"
+"$EXE" "$SRC/tests/undulator.deck" $U numerics.backend=serial output.dir=user output.format=text > user.log
+OMP_NUM_THREADS=2 run 2 "$SRC/tests/undulator.deck" $U numerics.backend=openmp output.dir=uhy output.format=text > uhy.log
+for f in bunches.txt fel.txt; do "$CMP" user/$f uhy/$f 1e-6 1e-12; done
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi

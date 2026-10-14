@@ -40,6 +40,9 @@
 #include <vector>
 
 #include "comm.hpp"
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 #include "rng.hpp"
 #include "simulation.hpp"
 
@@ -71,6 +74,7 @@ class PipelineRun {
   Currents Snap;                           // own raw beam current, half-cells a-2 ... a+pf-1
   std::vector<cd> predBelowR, predBelowP;  // filtered beam current of half-cell a-1 (prediction at slice a)
   int pf = 0;                              // passes of the beam-current filter
+  int threads = 1;                         // OpenMP threads per rank (numerics.backend = openmp)
   long long myRestreamed = 0, myTrapped = 0;
   long baseRestreamed = 0, baseTrapped = 0;
   std::chrono::steady_clock::time_point t0;
@@ -366,11 +370,34 @@ void PipelineRun::step() {
     if (inHalo(kh(p))) S.depositBeamParticle(H, p);  // completes the current below the block
     handFin.push_back(p);
   };
-  for (auto* list : {&S.beam, &inContinue})
-    for (auto& p : *list) {
+  if (threads > 1) {
+    // the push of every particle is independent; the bookkeeping follows in the serial order
+    std::vector<char> cont(S.beam.size());
+    long long restreamed = 0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(threads) schedule(static) reduction(+ : restreamed)
+#endif
+    for (long long i = 0; i < (long long)S.beam.size(); ++i) {
+      Particle& p = S.beam[size_t(i)];
+      cont[size_t(i)] = push(p, false) ? 1 : 0;
+      if (p.status == 3) ++restreamed;
+    }
+    myRestreamed += restreamed;
+    for (size_t i = 0; i < S.beam.size(); ++i) {
+      if (cont[i]) handCont.push_back(S.beam[i]);
+      else afterPush(S.beam[i]);
+    }
+    for (auto& p : inContinue) {
       if (push(p, true)) handCont.push_back(p);
       else afterPush(p);
     }
+  } else {
+    for (auto* list : {&S.beam, &inContinue})
+      for (auto& p : *list) {
+        if (push(p, true)) handCont.push_back(p);
+        else afterPush(p);
+      }
+  }
   for (const auto& p : newBeam) S.depositBeamParticle(S.c1b, p);
   for (const auto& p : inFinished) {  // pushed by a rank in front
     if (beamOwner(p) == r) { S.depositBeamParticle(S.c1b, p); newBeam.push_back(p); }
@@ -428,12 +455,16 @@ void PipelineRun::step() {
       if (!S.cfg.ions.empty()) S.sliceFieldBound = std::max(S.fieldBound(S.fnew, n + 1), S.fieldBound(S.fnew, n));
       S.c1s.zeroHalf(n);
       S.ionKey = ionKeySlice(keyStep, n, it);
-      for (auto& p : S.stream) {
-        if (p.status == STATUS_WAITING) {
-          if (p.zeta > zv.node(n)) p.status = 0;
-          else continue;
+      if (threads > 1) {
+        S.pushStreamSlice(n, s1, threads);
+      } else {
+        for (auto& p : S.stream) {
+          if (p.status == STATUS_WAITING) {
+            if (p.zeta > zv.node(n)) p.status = 0;
+            else continue;
+          }
+          S.pushStreamParticle(p, n, s1);
         }
-        S.pushStreamParticle(p, n, s1);
       }
       for (int m = 0; m <= M; ++m) {
         const int nm = (n > 0) ? n - 1 : 0;  // last slice: half-cell -1 := half-cell 0 (Simulation::step)
@@ -739,6 +770,9 @@ void PipelineRun::reportStep(int k) {
 // ----------------------------------------------------------------------------
 int PipelineRun::run() {
   P = comm::size();
+#if defined(_OPENMP)
+  if (S.cfg.numerics.backend == NumericsConfig::Backend::OpenMP) threads = std::max(1, omp_get_max_threads());
+#endif
   if (!S.cfg.chicanes.empty()) {
     if (comm::rank() == 0)
       std::fprintf(stderr, "error: chicane blocks are not supported in MPI runs yet (the chicane moves the beam "

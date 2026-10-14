@@ -533,7 +533,7 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 
 | key | kind | default | meaning |
 |-----|------|---------|---------|
-| `backend` | `serial` \| `openmp` \| `cuda` | `cuda` in a GPU build, else `serial` | `serial`: reference implementation, one thread. `openmp`: parallel engine on CPU threads (CPU build; threads from `OMP_NUM_THREADS`). `cuda`: parallel engine on an NVIDIA GPU (build with `-DGEMPIC_CUDA=ON`). See "Backends" below |
+| `backend` | `serial` \| `openmp` \| `cuda` | `cuda` in a GPU build, else `serial` | `serial`: reference implementation, one thread. `openmp`: parallel engine on CPU threads (CPU build; threads from `OMP_NUM_THREADS`). `cuda`: parallel engine on an NVIDIA GPU (build with `-DGEMPIC_CUDA=ON`). With MPI (several ranks): `serial` or `openmp` (threads on every rank); `cuda` is not yet available with MPI. See "Backends" below |
 | `iterations` | integer | 2 | passes per slice (1 = predictor only) |
 | `seed` | integer | 12345 | random seed (plasma loading, bunches, ionization) |
 | `beam_dz_max` | length | 10 k0⁻¹ | largest sub-step of the beam push along s |

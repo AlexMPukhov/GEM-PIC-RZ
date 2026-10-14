@@ -10,6 +10,9 @@
 //    --template          print an annotated example deck and exit
 // ============================================================================
 #include <chrono>
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 #include <memory>
 #include <cstdio>
 #include <cstdlib>
@@ -131,9 +134,9 @@ int run(int argc, char** argv) {
   const int nranks = gem::comm::size();
   const char* forcePipe = std::getenv("GEMPIC_PIPELINE");  // pipelined step also on one rank (testing)
   const bool pipeline = nranks > 1 || (forcePipe && forcePipe[0] == '1');
-  if (pipeline && cfg.numerics.backend != gem::NumericsConfig::Backend::Serial) {
-    std::fprintf(stderr, "error: MPI runs with several ranks need numerics.backend = serial (the openmp and cuda "
-                         "engines are not yet combined with MPI)\n");
+  if (pipeline && cfg.numerics.backend == gem::NumericsConfig::Backend::Cuda) {
+    std::fprintf(stderr, "error: MPI runs with several ranks need numerics.backend = serial or openmp (the GPU "
+                         "engine is not yet combined with MPI)\n");
     return 1;
   }
 
@@ -149,7 +152,7 @@ int run(int argc, char** argv) {
 
   std::unique_ptr<gem::Simulation> simp;
   try {
-    simp = std::make_unique<gem::Simulation>(cfg, restart);
+    simp = std::make_unique<gem::Simulation>(cfg, restart, !pipeline);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "error: %s\n", e.what());
     return 1;
@@ -157,7 +160,12 @@ int run(int argc, char** argv) {
   gem::Simulation& sim = *simp;
   sim.setDeckText(deck.dump());
   if (pipeline) {
-    std::printf("backend: serial on %d MPI rank%s\n", nranks, nranks > 1 ? "s" : "");
+    int nth = 1;
+#if defined(_OPENMP)
+    if (cfg.numerics.backend == gem::NumericsConfig::Backend::OpenMP) nth = omp_get_max_threads();
+#endif
+    std::printf("backend: %s on %d MPI rank%s%s\n", nth > 1 ? "openmp" : "serial", nranks, nranks > 1 ? "s" : "",
+                nth > 1 ? (", " + std::to_string(nth) + " threads per rank").c_str() : "");
     gem::RunControl rc;
     rc.deckPath = deckPath;
     rc.restarted = !restart.empty();

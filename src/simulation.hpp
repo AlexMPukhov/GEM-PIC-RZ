@@ -62,7 +62,8 @@ class PipelineRun;
 class Simulation {
  public:
   // restartFile empty: initial state from the deck; else: state of a checkpoint
-  explicit Simulation(const Config& cfg, const std::string& restartFile = "");
+  // useEngine = false: no parallel engine even for backend openmp/cuda (MPI pipeline, threads in its loops)
+  explicit Simulation(const Config& cfg, const std::string& restartFile = "", bool useEngine = true);
   ~Simulation();
 
   void step();
@@ -128,8 +129,9 @@ class Simulation {
   EB gather(const Fields& F, int n1, double w1, int n2, double w2, double x, double y) const;
   void accumulate(const Fields& F, int m, int n, double w, double r, const RadialGrid::W& wc,
                   const RadialGrid::W& wf, cd& er, cd& ep, cd& ez, cd& br, cd& bp, cd& bz) const;
+  // kc >= 0: store half-cell k at index kc of C (a buffer holding fewer half-cells)
   void deposit(Currents& C, int k, double wk, double x, double y, double vx, double vy, double vz, double W,
-               bool ion = false);
+               bool ion = false, int kc = -1);
   void depositBeamParticle(Currents& C, const Particle& p);
   // (1,2,1)/4 filter along zeta of the beam current (numerics.beam_filter passes):
   // removes the zeta-Nyquist component, which the scheme radiates resonantly
@@ -139,7 +141,11 @@ class Simulation {
   void pushBeam();
   void loadFresh();
   void pushStreamParticle(Particle& p, int n, double s1);
-  void ionize(Particle& p, double E1, double E0, double dt);
+  // the same, depositing into half-cell kc of C and collecting freed electrons in bornOut
+  void pushStreamParticle(Particle& p, int n, double s1, Currents& C, int kc, std::vector<Particle>& bornOut);
+  // all streaming particles through half-cell n (threads > 1: OpenMP, per-thread buffers)
+  void pushStreamSlice(int n, double s1, int threads);
+  void ionize(Particle& p, double E1, double E0, double dt, std::vector<Particle>& bornOut);
   double fieldBound(const Fields& F, int n) const;
   void absorber();
 

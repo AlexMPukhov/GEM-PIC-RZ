@@ -150,6 +150,13 @@ a pipeline: rank q computes step k while rank q+1 already computes step k+1.
 
 **Speed.** The ionization-injection example (20 steps) runs 1.90× faster on 2 ranks / 2 cores than serially: 51.2 s vs 97.2 s, as predicted by 2 × 20/21. The results are identical.
 
+**Hybrid MPI + OpenMP.** With `numerics.backend = openmp` every rank pushes its streaming particles (plasma,
+ions, freed electrons) slice by slice and its beam particles with OpenMP threads: contiguous chunks of the particle
+list per thread, per-thread current buffers of the half-cell, freed electrons and the beam bookkeeping in the serial
+order. One rank with 2 threads is as fast as the OpenMP engine (regression deck: 14.8 s vs 14.9 s; serial 25.7 s).
+Run e.g. `OMP_NUM_THREADS=8 mpirun -np 4 --bind-to none gempic_rz run.deck numerics.backend=openmp` on 32 cores.
+`tests/mpi.sh` checks 2 ranks × 2 threads against the serial run (regression deck, field ionization, undulator).
+
 **Output.** Rank 0 finishes every step last. It collects the diagnostics of all
 ranks and writes the console line, `bunches.txt`, `ionization.txt`, the
 text/HDF5 files and the checkpoints, in the same format as a serial run. A
@@ -167,7 +174,7 @@ code 3).
 
 **Current limits:**
 
-- **Backend:** MPI runs use the serial step on every rank (`numerics.backend = serial`). Combining the pipeline with the OpenMP/GPU engine is a natural next step.
+- **Backend:** `numerics.backend = serial` runs the serial step on every rank; `numerics.backend = openmp` adds OpenMP threads on every rank (hybrid MPI + threads, `OMP_NUM_THREADS` threads per rank). The GPU engine is not yet combined with MPI.
 - **Memory:** every rank stores the field and current arrays of the whole window (the particles are distributed). This keeps the indexing of the serial code and is small for typical grids, but it limits very large windows.
 
 ## GPU and multi-core backends
@@ -568,7 +575,7 @@ earlier versions except in the rearmost slice.
 
 ## Known limitations
 
-- **Performance:** the ζ-march is sequential within a step. Parallelism comes from the particles and the radial grid within a slice (OpenMP/GPU), or from the pipeline over steps (MPI, serial step per rank). MPI and the OpenMP/GPU engine cannot be combined yet.
+- **Performance:** the ζ-march is sequential within a step. Parallelism comes from the particles and the radial grid within a slice (OpenMP/GPU), or from the pipeline over steps (MPI, serial step per rank). MPI combines with OpenMP threads (`backend = openmp`), not yet with the GPU engine.
 - **Missing physics:** the energy that ionization takes from the laser (ionization current) and collisional ionization are not modelled. Ion species follow the plasma profile or their own (`profile = own`).
 - **Laser envelope:** the laser is initialized as a paraxial Gaussian beam (or, with `profile_function`, as the given field at z = 0 with flat phase fronts). The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle.
 - **Radial absorber:** it is a simple damping of R and has not been tested for reflection.

@@ -7,6 +7,9 @@
 #include "rng.hpp"
 
 #include <algorithm>
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 #include <cmath>
 
 namespace gem {
@@ -16,7 +19,7 @@ static const cd I1(0.0, 1.0);
 // ============================================================================
 //  setup
 // ============================================================================
-Simulation::Simulation(const Config& c, const std::string& restartFile) : cfg(c) {
+Simulation::Simulation(const Config& c, const std::string& restartFile, bool useEngine) : cfg(c) {
   M = cfg.grid.M;
   Nz = cfg.grid.Nz;
   {
@@ -72,7 +75,7 @@ Simulation::Simulation(const Config& c, const std::string& restartFile) : cfg(c)
     trimTables();
   }
   beginStep();  // matrices of the first step (the engine uploads them)
-  if (cfg.numerics.backend != NumericsConfig::Backend::Serial) engine = std::make_unique<Engine>(*this);
+  if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial) engine = std::make_unique<Engine>(*this);
 }
 
 Simulation::~Simulation() = default;
@@ -506,8 +509,9 @@ EB Simulation::gather(const Fields& F, int n1, double w1, int n2, double w2, dou
 // ============================================================================
 // current density j_m = sum W v S e^{-i m phi} / (2 pi V h_k) into half-cell k
 void Simulation::deposit(Currents& C, int k, double wk, double x, double y, double vx, double vy, double vz,
-                         double W, bool ion) {
+                         double W, bool ion, int kc) {
   if (k < 0 || k >= Nz || wk == 0.0 || W == 0.0) return;
+  const int kd = (kc < 0) ? k : kc;  // index in C
   const int N = g.N;
   double r = std::sqrt(x * x + y * y);
   double cs = 1.0, sn = 0.0;
@@ -521,8 +525,8 @@ void Simulation::deposit(Currents& C, int k, double wk, double x, double y, doub
     // centres: j_phi, j_z
     auto addC = [&](int i, double sp, double sz) {
       double f = norm / g.Vc[i];
-      C.jp[C.c(m, k, i)] += f * sp * vp * em;
-      C.jz[C.c(m, k, i)] += f * sz * vz * em;
+      C.jp[C.c(m, kd, i)] += f * sp * vp * em;
+      C.jz[C.c(m, kd, i)] += f * sz * vz * em;
     };
     if (wc.mode == 0) { addC(wc.a, wc.wa, wc.wa); addC(wc.a + 1, wc.wb, wc.wb); }
     else if (wc.mode == 2) addC(N - 1, 1.0, 1.0);
@@ -530,7 +534,7 @@ void Simulation::deposit(Currents& C, int k, double wk, double x, double y, doub
     // faces: j_r (face 0 is not used by the solver)
     auto addF = [&](int i, double s) {
       if (i == 0) return;
-      C.jr[C.f(m, k, i)] += norm * s / g.Vf[i] * vr * em;
+      C.jr[C.f(m, kd, i)] += norm * s / g.Vf[i] * vr * em;
     };
     if (wf.mode == 0) { addF(wf.a, wf.wa); addF(wf.a + 1, wf.wb); }
     else addF(N, 1.0);
@@ -538,7 +542,7 @@ void Simulation::deposit(Currents& C, int k, double wk, double x, double y, doub
   }
   // m = 0 charge density (diagnostic), separately for ions
   std::vector<double>& dens = ion ? C.rhoi : C.rho;
-  auto addR = [&](int i, double s) { dens[size_t(k) * N + i] += norm * s / g.Vc[i]; };
+  auto addR = [&](int i, double s) { dens[size_t(kd) * N + i] += norm * s / g.Vc[i]; };
   if (wc.mode == 0) { addR(wc.a, wc.wa); addR(wc.a + 1, wc.wb); }
   else if (wc.mode == 2) addR(N - 1, 1.0);
   else addR(0, 1.0);
@@ -700,7 +704,56 @@ void Simulation::loadFresh() {
 
 // streaming particle from its zeta (normally zeta_{n+1}; later for particles
 // that join the march inside the half-cell) to zeta_n (GT2, dt = hl/(1 - v_z))
-void Simulation::pushStreamParticle(Particle& p, int n, double s1) {
+void Simulation::pushStreamParticle(Particle& p, int n, double s1) { pushStreamParticle(p, n, s1, c1s, n, born); }
+
+void Simulation::pushStreamSlice(int n, double s1, int threads) {
+  auto one = [&](Particle& p, Currents& C, int kc, std::vector<Particle>& bo) {
+    if (p.status == STATUS_WAITING) {
+      if (p.zeta > zv.node(n)) p.status = 0;
+      else return;
+    }
+    pushStreamParticle(p, n, s1, C, kc, bo);
+  };
+#if defined(_OPENMP)
+  if (threads > 1 && stream.size() >= size_t(4 * threads)) {
+    // contiguous chunks in thread order: the freed electrons keep the serial order
+    const size_t np = stream.size();
+    std::vector<Currents> Cb(static_cast<size_t>(threads));
+    std::vector<std::vector<Particle>> bo(static_cast<size_t>(threads));
+#pragma omp parallel num_threads(threads)
+    {
+      const int t = omp_get_thread_num(), nt = omp_get_num_threads();
+      Currents& C = Cb[size_t(t)];
+      C.init(M, 1, g.N);
+      const size_t i0 = np * size_t(t) / size_t(nt), i1 = np * size_t(t + 1) / size_t(nt);
+      for (size_t i = i0; i < i1; ++i) one(stream[i], C, 0, bo[size_t(t)]);
+    }
+    for (int t = 0; t < threads; ++t) {
+      const Currents& C = Cb[size_t(t)];
+      if (C.jr.empty()) continue;
+      for (int m = 0; m <= M; ++m) {
+        for (int i = 0; i <= g.N; ++i) c1s.jr[c1s.f(m, n, i)] += C.jr[C.f(m, 0, i)];
+        for (int i = 0; i < g.N; ++i) {
+          c1s.jp[c1s.c(m, n, i)] += C.jp[C.c(m, 0, i)];
+          c1s.jz[c1s.c(m, n, i)] += C.jz[C.c(m, 0, i)];
+        }
+      }
+      for (int i = 0; i < g.N; ++i) {
+        c1s.rho[size_t(n) * g.N + i] += C.rho[size_t(i)];
+        c1s.rhoi[size_t(n) * g.N + i] += C.rhoi[size_t(i)];
+      }
+      born.insert(born.end(), bo[size_t(t)].begin(), bo[size_t(t)].end());
+    }
+    return;
+  }
+#else
+  (void)threads;
+#endif
+  for (auto& p : stream) one(p, c1s, n, born);
+}
+
+void Simulation::pushStreamParticle(Particle& p, int n, double s1, Currents& C, int kc,
+                                    std::vector<Particle>& bornOut) {
   const bool ion = isIon(p.sp);
   const IonConfig* I = (ion && p.sp != SPECIES_TRAPPED_ION) ? &cfg.ions[ionIndex(p.sp)] : nullptr;
   // length of the path in zeta within this half-cell
@@ -709,14 +762,14 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1) {
   const double wm = 0.5 * hl / h;  // weight of slice n+1 at the midpoint of the path
   if (I && !I->mobile) {
     // fixed ion: no motion (dt = h), fields only needed for ionization
-    deposit(c1s, n, 1.0, p.x, p.y, 0.0, 0.0, 0.0, p.q * hl / Delta, true);  // density diagnostic only
+    deposit(C, n, 1.0, p.x, p.y, 0.0, 0.0, 0.0, p.q * hl / Delta, true, kc);  // density diagnostic only
     const double zs = p.zeta;
     p.zeta = zn;
     if (I->ionization && p.Zi < I->Zmax && sliceFieldBound >= adk[ionIndex(p.sp)].minField()) {
       const double w1 = (zs - zn) / h;  // field at the start of the path
       const EB f1 = gather(fnew, n + 1, w1, n, 1.0 - w1, p.x, p.y);
       const EB f0 = gather(fnew, n, 1.0, n, 0.0, p.x, p.y);
-      ionize(p, std::hypot(f1.Ex, f1.Ey, f1.Ez), std::hypot(f0.Ex, f0.Ey, f0.Ez), hl);
+      ionize(p, std::hypot(f1.Ex, f1.Ey, f1.Ez), std::hypot(f0.Ex, f0.Ey, f0.Ez), hl, bornOut);
     }
     return;
   }
@@ -764,12 +817,12 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1) {
   p.ux = ux; p.uy = uy; p.uz = uz;
   p.zeta = zeta_end;
   // streaming current: W = q dt / Delta, into half-cell n
-  deposit(c1s, n, 1.0, 0.5 * (xo + p.x), 0.5 * (yo + p.y), vx, vy, vz, p.q * dt / Delta, ion);
+  deposit(C, n, 1.0, 0.5 * (xo + p.x), 0.5 * (yo + p.y), vx, vy, vz, p.q * dt / Delta, ion, kc);
   if (std::hypot(p.x, p.y) >= g.rho[g.N]) p.status = 2;
   // field ionization with the mid-step field (after the deposit: the new
   // charge state acts from the next half-cell on)
   if (ionizing && p.status == 0)
-    ionize(p, std::hypot(f1.Ex, f1.Ey, f1.Ez), std::hypot(f0.Ex, f0.Ey, f0.Ez), dt);
+    ionize(p, std::hypot(f1.Ex, f1.Ey, f1.Ez), std::hypot(f0.Ex, f0.Ey, f0.Ez), dt, bornOut);
 }
 
 // Upper bound of |E| anywhere on slice n: sum over the modes of the largest
@@ -803,7 +856,7 @@ double Simulation::fieldBound(const Fields& F, int n) const {
 // Every event raises the charge state of the whole macroparticle by one and
 // creates an electron macroparticle (charge -w) at rest relative to the ion.
 // ----------------------------------------------------------------------------
-void Simulation::ionize(Particle& p, double E1, double E0, double dt) {
+void Simulation::ionize(Particle& p, double E1, double E0, double dt, std::vector<Particle>& bornOut) {
   const int s = ionIndex(p.sp);
   const AdkRates& R = adk[s];
   if (E1 < R.minField() && E0 < R.minField()) return;
@@ -823,7 +876,7 @@ void Simulation::ionize(Particle& p, double E1, double E0, double dt) {
     e.qm = -1.0;
     e.sp = SPECIES_IONIZED_BASE - s;
     e.Zi = 0;
-    born.push_back(e);
+    bornOut.push_back(e);
   }
   if (p.Zi != Z0) {
     p.q = p.Zi * p.w;
