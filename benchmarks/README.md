@@ -96,9 +96,11 @@ small shim header defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; 
 
 - **At 100 µm,** where the plasma behind the laser is uniform, the first period agrees to 1.6 % rms. Behind it,
   where the wave has steepened and is close to breaking, both codes show the same spiky structure.
-- **At 50 µm** the rear of the FBPIC window is still in the up-ramp, so its wake there is weaker. In the
-  quasi-static code all slices of a step see the plasma density n(s): the plasma profile is a function of the
-  propagation distance, constant over the window. This is the quasi-static approximation, not an error.
+- **At 50 µm** the rear of the FBPIC window is still in the up-ramp, so its wake there is weaker. In
+  GEM-PIC-RZ the plasma of a step is loaded at the front of the window with the density n(s) of that step and
+  streams through the whole window within the step. So the profile is a function of the propagation distance
+  s and constant across the window. This is how the code samples the plasma profile, not an error; it matters
+  only where the profile changes over a window length.
 - **Coordinates:** FBPIC's plasma profile is the lab profile of GEM-PIC-RZ, which loads the plasma at the front of
   the window, so it is shifted by the 7.64 µm between the laser centre and the window front.
 

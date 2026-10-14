@@ -536,7 +536,7 @@ void Simulation::writeOpenPMD() {
     std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S %z", std::localtime(&t));
     Writer::attr(root, "date", std::string(buf));
   }
-  Writer::attr(root, "comment", std::string("quasi-static GT2 code: fields of the window at z = zeta + s, "
+  Writer::attr(root, "comment", std::string("GEM-PIC-RZ (Galilean GT2 scheme): fields of the window at z = zeta + s, "
                                             "t = s / c; input deck in /data/<T>/input_deck"));
   const std::string base = "/data/" + std::to_string(step_no);
   {
