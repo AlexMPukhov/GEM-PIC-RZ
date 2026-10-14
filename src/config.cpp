@@ -550,15 +550,8 @@ void readLaser(const Block& b, const Deck& d, const Units& u, const GridConfig& 
     warn.push_back(b.label() + ": fewer than ~12 points per laser wavelength in zeta (dzeta too large)");
 }
 
-void readPlasma(const Block& b, const Deck& d, const Units& u, const GridConfig& g, PlasmaConfig& P,
-                std::vector<std::string>& warn) {
-  BlockReader r(b, d, u);
-  P.present = true;
-  P.n0 = r.num("density", Dim::Density);
-  if (!(P.n0 > 0)) r.failKey("density", "must be positive");
-  P.free_electrons = r.flag("free_electrons", true);
-  if (P.n0 > 0.1) warn.push_back("plasma.density exceeds 0.1 n_c: the scheme assumes underdense plasma");
-
+void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
+  (void)g;
   // longitudinal profile
   if (r.has("z_points") || r.has("z_values")) {
     P.z_points = r.vec("z_points", Dim::Length);
@@ -593,6 +586,19 @@ void readPlasma(const Block& b, const Deck& d, const Units& u, const GridConfig&
     for (size_t i = 1; i < P.r_points.size(); ++i)
       if (!(P.r_points[i] > P.r_points[i - 1])) r.failKey("r_points", "must be strictly increasing");
   }
+
+}
+
+void readPlasma(const Block& b, const Deck& d, const Units& u, const GridConfig& g, PlasmaConfig& P,
+                std::vector<std::string>& warn) {
+  BlockReader r(b, d, u);
+  P.present = true;
+  P.n0 = r.num("density", Dim::Density);
+  if (!(P.n0 > 0)) r.failKey("density", "must be positive");
+  P.free_electrons = r.flag("free_electrons", true);
+  if (P.n0 > 0.1) warn.push_back("plasma.density exceeds 0.1 n_c: the scheme assumes underdense plasma");
+
+  readProfile(r, g, P);
 
   // macroparticles
   P.ppc_r = int(r.integer("ppc_r", 2));
@@ -669,9 +675,20 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
   }
   I.mobile = r.flag("mobile", true);
 
+  // ---- own density profile (a dopant in part of the plasma, a gas jet, ...)
+  I.own = r.word("profile", "plasma", {"plasma", "own"}) == "own";
+  if (I.own) {
+    if (r.has("fraction")) r.failKey("fraction", "is not used with profile = own (give the atom 'density')");
+    I.prof.present = true;
+    I.prof.n0 = r.num("density", Dim::Density);
+    if (!(I.prof.n0 > 0)) r.failKey("density", "must be positive");
+    readProfile(r, GridConfig{}, I.prof);
+    I.atoms = I.prof.n0 / P.n0;  // at the reference density, for the summary
+  }
   // ---- amount: share of the neutralizing charge, or atom density
-  const int which = r.oneOf("fraction", "density", false);
-  if (which == 1) {
+  const int which = I.own ? -1 : r.oneOf("fraction", "density", false);
+  if (I.own) {
+  } else if (which == 1) {
     I.atoms = r.num("density", Dim::Density) / P.n0;
     if (!(I.atoms > 0)) r.failKey("density", "must be positive");
   } else {
@@ -1406,6 +1423,11 @@ std::string Config::summary() const {
       line("ion[%zu] '%s': Z = %d, mass = %.5g u (%.6g m_e), atom density %.4g cm^-3 (%.4g n0), %s", i,
            I.name.c_str(), I.Z, I.mass / U_OVER_ME, I.mass, I.atoms * plasma.n0 * units.nc_cm3(), I.atoms,
            I.mobile ? "mobile" : "fixed");
+      if (I.own)
+        line("        own profile%s%s%s (atom density above: reference; with %d electrons per atom)",
+             I.prof.z_points.empty() ? "" : ", longitudinal table",
+             I.prof.radial == PlasmaConfig::Radial::Uniform ? "" : ", radial profile",
+             I.prof.fn.empty() ? "" : (", density_function " + I.prof.fn.text()).c_str(), I.Z);
       if (I.ionization) {
         anyIonization = true;
         std::string lv;

@@ -637,8 +637,12 @@ void Simulation::loadFresh() {
   std::uniform_real_distribution<double> ud(0.0, 1.0);
   const double zmid = s0 + 0.5 * Delta;
   const unsigned long long idBase = (unsigned long long)(step_no + 1) << 32;  // key of the ionization RNG
+  // ion blocks with their own profile are loaded wherever their density is positive
+  double rlim = P.r_max;
+  for (const auto& I : cfg.ions)
+    if (I.own) rlim = std::max(rlim, I.prof.r_max);
   for (int i = 0; i < g.N; ++i) {
-    if (g.rho[i] >= P.r_max) break;
+    if (g.rho[i] >= rlim) break;
     double r2a = g.rho[i] * g.rho[i], r2b = g.rho[i + 1] * g.rho[i + 1];
     const bool ax = (g.rho[i + 1] <= P.r_axis_refine);
     const int npr = ax ? std::max(P.ppc_r, P.ppc_r_axis) : P.ppc_r;
@@ -646,23 +650,42 @@ void Simulation::loadFresh() {
     for (int j = 0; j < npr; ++j) {
       double r = std::sqrt(r2a + (j + 0.5) / npr * (r2b - r2a));
       const double nAx = P.density(r, zmid);  // axisymmetric part n0 f(z) g(r)
-      if (nAx <= 0.0) continue;
+      if (nAx <= 0.0) {  // nothing to load here unless an own ion profile is positive (axisymmetric part)
+        bool need = false;
+        for (const auto& I : cfg.ions) need = need || (I.own && I.prof.density(r, zmid) > 0.0);
+        if (!need) continue;
+      }
       const double Q0 = -PI * (r2b - r2a) * Delta / (npr * nph);  // free-electron macro charge per unit density
       double ph0 = 2.0 * PI * ud(rng);
       for (int k = 0; k < nph; ++k) {
         double ph = ph0 + 2.0 * PI * k / nph;
         Particle p{};
         p.x = r * std::cos(ph); p.y = r * std::sin(ph); p.z = s0;
+        p.qm = -1.0; p.zeta = zv.node(Nz); p.status = 0; p.sp = SPECIES_PLASMA;
         // density_function(x, y, z, r): the weight of each particle (may break the axial symmetry)
-        const double n = P.fn.empty() ? nAx : P.density(p.x, p.y, zmid);
-        if (n <= 0.0) continue;
+        const double n = (nAx <= 0.0) ? 0.0 : P.fn.empty() ? nAx : P.density(p.x, p.y, zmid);
         const double Q = n * Q0;
-        p.q = Q; p.qm = -1.0; p.zeta = zv.node(Nz); p.status = 0; p.sp = SPECIES_PLASMA; p.w = -Q;
-        if (P.free_electrons) { p.id = idBase + stream.size(); stream.push_back(p); }
+        if (n > 0.0) {
+          p.q = Q; p.w = -Q;
+          if (P.free_electrons) { p.id = idBase + stream.size(); stream.push_back(p); }
+        }
         for (size_t s = 0; s < cfg.ions.size(); ++s) {
           const auto& I = cfg.ions[s];
           Particle ion = p;
-          ion.w = -Q * I.atoms;
+          if (I.own) {
+            const double na = I.prof.density(p.x, p.y, zmid);  // atom density
+            if (na <= 0.0) continue;
+            ion.w = -na * Q0;
+          } else {
+            if (n <= 0.0) continue;
+            ion.w = -Q * I.atoms;
+          }
+          if (I.own && I.Z > 0) {  // the electrons of the pre-ionized atoms (before the ions, as above)
+            Particle e = p;
+            e.q = -I.Z * ion.w; e.w = I.Z * ion.w;
+            e.id = idBase + stream.size();
+            stream.push_back(e);
+          }
           ion.Zi = I.Z;
           ion.q = I.Z * ion.w;
           ion.qm = I.qm();

@@ -248,8 +248,23 @@ Each block represents one ion species of the plasma by macroparticles. It serves
 | `ionization` | `none` \| `adk` | `none` | ADK tunnel ionization, see below |
 | `max_charge_state` | integer | atomic number | highest charge state reachable by ionization |
 | `ionization_potentials` | energy list | NIST | ionization energies of the charge states 0, 1, 2, … (e.g. `552.07, 667.05 eV`). For an `element` they replace the NIST values (all Znuc values); for an ion given by `mass` they define the levels |
+| `profile` | `plasma` \| `own` | `plasma` | `own`: the species has its own density profile (see below) |
 | `name` | string | e.g. `N5+`, `He` | label |
 
+- **Own profile (`profile = own`):** a dopant that is only in part of the plasma (e.g. a doped section for
+  localized ionization injection, a gas jet in front of a cell) gets its own profile. Then `density` is the atom
+  density at the reference point, and the profile keys of the `plasma` block are available in the `ion` block:
+  `z_points`/`z_values`, `radial_profile` (with its keys), `r_max` and `density_function(x, y, z, r)`. The ions are
+  loaded wherever this density is positive, also where the plasma has none. With `charge_state` Z0 > 0 the
+  code also loads Z0 free electrons per atom at the same place (the species is neutral); `fraction` is not
+  used. Example:
+  ```
+  ion { element = N;  ionization = adk;  charge_state = 5;  profile = own;  density = 1e17 cm^-3
+        z_points = 0.5, 0.55, 0.95, 1.0 mm;  z_values = 0, 1, 1, 0 }   # N only between 0.5 and 1 mm
+  ```
+  Checks (`tests/dopant.sh`): an own profile equal to the plasma's reproduces the run bit by bit, also for a
+  pre-ionized species with its electrons in place of the plasma electrons; a dopant at 3 < z < 6 k0⁻¹ is
+  ionized only there, as strongly as a uniform one.
 - **Profile and loading:** the atom density follows the plasma profile, n_atom(r, z) = density·f(z)·g(r) (or fraction/Z0 · n_e). Ions are loaded at the positions of the plasma electrons, so the loaded plasma is exactly neutral.
 - **Neutrality:** the charge of all ion blocks, Σ Z0·n_atom, must not exceed the free-electron density. The rest of the positive charge stays an immobile background. Example: in a He/N mixture pre-ionized to He²⁺ and N⁵⁺, only the nitrogen needs a block, and He²⁺ is the background.
 - **Push:** mobile ions are pushed through the window like the plasma electrons, with the relativistic Boris pusher and q/m = Z/M. Each block doubles the number of streaming macroparticles.

@@ -80,6 +80,7 @@ ifeq ($(HDF5),1)
 	sh tests/undulator.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract
 	sh tests/flexgrid.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
 	sh tests/functions.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
+	sh tests/dopant.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
 	sh tests/transport.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract $(PAR)
 	sh tests/beam_import.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns
 	sh tests/openpmd.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract || [ $$? -eq 77 ]

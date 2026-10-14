@@ -545,6 +545,7 @@ earlier versions except in the rearmost slice.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
 - **Beams from files:** a bunch can be read from an openPMD file of any code or from a native data file (selection, placement, resampling), and **Fawley shot noise** gives the bunching noise of the real electrons for FEL start-up.
+- **Dopant profiles:** an ion block can have its own density profile (`profile = own`), e.g. a nitrogen-doped section for localized ionization injection.
 - **FEL diagnostics:** `fel.txt` gives the radiation energy, peak power and bunching factor at every step, so gain curves and saturation are read directly.
 - **Transport elements:** quadrupoles, active plasma lenses, solenoids and thin chicanes (R56, delay) for matching and compressing a beam between stages.
 - **Function parser:** profiles of plasmas, lasers, bunches and undulator tapers as expressions in the deck.
@@ -568,6 +569,6 @@ earlier versions except in the rearmost slice.
 ## Known limitations
 
 - **Performance:** the ζ-march is sequential within a step. Parallelism comes from the particles and the radial grid within a slice (OpenMP/GPU), or from the pipeline over steps (MPI, serial step per rank). MPI and the OpenMP/GPU engine cannot be combined yet.
-- **Missing physics:** the energy that ionization takes from the laser (ionization current) and collisional ionization are not modelled. Field-ionizable species follow the plasma profile; a separate dopant profile is not yet possible.
+- **Missing physics:** the energy that ionization takes from the laser (ionization current) and collisional ionization are not modelled. Ion species follow the plasma profile or their own (`profile = own`).
 - **Laser envelope:** the laser is initialized as a paraxial Gaussian beam (or, with `profile_function`, as the given field at z = 0 with flat phase fronts). The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle.
 - **Radial absorber:** it is a simple damping of R and has not been tested for reflection.

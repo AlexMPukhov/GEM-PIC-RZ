@@ -143,7 +143,11 @@ struct IonConfig {
   bool ionization = false;     // ADK field ionization of the levels Z ... Zmax-1
   int Zmax = 1;                // highest charge state reachable by ionization
   std::vector<double> ip_eV;   // ionization energies, index = charge state k (k -> k+1)
-  double fraction() const { return Z * atoms; }
+  // own profile (deck: profile = own): atom density prof.density(x, y, z) instead of
+  // atoms x the plasma profile; loaded with Z electrons per atom (neutral)
+  bool own = false;
+  PlasmaConfig prof;
+  double fraction() const { return own ? 0.0 : Z * atoms; }  // share of the plasma's positive charge
   double qm() const { return double(Z) / mass; }  // initial charge-to-mass ratio [e/m_e]
 };
 
