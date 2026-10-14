@@ -21,6 +21,8 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | `ion`      | 0 … N   | one block per mobile ion species of the plasma   |
 | `bunch`    | 0 … N   | one block per particle bunch                     |
 | `undulator`| 0 … N   | static undulator fields acting on the particles  |
+| `quadrupole`, `plasma_lens`, `solenoid` | 0 … N | transport elements: static fields acting on the particles |
+| `chicane`  | 0 … N   | thin magnetic chicane (R56, delay) applied to the beam |
 | `output`   | 0 or 1  | diagnostics                                      |
 | `numerics` | 0 or 1  | algorithm parameters                             |
 
@@ -46,6 +48,8 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | energy | `eV`, `keV`, `MeV`, `GeV`, `TeV` (kinetic energy) |
 | angle | `rad`, `mrad`, `urad`, `deg` |
 | mass | `u` (= `amu`), `m_p`, `m_e`, `kg` |
+| magnetic field | `T`, `mT`, `kG`, `G` |
+| field gradient | `T/m`, `T/mm`, `kT/m` |
 | dimensionless | no unit, or `%` |
 
 **Code units.** The code uses normalized units derived from `grid.lambda0`:
@@ -373,6 +377,29 @@ A static undulator field that acts on all particles (bunches, trapped and plasma
 The (1,2,1) beam filter (`numerics.beam_filter`) damps the current at λ_r by cos²(k_r h/2), i.e. the radiated energy by cos⁴(k_r h/2) (−2 % at λ_r/32, −13 % at λ_r/12). In vacuum it can be switched off (`beam_filter = 0`).
 
 **Geometry.** The radiation stays at fixed ζ, and the bunch slips back by one λ_r per period. Start the bunch near the front of the window; the window must hold the slippage N_u λ_r. Linear polarization lives in mode 1 (`m_max ≥ 1`), as for a laser.
+
+## Transport elements: `quadrupole`, `plasma_lens`, `solenoid`, `chicane`
+
+Between two stages (plasma → undulator) the beam is matched by magnets. These blocks add static fields that act on
+all particles, like the undulators; the field solver does not see them. Several blocks of each kind are allowed.
+
+| block | keys | field |
+|-------|------|-------|
+| `quadrupole` | `z_start`, `length`, `gradient` (T/m) | B_x = −G y, B_y = −G x. G > 0 focuses electrons in x and defocuses them in y (positrons: the reverse); use G < 0 for the other plane |
+| `plasma_lens` | `z_start`, `length`, `gradient` (T/m), `radius` (optional) | active plasma lens: azimuthal B_φ = −G r inside `radius`, −G R²/r outside. G > 0 focuses electrons in both planes. Only the magnetic field of the discharge is modelled, not its plasma |
+| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. Use `ramp > 0`: the radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame) |
+| `chicane` | `z`, `r56`, `delay` (default \|r56\|/2), `energy` or `gamma` (reference) | thin chicane at z: every beam particle moves in ζ by r56·δ − delay, δ = γ/γ_ref − 1. r56 > 0: particles with more energy move forward (towards the head), as in a four-dipole chicane; a negative chirp (more energy at the tail) is then compressed. `delay` is the path difference of the reference particle (moves the beam back with respect to the radiation; ≈ R56/2 for a symmetric chicane) |
+
+- **Thin chicane:** the shift is applied when the beam passes `z` (at the end of that step), without transverse
+  dispersion or synchrotron radiation. The co-moving self-field of the beam moves with it (subtracted at the old,
+  added at the new positions; vacuum is assumed at the chicane); the radiation in the window stays. About 0.6 % of the
+  field energy of a γ = 1000 bunch remains at its old position. Not available in MPI runs with several ranks yet.
+- **Resolution:** the beam push must resolve the elements: `numerics.beam_dz_max` ≤ 0.1/k_β (k_β = √(G/Bρ) or
+  B/(2Bρ)), and an element should span ≥ 4 sub-steps. Warnings are printed otherwise. The step `grid.dz` may be larger.
+- **Check (`tests/transport.sh`):** a cold bunch (γ = 1000) through a 100 T/m quadrupole, a plasma lens and a 5 T
+  solenoid and a drift: the rms sizes at the end agree with the linear optics to 0.1 % (quadrupole x 0.38409 vs
+  0.38374, y 1.64493 vs 1.64531; solenoid r 0.96466 vs 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
+  bunch (rms 0.5761 vs 0.5766 µm).
 
 ## `output` (0 or 1 block)
 

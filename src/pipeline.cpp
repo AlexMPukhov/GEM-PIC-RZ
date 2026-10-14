@@ -730,6 +730,12 @@ void PipelineRun::reportStep(int k) {
 // ----------------------------------------------------------------------------
 int PipelineRun::run() {
   P = comm::size();
+  if (!S.cfg.chicanes.empty()) {
+    if (comm::rank() == 0)
+      std::fprintf(stderr, "error: chicane blocks are not supported in MPI runs yet (the chicane moves the beam "
+                           "across the domains of the ranks); run on one rank with numerics.backend = openmp\n");
+    return 1;
+  }
   r = comm::rank();
   t0 = std::chrono::steady_clock::now();
   try {

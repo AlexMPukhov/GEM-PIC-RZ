@@ -78,6 +78,14 @@ const Row TABLE[] = {
     {"kg", Dim::Mass, 1.0 / 9.1093837015e-31, true},
     // dimensionless
     {"%", Dim::None, 0.01, false},
+    // magnetic field [T] and gradient [T/m]
+    {"T", Dim::Field, 1.0, false},
+    {"mT", Dim::Field, 1e-3, false},
+    {"kG", Dim::Field, 0.1, false},
+    {"G", Dim::Field, 1e-4, false},
+    {"T/m", Dim::Gradient, 1.0, false},
+    {"T/mm", Dim::Gradient, 1e3, false},
+    {"kT/m", Dim::Gradient, 1e3, false},
 };
 }  // namespace
 
@@ -91,6 +99,8 @@ const char* dimName(Dim d) {
     case Dim::Energy: return "energy";
     case Dim::Angle: return "angle";
     case Dim::Mass: return "mass";
+    case Dim::Field: return "magnetic field";
+    case Dim::Gradient: return "field gradient";
   }
   return "?";
 }
@@ -105,6 +115,8 @@ const char* dimUnitsHelp(Dim d) {
     case Dim::Energy: return "eV, keV, MeV, GeV, TeV (kinetic energy)";
     case Dim::Angle: return "rad, mrad, urad, deg";
     case Dim::Mass: return "u (= amu), m_p, m_e, kg";
+    case Dim::Field: return "T, mT, kG, G";
+    case Dim::Gradient: return "T/m, T/mm, kT/m";
   }
   return "?";
 }
@@ -139,6 +151,8 @@ double toCode(double x, const std::string& unit, Dim d, const Units& u) {
     case Dim::Time: return v * u.omega0_per_fs();
     case Dim::Density: return v / u.nc_cm3();
     case Dim::Charge: return u.chargeToCode(v);
+    case Dim::Field: return v / u.B0_T();
+    case Dim::Gradient: return v * u.k0inv_um() * 1e-6 / u.B0_T();
     case Dim::Energy:
     case Dim::Angle:
     case Dim::Mass:

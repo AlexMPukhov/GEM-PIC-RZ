@@ -367,7 +367,7 @@ GEM_HD inline void pushStream(const Params& P, const FieldsV& F, const CurrV& C,
   } else {
     f = gather(P, F, n + 1, wm, n, 1.0 - wm, xm, ym);
   }
-  if (P.ext.n) addExternal(P.ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f);
+  if (P.ext.any()) addExternal(P.ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f);
   double ux = p.ux, uy = p.uy, uz = p.uz;
   boris(ux, uy, uz, f, p.qm, dt0);
   double g1 = sqrt(1.0 + ux * ux + uy * uy + uz * uz);
@@ -631,6 +631,7 @@ struct EngineState {
   par::Array<int> cls;                          // matrix class of the slices
   par::Array<UndulatorV> und;                   // external fields
   par::Array<double> undK;                      // taper tables
+  par::Array<MagnetV> mag;                      // transport elements
   // factorized matrices of the solver -> triData (same layout for every step)
   void uploadMatrices(const FieldSolver& fs, int M) {
     std::vector<double> td;
@@ -759,8 +760,10 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   P.vay = sim.cfg.numerics.beam_vay ? 1 : 0;
   if (!sim.undV.empty()) E.und.assign(sim.undV.data(), sim.undV.size());
   if (!sim.undK.empty()) E.undK.assign(sim.undK.data(), sim.undK.size());
+  if (!sim.magV.empty()) E.mag.assign(sim.magV.data(), sim.magV.size());
   P.ext = ExternalV{int(sim.undV.size()), sim.undV.empty() ? nullptr : E.und.data(),
-                    sim.undK.empty() ? nullptr : E.undK.data()};
+                    sim.undK.empty() ? nullptr : E.undK.data(), int(sim.magV.size()),
+                    sim.magV.empty() ? nullptr : E.mag.data()};
   P.g = {N, E.rho.data(), E.c.data(), E.Af.data(), E.Ac.data(), E.Vf.data(), E.Vc.data(), E.kC.data(), E.kF.data()};
   P.nIons = int(ionsCfg.size());
   P.ions = E.ions.data();

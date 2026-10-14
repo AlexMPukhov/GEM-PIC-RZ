@@ -257,7 +257,7 @@ double GridConfig::stepAt(double s) const {
 
 int GridConfig::stepsFrom(double s) const {
   int k = 0;
-  while (s < z_end - 1e-9) { s = s + stepAt(s); ++k; }  // the arithmetic of the run loop
+  while (s < z_end - endTol()) { s = s + stepAt(s); ++k; }  // the arithmetic of the run loop
   return k;
 }
 
@@ -991,6 +991,39 @@ void readUndulator(const Block& b, const Deck& d, const Units& u, UndulatorConfi
     r.failKey("natural_focusing", "applies to planar undulators only (the helical field is the on-axis field)");
 }
 
+void readMagnet(const Block& b, const Deck& d, const Units& u, MagnetConfig& G, std::vector<std::string>& warn) {
+  BlockReader r(b, d, u);
+  G.label = b.label();
+  G.kind = b.name == "quadrupole" ? MagnetConfig::Kind::Quadrupole
+           : b.name == "plasma_lens" ? MagnetConfig::Kind::PlasmaLens : MagnetConfig::Kind::Solenoid;
+  G.z_start = r.num("z_start", Dim::Length);
+  G.length = r.num("length", Dim::Length);
+  if (!(G.length > 0)) r.failKey("length", "must be positive");
+  if (G.kind == MagnetConfig::Kind::Solenoid) {
+    G.field = r.num("field", Dim::Field);
+    G.ramp = r.num("ramp", Dim::Length, 0.0);
+    if (G.ramp < 0 || 2.0 * G.ramp > G.length) r.failKey("ramp", "must be >= 0 and fit twice into the length");
+  } else {
+    G.gradient = r.num("gradient", Dim::Gradient);
+    if (G.kind == MagnetConfig::Kind::PlasmaLens) {
+      G.radius = r.num("radius", Dim::Length, 1e300);
+      if (!(G.radius > 0)) r.failKey("radius", "must be positive");
+    }
+  }
+  (void)warn;
+}
+
+void readChicane(const Block& b, const Deck& d, const Units& u, ChicaneConfig& C) {
+  BlockReader r(b, d, u);
+  C.z = r.num("z", Dim::Length);
+  if (!(C.z > 0)) r.failKey("z", "must be > 0 (the chicane acts when the beam passes z)");
+  C.r56 = r.num("r56", Dim::Length);
+  C.delay = r.num("delay", Dim::Length, 0.5 * std::fabs(C.r56));
+  if (r.oneOf("energy", "gamma") == 0) C.gamma_ref = 1.0 + r.num("energy", Dim::Energy) / MC2_MEV;
+  else C.gamma_ref = r.num("gamma", Dim::None);
+  if (!(C.gamma_ref > 1.0)) r.failKey(r.has("gamma") ? "gamma" : "energy", "the reference must be relativistic");
+}
+
 void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig& N) {
   BlockReader r(b, d, u);
 #if defined(GEMPIC_HAVE_CUDA)
@@ -1099,7 +1132,8 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 // ============================================================================
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
-  deck.checkBlockNames({"constants", "grid", "laser", "plasma", "ion", "bunch", "undulator", "output", "numerics"});
+  deck.checkBlockNames({"constants", "grid", "laser", "plasma", "ion", "bunch", "undulator", "quadrupole",
+                        "plasma_lens", "solenoid", "chicane", "output", "numerics"});
   Config c;
   g_consts = &c.constants;  // the expressions of all blocks see the constants
   struct Reset { ~Reset() { g_consts = nullptr; } } reset;
@@ -1149,6 +1183,18 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     readUndulator(*b, deck, c.units, U);
     c.undulators.push_back(U);
   }
+  for (const char* kind : {"quadrupole", "plasma_lens", "solenoid"})
+    for (const Block* b : deck.all(kind)) {
+      MagnetConfig G;
+      readMagnet(*b, deck, c.units, G, warn);
+      c.magnets.push_back(G);
+    }
+  for (const Block* b : deck.all("chicane")) {
+    ChicaneConfig C;
+    readChicane(*b, deck, c.units, C);
+    c.chicanes.push_back(C);
+  }
+  std::sort(c.chicanes.begin(), c.chicanes.end(), [](const ChicaneConfig& a, const ChicaneConfig& b) { return a.z < b.z; });
   if (const Block* b = deck.single("output")) readOutput(*b, deck, c.units, c.output);
   if (const Block* b = deck.single("numerics")) readNumerics(*b, deck, c.units, c.numerics);
   deck.checkAllUsed();
@@ -1179,6 +1225,18 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
       if (c.grid.dzeta_max > lr / 12.0)
         warn.push_back(lab + ", bunch '" + B.name + "': the resonant wavelength is only " +
                        std::to_string(lr / c.grid.dzeta_max) + " zeta steps (use >= 12, better ~20)");
+    }
+  }
+  // transport elements: the sub-steps of the beam push must resolve the element and the betatron phase
+  for (const auto& G : c.magnets) {
+    if (G.length < 4.0 * c.numerics.beam_dz_max)
+      warn.push_back(G.label + ": shorter than 4 sub-steps of the beam push (numerics.beam_dz_max)");
+    for (const auto& B : c.bunches) {
+      const double k = (G.kind == MagnetConfig::Kind::Solenoid) ? 0.5 * std::fabs(G.field) / B.gamma
+                                                                  : std::sqrt(std::fabs(G.gradient) / B.gamma);
+      if (k * c.numerics.beam_dz_max > 0.1)
+        warn.push_back(G.label + ", bunch '" + B.name + "': numerics.beam_dz_max exceeds 0.1 / k_beta (" +
+                       fmtUm(0.1 / k, c.units) + ")");
     }
   }
 
@@ -1282,6 +1340,21 @@ std::string Config::summary() const {
     if (!U.K_fn.empty()) line("        taper K_function(z) = %s (K above: at the entrance)", U.K_fn.text().c_str());
     if (!res.empty()) line("        resonant wavelength (on axis): %s", res.c_str());
   }
+  for (const auto& G : magnets) {
+    if (G.kind == MagnetConfig::Kind::Solenoid)
+      line("%s: B_z = %.4g T, z = %.4g ... %.4g mm, fringes %.4g mm", G.label.c_str(), G.field * units.B0_T(),
+           G.z_start * um * 1e-3, (G.z_start + G.length) * um * 1e-3, G.ramp * um * 1e-3);
+    else
+      line("%s: gradient %.4g T/m (%s electrons), z = %.4g ... %.4g mm%s", G.label.c_str(),
+           G.gradient * units.B0_T() / (um * 1e-6),
+           G.kind == MagnetConfig::Kind::PlasmaLens ? (G.gradient > 0 ? "focuses" : "defocuses")
+                                                    : (G.gradient > 0 ? "focuses in x, defocuses in y" : "focuses in y, defocuses in x"),
+           G.z_start * um * 1e-3, (G.z_start + G.length) * um * 1e-3,
+           G.radius < 1e299 ? (", radius " + std::to_string(G.radius * um) + " um").c_str() : "");
+  }
+  for (const auto& C : chicanes)
+    line("chicane at z = %.4g mm: R56 = %.4g um, delay %.4g um, reference energy %.5g MeV", C.z * um * 1e-3, C.r56 * um,
+         C.delay * um, (C.gamma_ref - 1.0) * MC2_MEV);
   if (plasma.present) {
     const double kp = std::sqrt(plasma.n0);
     char rbuf[64] = "open (up to the grid edge)";

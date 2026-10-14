@@ -108,6 +108,7 @@ class Simulation {
   ZetaView zv;       // view of zg
   std::vector<UndulatorV> undV;  // external fields (undulators)
   std::vector<double> undK;      // tapered undulators: tables of B0(z)
+  std::vector<MagnetV> magV;     // transport elements
   ExternalV ext;                 // view of undV
 
   void beginStep();  // Delta of this step, matrices of the field solver
@@ -115,6 +116,8 @@ class Simulation {
   void initLasers();
   void initBunches();
   void initBunchFields();
+  void addBeamFields(double sign, bool deckGamma);  // co-moving self-fields of the beam list
+  void applyChicanes(double za, double zb);          // thin chicanes passed in (za, zb]
 
   EB gather(const Fields& F, int n1, double w1, int n2, double w2, double x, double y) const;
   void accumulate(const Fields& F, int m, int n, double w, double r, const RadialGrid::W& wc,

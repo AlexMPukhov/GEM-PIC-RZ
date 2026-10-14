@@ -16,6 +16,8 @@
 // ============================================================================
 #pragma once
 #include <string>
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "deck.hpp"
@@ -69,6 +71,8 @@ struct GridConfig {
   double absorber_strength = 0.2;
 
   double window() const { return zetaNode(Nz); }
+  // a run ends at the first level s >= z_end - endTol() (relative: rounding of many steps)
+  double endTol() const { return 1e-9 * std::max(1.0, std::fabs(z_end)); }
   double mapping(double xi) const;  // R(xi)
   double zetaNode(int n) const;     // zeta_n
   double zetaStep(double zeta) const;  // local step dzeta at zeta
@@ -197,6 +201,23 @@ struct UndulatorConfig {
   double resonance(double gamma) const;
 };
 
+// ---------------------------------------------------------------- transport elements
+// static fields acting on all particles over [z_start, z_start + length]
+struct MagnetConfig {
+  enum class Kind { Quadrupole, PlasmaLens, Solenoid };
+  Kind kind = Kind::Quadrupole;
+  std::string label;       // "quadrupole[0]", ...
+  double z_start = 0.0, length = 0.0;
+  double gradient = 0.0;   // quadrupole, plasma lens: dB/dx [code units]; > 0 focuses electrons (in x for a quadrupole)
+  double radius = 1e300;   // plasma lens: radius of the current (B_phi ~ 1/r outside)
+  double field = 0.0;      // solenoid: B_z [code units]
+  double ramp = 0.0;       // solenoid: linear fringe at both ends (inside the length)
+};
+// thin magnetic chicane at z: the beam particles move by r56 * delta - delay in zeta
+struct ChicaneConfig {
+  double z = 0.0, r56 = 0.0, delay = 0.0, gamma_ref = 1.0;
+};
+
 // ---------------------------------------------------------------- output / numerics
 struct OutputConfig {
   std::string dir = "diag";
@@ -246,6 +267,8 @@ struct Config {
   std::vector<IonConfig> ions;
   std::vector<BunchConfig> bunches;
   std::vector<UndulatorConfig> undulators;
+  std::vector<MagnetConfig> magnets;    // quadrupole, plasma_lens, solenoid blocks
+  std::vector<ChicaneConfig> chicanes;  // chicane blocks, sorted by z
   std::map<std::string, double> constants;  // block 'constants' (code units)
   OutputConfig output;
   NumericsConfig numerics;

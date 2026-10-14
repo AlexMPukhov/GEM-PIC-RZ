@@ -97,7 +97,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/ionization.*` | ADK tunnel-ionization rates per level (SI reference function and code-unit tables) |
 | `src/mapping.*` | free-hand grid mapping: step given at reference points, linear in between (analytic, used for r, ζ and z) |
 | `src/grid.*` | staggered non-uniform radial grid, interpolation weights |
-| `src/external.hpp` | external fields acting on the particles: undulators |
+| `src/external.hpp` | external fields acting on the particles: undulators, quadrupoles, plasma lenses, solenoids |
 | `src/eigen.*` | symmetric tridiagonal eigenproblem (initial fields of bunches with v < c) |
 | `src/zgrid.hpp` | longitudinal grid of the window: slices, half-cells, location of particles, interpolation weights of the R equation |
 | `src/fields.hpp` | mode fields and currents |
@@ -545,6 +545,7 @@ earlier versions except in the rearmost slice.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
 - **Beams from files:** a bunch can be read from an openPMD file of any code or from a native data file (selection, placement, resampling), and **Fawley shot noise** gives the bunching noise of the real electrons for FEL start-up.
+- **Transport elements:** quadrupoles, active plasma lenses, solenoids and thin chicanes (R56, delay) for matching and compressing a beam between stages.
 - **Function parser:** profiles of plasmas, lasers, bunches and undulator tapers as expressions in the deck.
 - **GPU and multi-core:** the parallel engine runs the time step on an NVIDIA GPU (`cuda`) or on CPU threads (`openmp`); see above.
 - **Diagnostics:** `bunches.txt` holds the statistics of every bunch and of the self-trapped charge at every step. The output is in µm and pC. Each run saves `deck_used.txt` and `summary.txt`.

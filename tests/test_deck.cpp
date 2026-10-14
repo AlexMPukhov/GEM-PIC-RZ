@@ -826,6 +826,38 @@ int main() {
 #endif
   }
 
+  // ------------------------------------------------------------ transport elements
+  {
+    Config c = cfgOf(std::string(BASE) + "quadrupole { z_start = 1 cm; length = 5 cm; gradient = 100 T/m }\n"
+                     "solenoid { z_start = 0 m; length = 10 cm; field = 2 T; ramp = 1 cm }\n"
+                     "chicane { z = 0.5 mm; r56 = 50 um; energy = 1 GeV }\nchicane { z = 0.2 mm; r56 = -1 um; gamma = 100 }");
+    CHECK(c.magnets.size() == 2 && c.chicanes.size() == 2);
+    const double L = 0.8e-6 / (2.0 * PI);  // code length [m]
+    CHECK_NEAR(c.magnets[0].gradient * c.units.B0_T() / L, 100.0, 1e-12);
+    CHECK_NEAR(c.magnets[1].field * c.units.B0_T(), 2.0, 1e-12);
+    CHECK_NEAR(c.chicanes[0].z * L, 0.2e-3, 1e-12);          // sorted by z
+    CHECK_NEAR(c.chicanes[1].delay * L, 25e-6, 1e-12);       // default |R56| / 2
+    // fields: quadrupole focusing for electrons, solenoid div B = 0 in the fringe
+    MagnetV q{0, 0.0, 1.0, 2.0, 1e300, 0.0}, so{2, 0.0, 10.0, 3.0, 1e300, 2.0};
+    ExternalV X;
+    X.nm = 1; X.m = &q;
+    EB f{};
+    addExternal(X, 0.5, 0.25, 0.5, f);
+    CHECK_NEAR(f.By, -1.0, 1e-15);
+    CHECK_NEAR(f.Bx, -0.5, 1e-15);
+    X.m = &so;
+    EB a{}, b{};
+    const double h = 1e-4;
+    addExternal(X, 0.3, 0.2, 1.0 - h, a);
+    addExternal(X, 0.3, 0.2, 1.0 + h, b);
+    EB e{};
+    addExternal(X, 0.3, 0.2, 1.0, e);
+    CHECK(std::fabs(e.Bx / 0.3 + e.By / 0.2 + (b.Bz - a.Bz) / (2 * h)) < 1e-9);  // div B = 0 in the fringe
+    CHECK(std::fabs(e.Bz - 1.5) < 1e-12);
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "solenoid { z_start = 0 m; length = 1 cm; field = 2 T; ramp = 1 cm }"), "fit twice");
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "quadrupole { z_start = 0 m; length = 1 cm; gradient = 2 T }"), "magnetic field");
+  }
+
   // ------------------------------------------------------------ output formats
 #if defined(GEMPIC_HAVE_HDF5)
   {

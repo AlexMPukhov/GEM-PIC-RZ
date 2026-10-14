@@ -172,7 +172,7 @@ int run(int argc, char** argv) {
   else std::printf("continuing at step %d, z = %.6g mm\n", firstStep, sim.z() * cfg.units.k0inv_um() * 1e-3);
   const auto& O = cfg.output;
   auto hours = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / 3600.0; };
-  while (sim.z() < zend - 1e-9) {
+  while (sim.z() < zend - cfg.grid.endTol()) {
     try {
       sim.step();
     } catch (const std::exception& e) {
@@ -183,7 +183,7 @@ int run(int argc, char** argv) {
       std::fprintf(stderr, "non-finite field at step %d\n", sim.stepNumber());
       return 2;
     }
-    const bool last = sim.z() >= zend - 1e-9;
+    const bool last = sim.z() >= zend - cfg.grid.endTol();
     sim.diagnostics((every > 0 && sim.stepNumber() % every == 0) || last);
     // checkpoints; stop before the wall-time limit (1.5 mean steps of margin)
     const int done = sim.stepNumber() - firstStep;

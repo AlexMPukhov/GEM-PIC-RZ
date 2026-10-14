@@ -1,0 +1,12 @@
+# Transport test (tests/transport.sh): a cold, low-charge bunch (gamma = 1000,
+# B rho = 1.7045 T m) through one element and a drift to z = 0.25 m.
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = uniform;  dr = 20 um;  r_max = 1.6 mm;  r_absorber = 2 m
+  dzeta = 0.5 um;  window_length = 40 um
+  dz = 5 mm;  z_end = 0.25 m
+}
+bunch { name = b; charge = 1 fC; gamma = 1000; sigma_x = 100 um; emittance_x = 0 um
+        sigma_z = 2 um; zeta_center = 25 um; macroparticles = 20000 }
+output { dir = out; every = 0; particles = false; axis = false; maps = false }
+numerics { beam_dz_max = 0.25 mm; beam_filter = 0 }

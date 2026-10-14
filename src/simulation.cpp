@@ -37,7 +37,11 @@ Simulation::Simulation(const Config& c, const std::string& restartFile) : cfg(c)
     }
     undV.push_back(v);
   }
-  ext = ExternalV{int(undV.size()), undV.data(), undK.data()};
+  for (const auto& G : cfg.magnets)
+    magV.push_back(MagnetV{G.kind == MagnetConfig::Kind::Quadrupole ? 0 : G.kind == MagnetConfig::Kind::PlasmaLens ? 1 : 2,
+                           G.z_start, G.z_start + G.length,
+                           G.kind == MagnetConfig::Kind::Solenoid ? G.field : G.gradient, G.radius, G.ramp});
+  ext = ExternalV{int(undV.size()), undV.data(), undK.data(), int(magV.size()), magV.data()};
   n_ref = cfg.plasma.present ? cfg.plasma.n0 : 1.0;
   rng.seed(cfg.numerics.seed);
   g.build(cfg.grid);
@@ -297,6 +301,13 @@ void Simulation::initBunchFields() {
   if (beam.empty()) return;
   for (const auto& p : beam) depositBeamParticle(c0b, p);
   filterBeamCurrent(c0b);  // the initial field belongs to the filtered current
+  addBeamFields(1.0, true);
+}
+
+// adds sign x the co-moving self-field of the beam list to fold, per group of particles
+// (bunches, and with deckGamma = false also trapped particles), with the gamma of the
+// bunch block (deckGamma) or the mean gamma of the group
+void Simulation::addBeamFields(double sign, bool deckGamma) {
   const int N = g.N;
   // radial eigenmodes of -Lap^c_m (computed on demand, per mode)
   std::vector<std::vector<double>> lam(M + 1), Q(M + 1);
@@ -314,14 +325,26 @@ void Simulation::initBunchFields() {
   std::vector<cd> rho(size_t(Nz) * N), psi(size_t(Nz) * N), col(Nz), Er(N + 1), Ep(N);
   std::vector<double> sq(N);
   for (int i = 0; i < N; ++i) sq[i] = std::sqrt(g.Ac[i]);
-  for (size_t b = 0; b < cfg.bunches.size(); ++b) {
+  std::vector<int> groups;
+  for (size_t b = 0; b < cfg.bunches.size(); ++b) groups.push_back(int(b));
+  if (!deckGamma) {
+    for (const auto& p : beam)
+      if (p.sp < 0 && std::find(groups.begin(), groups.end(), p.sp) == groups.end()) groups.push_back(p.sp);
+  }
+  for (const int b : groups) {
     C.zero();
     bool any = false;
+    double gsum = 0.0, wsum = 0.0;
     for (const auto& p : beam)
-      if (p.sp == int(b)) { depositBeamParticle(C, p); any = true; }
+      if (p.sp == b) {
+        depositBeamParticle(C, p);
+        any = true;
+        gsum += std::fabs(p.q) * gammaOf(p);
+        wsum += std::fabs(p.q);
+      }
     if (!any) continue;
     filterBeamCurrent(C);
-    const double gam = cfg.bunches[b].gamma;
+    const double gam = deckGamma ? cfg.bunches[size_t(b)].gamma : gsum / wsum;
     const double beta = (gam > 1e5) ? 1.0 : std::sqrt(1.0 - 1.0 / (gam * gam));
     const double ig2 = (gam > 1e5) ? 0.0 : 1.0 / (gam * gam);
     for (int m = 0; m <= M; ++m) {
@@ -383,19 +406,19 @@ void Simulation::initBunchFields() {
       for (int n = 0; n < Nz; ++n) {
         solver.gradient(m, &psi[size_t(n) * N], Er.data(), Ep.data());
         for (int i = 1; i <= N; ++i) {
-          fold.Rr[fold.f(m, n, i)] += (1.0 + beta) * Er[i];
-          if (beta < 1.0) fold.Lr[fold.f(m, n, i)] += (1.0 - beta) * Er[i];
+          fold.Rr[fold.f(m, n, i)] += sign * ((1.0 + beta) * Er[i]);
+          if (beta < 1.0) fold.Lr[fold.f(m, n, i)] += sign * ((1.0 - beta) * Er[i]);
         }
         for (int i = 0; i < N; ++i) {
-          fold.Rp[fold.c(m, n, i)] += (1.0 + beta) * Ep[i];
-          if (beta < 1.0) fold.Lp[fold.c(m, n, i)] += (1.0 - beta) * Ep[i];
+          fold.Rp[fold.c(m, n, i)] += sign * ((1.0 + beta) * Ep[i]);
+          if (beta < 1.0) fold.Lp[fold.c(m, n, i)] += sign * ((1.0 - beta) * Ep[i]);
         }
         if (ig2 > 0.0) {  // E_z = -gamma^-2 d_zeta psi (central difference, psi = 0 beyond the window)
           const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
           for (int i = 0; i < N; ++i) {
             const cd up1 = (n + 1 < Nz) ? psi[size_t(n + 1) * N + i] : cd(0.0);
             const cd dn1 = (n > 0) ? psi[size_t(n - 1) * N + i] : cd(0.0);
-            fold.Ez[fold.c(m, n, i)] -= ig2 * (up1 - dn1) / (hm + hp);
+            fold.Ez[fold.c(m, n, i)] -= sign * (ig2 * (up1 - dn1) / (hm + hp));
           }
         }
       }
@@ -691,7 +714,7 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1) {
   } else {
     f = gather(fnew, n + 1, wm, n, 1.0 - wm, xm, ym);
   }
-  if (ext.n) addExternal(ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f);
+  if (ext.any()) addExternal(ext, xm, ym, p.z + 0.5 * dt0 * p.uz / g0, f);
   double ux = p.ux, uy = p.uy, uz = p.uz;
   boris(ux, uy, uz, f, p.qm, dt0);
   double g1 = std::sqrt(1.0 + ux * ux + uy * uy + uz * uz);
@@ -793,11 +816,46 @@ void Simulation::beginStep() {
   solver.prepare(Delta, zg);
 }
 
+// thin chicanes passed in the last step (z_a, z_b]: the beam particles move by
+// r56 delta - delay in zeta (delta = gamma / gamma_ref - 1). Their co-moving
+// self-field moves with them (subtracted at the old, added at the new
+// positions; vacuum), and the beam current of the level s^0 is deposited anew.
+void Simulation::applyChicanes(double za, double zb) {
+  for (const auto& C : cfg.chicanes) {
+    if (!(za < C.z && C.z <= zb)) continue;
+    if (engine) engine->downloadFull();
+    addBeamFields(-1.0, false);
+    double sh = 0.0, sh2 = 0.0, w = 0.0;
+    const double top = zv.node(Nz);
+    for (auto& p : beam) {
+      const double d = C.r56 * (gammaOf(p) / C.gamma_ref - 1.0) - C.delay;
+      p.zeta += d;
+      sh += std::fabs(p.q) * d; sh2 += std::fabs(p.q) * d * d; w += std::fabs(p.q);
+      if (p.zeta < 0.0 || p.zeta >= top) p.status = 2;
+    }
+    const size_t n0 = beam.size();
+    beam.erase(std::remove_if(beam.begin(), beam.end(), [](const Particle& p) { return p.status != 0; }), beam.end());
+    addBeamFields(1.0, false);
+    c0b.zero();
+    for (const auto& p : beam) depositBeamParticle(c0b, p);
+    filterBeamCurrent(c0b);
+    if (w > 0) {
+      const double um = cfg.units.k0inv_um(), m = sh / w;
+      std::printf("chicane at z = %.6g mm: beam moved by %.4g um (rms spread %.3g um)%s\n", C.z * um * 1e-3, m * um,
+                  std::sqrt(std::max(0.0, sh2 / w - m * m)) * um,
+                  n0 > beam.size() ? (", " + std::to_string(n0 - beam.size()) + " particles left the window").c_str() : "");
+    }
+    if (engine) engine = std::make_unique<Engine>(*this);  // upload the changed state
+  }
+}
+
 void Simulation::step() {
   beginStep();
+  const double za = s0;
   if (engine) {  // parallel backend: same algorithm, state on the device
     engine->step();
     engine->download();
+    if (!cfg.chicanes.empty()) applyChicanes(za, s0);
     return;
   }
   const int N = g.N;
@@ -933,6 +991,7 @@ void Simulation::step() {
   std::swap(c0s, c1s);
   s0 = s1;
   ++step_no;
+  if (!cfg.chicanes.empty()) applyChicanes(za, s0);
 }
 
 // damp R near the outer radial boundary

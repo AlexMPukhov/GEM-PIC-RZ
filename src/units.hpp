@@ -21,7 +21,7 @@ constexpr double MP_OVER_ME = 1836.15267343;     // proton / electron mass
 constexpr double U_OVER_ME = 1822.888486;        // atomic mass unit / electron mass
 
 // Physical dimension of a deck quantity.
-enum class Dim { None, Length, Time, Density, Charge, Energy, Angle, Mass };
+enum class Dim { None, Length, Time, Density, Charge, Energy, Angle, Mass, Field, Gradient };
 
 const char* dimName(Dim d);       // "length", "time", ...
 const char* dimUnitsHelp(Dim d);  // list of accepted units, for error messages

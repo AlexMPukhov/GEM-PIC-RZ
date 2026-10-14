@@ -35,10 +35,25 @@ struct UndulatorV {
   double dzk;
 };
 
+// transport elements (deck blocks quadrupole, plasma_lens, solenoid), on [z0, z1]:
+//   quadrupole   B_x = -g y, B_y = -g x       (g > 0: focuses electrons in x, defocuses in y)
+//   plasma lens  B_phi = -g r for r < R, -g R^2 / r beyond  (g > 0: focuses electrons)
+//   solenoid     B_z = b f(z), B_r = -(r/2) b f'(z)  (f: linear fringes of length `ramp`)
+struct MagnetV {
+  int kind;       // 0 quadrupole, 1 plasma lens, 2 solenoid
+  double z0, z1;
+  double g;       // gradient (quadrupole, lens) or field (solenoid), code units
+  double R;       // plasma lens radius
+  double ramp;    // solenoid fringe
+};
+
 struct ExternalV {
   int n = 0;
   const UndulatorV* u = nullptr;
   const double* k = nullptr;  // taper tables
+  int nm = 0;
+  const MagnetV* m = nullptr;
+  GEM_HD bool any() const { return n > 0 || nm > 0; }
 };
 
 GEM_HD inline double undulatorEnvelope(const UndulatorV& U, double z) {
@@ -47,9 +62,34 @@ GEM_HD inline double undulatorEnvelope(const UndulatorV& U, double z) {
   return fmin(1.0, fmin((z - U.z0) / U.ramp, (U.z1 - z) / U.ramp));
 }
 
+GEM_HD inline void addMagnets(const ExternalV& X, double x, double y, double z, EB& f) {
+  for (int k = 0; k < X.nm; ++k) {
+    const MagnetV& G = X.m[k];
+    if (z < G.z0 || z >= G.z1) continue;
+    if (G.kind == 0) {
+      f.Bx -= G.g * y;
+      f.By -= G.g * x;
+    } else if (G.kind == 1) {
+      const double r2 = x * x + y * y, R2 = G.R * G.R;
+      const double s = (r2 <= R2) ? G.g : G.g * R2 / r2;  // B_phi / r
+      f.Bx += s * y;   // B_x = -B_phi sin(phi) = g y
+      f.By -= s * x;   // B_y =  B_phi cos(phi) = -g x
+    } else {
+      double fz = 1.0, dfz = 0.0;
+      if (G.ramp > 0.0) {
+        if (z - G.z0 < G.ramp) { fz = (z - G.z0) / G.ramp; dfz = 1.0 / G.ramp; }
+        else if (G.z1 - z < G.ramp) { fz = (G.z1 - z) / G.ramp; dfz = -1.0 / G.ramp; }
+      }
+      f.Bz += G.g * fz;
+      f.Bx -= 0.5 * x * G.g * dfz;
+      f.By -= 0.5 * y * G.g * dfz;
+    }
+  }
+}
+
 // add the external fields at the lab position (x, y, z) to f
 GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z, EB& f) {
-  (void)x;
+  if (X.nm) addMagnets(X, x, y, z, f);
   for (int k = 0; k < X.n; ++k) {
     const UndulatorV& U = X.u[k];
     const double g = undulatorEnvelope(U, z);
