@@ -6,3 +6,7 @@ build*/
 # benchmark results are kept
 !benchmarks/*/*_out/
 !benchmarks/**/*.out.h5
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*Notes.bib
