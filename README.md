@@ -102,6 +102,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/zgrid.hpp` | longitudinal grid of the window: slices, half-cells, location of particles, interpolation weights of the R equation |
 | `src/fields.hpp` | mode fields and currents |
 | `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step) |
+| `src/smoothing.*` | radial smoothing of the plasma sources (`plasma.smooth_length`): vector and scalar filters (1 − a²∇²)⁻¹ that commute with the discrete divergence |
 | `src/particles.hpp` | particle record, Boris pusher |
 | `src/simulation.*` | laser and bunch initialization, plasma loading, pushers, deposition, time step (serial reference) |
 | `src/engine.*` | parallel engine (GPU / OpenMP): the time step as kernels, device-resident state |
@@ -119,6 +120,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/hdf5.sh` | HDF5 files read back against the text output (double and single precision) |
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
+| `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial; restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
@@ -475,6 +477,57 @@ one pass damps kh = 0.2 (31 cells per wavelength) by 1%, and kh = π/2 by 50%.
 Such a bunch is under-resolved anyway. `beam_filter = 0` reproduces the
 earlier versions except in the rearmost slice.
 
+## Bubble closure: regularization (`plasma.smooth_length`)
+
+**Problem.** Behind the first bubble of a laser wake the on-axis E_z can show oscillations on the scale of the
+laser wavelength that FBPIC does not have (`benchmarks/lwfa_fbpic`, ζ < 13 µm at 100 µm). They come from the back
+of the bubble, where the electrons that close it converge on the axis: for a cold plasma and a perfectly
+axisymmetric driver this is a caustic, with a density that grows without bound as the cells are refined (124 n0
+on the axis in `tests/regression.deck`). Two numerical effects of the scheme act there.
+- **Fast spurious modes.** The reduced field equations have a resonance at k_ζ = ω_p/2 where ω → ∞ (the
+  dispersion relation ω = 2k_ζω_p²/(4k_ζ² − ω_p²)). The trapezoid in s maps such modes onto undamped
+  modes that change sign from step to step. With the local ω_p of the density spike they fall on resolved
+  scales. With Δ = 5 µm instead of 2.5 µm, they grow at the bubble back: E_z reaches ±0.5 instead of 0.04, and
+  the axis density alternates between 30 and 1800 n0 from step to step.
+- **Switching levels.** Sheath and laser-driven electrons move forward by more than Δ while they cross the
+  window. When their z reaches the next level they are taken out of the current level and continue in the next
+  one from the same ζ; every such switch is a small jump in the current. Their number grows as Δ decreases,
+  and so does the noise: with Δ = 1.25 µm the rms deviation from FBPIC behind the bubble is 5 times larger than
+  with 2.5 µm (0.0098 vs 0.0018 m c ω0/e).
+
+**Remedy**, as in QUARZ: the sources of the streaming plasma (electrons, ions, freed electrons) are smoothed
+radially after the deposit of every half-cell,
+
+    j⊥ ← (1 − a² ∇²_vec)⁻¹ j⊥,     (ρ, j_z) ← (1 − a² ∇²_m)⁻¹ (ρ, j_z),
+
+per azimuthal mode. Every ring of charge gets a finite width a, which caps the spike. ∇²_vec = grad div − rot curl
+is built from the operators of the field solver on the staggered grid. div ∇²_vec = ∇²_m div then holds exactly, so
+the filter commutes with the divergence and the smoothed currents conserve the smoothed charge (unit test in
+`test_deck`). The vector system is pentadiagonal (j_r and j_φ interleaved), the scalar one tridiagonal. Both are
+factorized once, so the filter costs less than 1 % of the run time. The beam list and the fields acting on the
+particles are not smoothed. MPI, OpenMP and the GPU engine give the same results as the serial code.
+
+| LWFA vs FBPIC at 100 µm (`benchmarks/lwfa_fbpic`), rms of E_z − E_z(FBPIC) [m c ω0/e] | Δ = 2.5 µm | Δ = 1.25 µm | Δ = 5 µm |
+|---|---|---|---|
+| behind the bubble (2 … 12.5 µm), cold plasma | 0.0018 | 0.0098 | 0.053 (spike ±0.5) |
+| behind the bubble, a = 1 k0⁻¹ | 0.0010 | 0.0017 | 0.030 |
+| behind the bubble, a = 2 k0⁻¹ (0.25 µm, 0.09 c/ω_p) | **0.0007** | **0.0007** | 0.0079 (stable) |
+| first wake period (14 … 38 µm), cold / a = 2 k0⁻¹ | 0.0004 / 0.0005 | 0.0005 / 0.0005 | |
+
+- **Convergence:** with a = 2 k0⁻¹ the wake behind the bubble is the same for Δ = 2.5 and 1.25 µm, and matches
+  FBPIC.
+- **Cost of the model change:** the smoothing shifts the bubble back by about a. The first period changes by
+  0.0001 rms (1.6 % → 1.9 % rms of the peak against FBPIC), and the peak E_z at the back changes from 0.047
+  (spike) to 0.040 (FBPIC 0.042).
+- **Choice of a:** at least the axis cell and the slice spacing. Off by default.
+
+**Other switches** (both off by default, kept for studies):
+- `numerics.trap_advance = k`: an electron leaves its level only after advancing k steps. With k = 4 to 8
+  (5 … 10 µm) the noise from switching levels disappears at Δ = 2.5 and 1.25 µm (rms 0.0015 … 0.0017).
+- `numerics.theta > 0.5`: an off-centred update of R in s that damps the fast spurious modes by (1 − θ)/θ per
+  step. θ = 0.6 gives rms 0.0003 for Δ = 1.25, 2.5 and 5 µm. It is first order in Δ for any oscillating source,
+  so it must not be used with undulators.
+
 ## Corrections of earlier versions
 
 1. **Bunch self-fields** (found with the ion-collapse benchmark). Bunches now start with their relativistic vacuum
@@ -588,7 +641,8 @@ earlier versions except in the rearmost slice.
   charge, and the widening of the beam by its transverse space charge. The benchmark found two numerical errors
   of the undulator coupling (corrections 7 and 8 below).
 - **LWFA vs FBPIC** (a0 = 2, n0 = 3.5·10¹⁸ cm⁻³): the on-axis wake of the first period agrees to 1.6 % rms after
-  100 µm, at 1/50 of the computing time.
+  100 µm, at 1/50 of the computing time. Behind the bubble the cold-plasma run has spurious oscillations that
+  `plasma.smooth_length` removes (see "Bubble closure").
 
 ## Checks
 

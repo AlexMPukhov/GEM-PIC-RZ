@@ -122,6 +122,8 @@ struct TriV {
 struct Params {
   int M, Nz, N;
   double Delta;  // step of the current s^0 -> s^1
+  double theta;      // implicitness of the R update (numerics.theta)
+  double trapExtra;  // (trap_advance - 1) * Delta: advance in z beyond s^1 before a particle leaves the level
   ZetaView zv;   // longitudinal grid
   const int* cls;  // matrix class of slice n (FieldSolver::classOf)
   ExternalV ext;   // external fields (undulators)
@@ -381,8 +383,9 @@ GEM_HD inline void pushStream(const Params& P, const FieldsV& F, const CurrV& C,
   g1 = sqrt(1.0 + ux * ux + uy * uy + uz * uz);
   double vx = 0.5 * (p.ux / g0 + ux / g1), vy = 0.5 * (p.uy / g0 + uy / g1), vz = 0.5 * (p.uz / g0 + uz / g1);
   double zeta_end = zn;
-  if (p.z + vz * dt >= s1) {
-    const double dtp = fmax(0.0, (s1 - p.z) / fmax(vz, 1e-3));
+  const double sTrap = s1 + P.trapExtra;
+  if (p.z + vz * dt >= sTrap) {
+    const double dtp = fmax(0.0, (sTrap - p.z) / fmax(vz, 1e-3));
     ux = p.ux; uy = p.uy; uz = p.uz;
     boris(ux, uy, uz, f, p.qm, dtp);
     g1 = sqrt(1.0 + ux * ux + uy * uy + uz * uz);
@@ -448,6 +451,53 @@ GEM_HD inline void thomas(const TriV& T, const cplx* rhs, cplx* x, cplx* dp) {
 
 constexpr int SOLVE_SCRATCH = 13;  // arrays of N+1 per mode
 
+// plasma.smooth_length (SourceFilter, smoothing.cpp): factorized filters per mode
+struct FiltV {
+  int on, N;
+  const cplx* band;   // per mode 5 (2N+1): LU of 1 - a^2 Lap_vec, offsets -2..+2 per row (1/diagonal)
+  const double *sa, *scp, *sden;  // per mode N: Thomas factors of 1 - a^2 Lap_m
+};
+
+GEM_HD inline void filterScalarDev(const FiltV& F, int m, cplx* f, cplx* w) {
+  const int N = F.N;
+  const double *a = F.sa + size_t(m) * N, *cp = F.scp + size_t(m) * N, *den = F.sden + size_t(m) * N;
+  w[0] = f[0] * den[0];
+  for (int i = 1; i < N; ++i) w[i] = (f[i] - a[i] * w[i - 1]) * den[i];
+  f[N - 1] = w[N - 1];
+  for (int i = N - 2; i >= 0; --i) f[i] = w[i] - cp[i] * f[i + 1];
+}
+
+// smooth the streaming currents of half-cell n, mode m (leader of one team; Simulation::smoothStream)
+GEM_HD inline void filterTeam(const Team& t, const FiltV& F, int m, int n, const CurrV& c, cplx* x) {
+  if (!t.leader()) return;
+  const int N = F.N, nb = 2 * N + 1;
+  cplx* w = x + nb;
+  cplx* y = w + N;
+  for (int i = 0; i <= N; ++i) x[2 * i] = c.jr[c.f(m, n, i)];
+  for (int i = 0; i < N; ++i) x[2 * i + 1] = c.jp[c.c(m, n, i)];
+  const cplx* A = F.band + size_t(m) * 5 * nb;
+  for (int i = 0; i < nb; ++i)
+    for (int p = -2; p <= -1; ++p)
+      if (i + p >= 0) x[i] -= A[size_t(i) * 5 + size_t(p + 2)] * x[i + p];
+  for (int i = nb - 1; i >= 0; --i) {
+    for (int k = 1; k <= 2; ++k)
+      if (i + k < nb) x[i] -= A[size_t(i) * 5 + size_t(k + 2)] * x[i + k];
+    x[i] = x[i] * A[size_t(i) * 5 + 2];  // reciprocal of the diagonal (Banded5::factor)
+  }
+  for (int i = 1; i <= N; ++i) c.jr[c.f(m, n, i)] = x[2 * i];
+  for (int i = 0; i < N; ++i) c.jp[c.c(m, n, i)] = x[2 * i + 1];
+  for (int i = 0; i < N; ++i) y[i] = c.jz[c.c(m, n, i)];
+  filterScalarDev(F, m, y, w);
+  for (int i = 0; i < N; ++i) c.jz[c.c(m, n, i)] = y[i];
+  if (m == 0)
+    for (int k = 0; k < 2; ++k) {
+      double* d = (k == 0 ? c.rho : c.rhoi) + size_t(n) * N;
+      for (int i = 0; i < N; ++i) y[i] = cplx(d[i]);
+      filterScalarDev(F, 0, y, w);
+      for (int i = 0; i < N; ++i) d[i] = y[i].re;
+    }
+}
+
 // (FieldSolver::solveSlice for mode m, slice n, with the current sums of
 //  Simulation::step); one team per mode
 GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, const FieldsV& fo, const FieldsV& fn,
@@ -477,17 +527,18 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   // interpolation to slice n (last slice n = 0: half-cell -1 := half-cell 0)
   const int nm = (n > 0) ? n - 1 : 0;
   const double wl = P.zv.wLo(n), wh = P.zv.wHi(n);
+  const double th1 = 2.0 * P.theta, th0 = 2.0 - th1;  // 1, 1 for the trapezoid
   auto Jr = [&](int i) {
     const cplx a = c0b.jr[c0b.f(m, nm, i)] + c0s.jr[c0s.f(m, nm, i)];
     const cplx pr = (n > 0) ? predR[m * (N + 1) + i] : c1b.jr[c1b.f(m, 0, i)] + c1s.jr[c1s.f(m, 0, i)];
-    return wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)] + wl * pr +
-           wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)];
+    return th0 * (wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)]) +
+           th1 * (wl * pr + wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)]);
   };
   auto Jp = [&](int i) {
     const cplx a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
     const cplx pr = (n > 0) ? predP[m * N + i] : c1b.jp[c1b.c(m, 0, i)] + c1s.jp[c1s.c(m, 0, i)];
-    return wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)] + wl * pr +
-           wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)];
+    return th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
+           th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
   };
   auto jr1 = [&](int i) { return c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)]; };
   auto jp1 = [&](int i) { return c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)]; };
@@ -519,11 +570,11 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   // known parts P (level s^0) and Q (from zeta_1)
   par::teamFor(t, N + 1, [&](int i) {
     if (i == 0) { Pr[0] = cplx(); Qr[0] = cplx(); return; }
-    Pr[i] = Rr0[i] + 0.5 * D * (opG(e0, i) + opMf(b0, i)) - 0.25 * D * Jr(i);
+    Pr[i] = Rr0[i] + (1.0 - P.theta) * D * (opG(e0, i) + opMf(b0, i)) - 0.25 * D * Jr(i);
     Qr[i] = Lr1[i] - 0.25 * h * (opG(e1, i) - opMf(b1, i)) - 0.5 * h * jr1(i);
   });
   par::teamFor(t, N, [&](int i) {
-    Pp[i] = Rp0[i] + 0.5 * D * ((im / g.c[i]) * e0[i] - opg(b0, i)) - 0.25 * D * Jp(i);
+    Pp[i] = Rp0[i] + (1.0 - P.theta) * D * ((im / g.c[i]) * e0[i] - opg(b0, i)) - 0.25 * D * Jp(i);
     Qp[i] = Lp1[i] - 0.25 * h * ((im / g.c[i]) * e1[i] + opg(b1, i)) - 0.5 * h * jp1(i);
   });
   t.barrier();
@@ -552,12 +603,12 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   par::teamFor(t, N + 1, [&](int i) {
     if (i == 0) { Rr[0] = cplx(); Lr[0] = cplx(); return; }
     const cplx G = opG(e, i), Mf = opMf(b, i);
-    Rr[i] = Pr[i] + 0.5 * D * (G + Mf);
+    Rr[i] = Pr[i] + P.theta * D * (G + Mf);
     Lr[i] = Qr[i] - 0.25 * h * (G - Mf);
   });
   par::teamFor(t, N, [&](int i) {
     const cplx gg = opg(b, i), ie = (im / g.c[i]) * e[i];
-    Rp[i] = Pp[i] + 0.5 * D * (ie - gg);
+    Rp[i] = Pp[i] + P.theta * D * (ie - gg);
     Lp[i] = Qp[i] - 0.25 * h * (ie + gg);
   });
 }
@@ -672,6 +723,10 @@ struct EngineState {
   par::Array<cplx> pred[2], predP[2];  // predicted j^1 (index ip = current slice)
   int ip = 0;
   par::Array<cplx> solveScratch;
+  // plasma.smooth_length
+  par::Array<cplx> filtBand, filtScratch;
+  par::Array<double> filtS;
+  dev::FiltV filt{0, 0, nullptr, nullptr, nullptr, nullptr};
   std::vector<dev::CurrStore> local;  // CPU: per-thread currents of one half-cell
   // particles
   par::Array<Particle> stream, backup, born, beam, beamTmp, pnext, pprev;
@@ -758,6 +813,8 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   // parameters
   dev::Params& P = E.P;
   P.M = M; P.Nz = Nz; P.N = N; P.Delta = sim.Delta;
+  P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  P.theta = sim.cfg.numerics.theta;
   P.zv = ZetaView{Nz, sim.zg.uniform ? 1 : 0, sim.zg.h, E.zz.data(), E.zhs.data(), E.zzc.data(), E.zwlo.data(),
                   E.zwhi.data()};
   P.cls = E.cls.data();
@@ -796,6 +853,22 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   par::upload(E.Cs[E.iold].rhoi.data(), sim.c0s.rhoi.data(), E.nd);
   for (int k = 0; k < 2; ++k) { E.pred[k].clear(size_t(M + 1) * (N + 1)); E.predP[k].clear(size_t(M + 1) * N); }
   E.solveScratch.clear(size_t(M + 1) * dev::SOLVE_SCRATCH * (N + 1));
+  if (sim.sfilter.on()) {  // factors of the source filter (constant for the run)
+    std::vector<cplx> band;
+    for (const Banded5& B : sim.sfilter.vectorFactors())
+      for (const cd& v : B.A) band.push_back(cplx(v.real(), v.imag()));
+    E.filtBand.assign(band.data(), band.size());
+    std::vector<double> sv;
+    for (int k = 0; k < 3; ++k)
+      for (int m = 0; m <= M; ++m) {
+        const auto& v = sim.sfilter.scalarFactors(k)[m];
+        sv.insert(sv.end(), v.begin(), v.end());
+      }
+    E.filtS.assign(sv.data(), sv.size());
+    const size_t ns = size_t(M + 1) * N;
+    E.filt = dev::FiltV{1, N, E.filtBand.data(), E.filtS.data(), E.filtS.data() + ns, E.filtS.data() + 2 * ns};
+    E.filtScratch.clear(size_t(M + 1) * (4 * size_t(N) + 1));
+  }
 #if !defined(GEM_BACKEND_CUDA) && !defined(GEM_EMULATE_GPU)
 #if defined(_OPENMP)
   E.local = std::vector<dev::CurrStore>(size_t(omp_get_max_threads()));
@@ -833,6 +906,8 @@ void Engine::step() {
   EngineState& E = *st;
   // step of this s-level and its matrices (Simulation::beginStep)
   E.P.Delta = sim.Delta;
+  E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, E.P.M);
   const Params P = E.P;
   const int M = P.M, Nz = P.Nz, N = P.N;
@@ -1086,6 +1161,13 @@ void Engine::step() {
         });
       }
 #endif
+      if (E.filt.on) {  // plasma.smooth_length: one team per mode
+        const dev::FiltV FV = E.filt;
+        cplx* fs = E.filtScratch.data();
+        par::teams(M + 1, GEM_LAMBDA(const Team& t) {
+          filterTeam(t, FV, t.league, n, c1s, fs + size_t(t.league) * (4 * size_t(N) + 1));
+        });
+      }
       prof.stop(Profile::PUSH);
       // field solve, one team per mode
       par::teams(M + 1, GEM_LAMBDA(const Team& t) {
@@ -1128,7 +1210,7 @@ void Engine::step() {
     // half-cell n is final: correct R at slice n+1 for the predicted j^1_{n+1/2}
     par::teams(1, GEM_LAMBDA(const Team& t) {
       if (n + 1 <= Nz - 1) {
-        const double q = 0.25 * Delta * P.zv.wLo(n + 1);
+        const double q = 0.5 * P.theta * Delta * P.zv.wLo(n + 1);
         par::teamFor(t, int(npf), [&](int idx) {
           const int m = idx / (N + 1), i = idx % (N + 1);
           if (i == 0) return;

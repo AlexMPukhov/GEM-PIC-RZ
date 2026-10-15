@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
+  src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -115,7 +115,7 @@ elseif(GEMPIC_OPENMP)
     target_link_libraries(gemcore PUBLIC OpenMP::OpenMP_CXX)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
-      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/simulation.cpp src/diagnostics.cpp
+      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
       src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
@@ -204,6 +204,11 @@ if(GEMPIC_HAVE_HDF5)
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME dopant_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/dopant.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
+  endforeach()
+  # radial smoothing of the plasma sources (plasma.smooth_length)
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME smoothing_${b}
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/smoothing.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
   endforeach()
   # transport elements: quadrupole, plasma lens, solenoid, chicane against linear optics
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)

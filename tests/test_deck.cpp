@@ -17,6 +17,8 @@
 #include "mapping.hpp"
 #include "units.hpp"
 #include "zgrid.hpp"
+#include "smoothing.hpp"
+#include "solver.hpp"
 #include "external.hpp"
 #include "eigen.hpp"
 #include "expr.hpp"
@@ -328,6 +330,52 @@ int main() {
     for (int i = 0; i < g.N - 2; ++i) worst = std::max(worst, std::fabs(Qc[i] / g.Vc[i] / dens - 1.0));
     CHECK(worst < 2e-3);
     if (worst >= 2e-3) std::printf("   uniform density deviation %.2e\n", worst);
+    // source smoothing (plasma.smooth_length): the vector filter commutes with the discrete
+    // divergence, div F_vec j = F_scalar div j, for every mode; constants are kept away from the wall
+    {
+      const int M = 2;
+      FieldSolver fs;
+      fs.setup(g, M);
+      SourceFilter F;
+      F.setup(g, fs, M, 2.0);
+      CHECK(F.on());
+      for (int m = 0; m <= M; ++m) {
+        const cd im(0.0, double(m));
+        std::vector<cd> jr(size_t(g.N) + 1, 0.0), jp(size_t(g.N), 0.0);
+        for (int i = 1; i <= g.N; ++i) jr[i] = cd(std::sin(0.37 * i) + 0.2 * std::cos(1.7 * i), 0.3 * std::sin(2.1 * i));
+        for (int i = 0; i < g.N; ++i) jp[i] = cd(std::cos(0.53 * i), std::sin(0.11 * i * i));
+        auto div = [&](const std::vector<cd>& r, const std::vector<cd>& p) {
+          std::vector<cd> d(size_t(g.N));
+          for (int i = 0; i < g.N; ++i)
+            d[i] = (g.rho[i + 1] * r[i + 1] - g.rho[i] * r[i]) / g.Ac[i] + (im / g.c[i]) * p[i];
+          return d;
+        };
+        std::vector<cd> d0 = div(jr, jp);
+        F.scalar(m, d0.data());
+        F.vector(m, jr.data(), jp.data());
+        const std::vector<cd> d1 = div(jr, jp);
+        double err = 0.0, ref = 0.0;
+        for (int i = 0; i < g.N; ++i) { err = std::max(err, std::abs(d1[i] - d0[i])); ref = std::max(ref, std::abs(d0[i])); }
+        CHECK(err < 1e-11 * ref);
+        if (!(err < 1e-11 * ref)) std::printf("   smoothing m = %d: div mismatch %.2e of %.2e\n", m, err, ref);
+      }
+      std::vector<double> one(size_t(g.N), 1.0);
+      F.scalar0(one.data());
+      double dev = 0.0;
+      for (int i = 0; g.c[i] < 0.5 * g.rho[g.N]; ++i) dev = std::max(dev, std::fabs(one[i] - 1.0));
+      CHECK(dev < 1e-10);
+      // a ring is spread over ~a: the filtered delta has unit integral (inside the wall)
+      std::vector<double> ring(size_t(g.N), 0.0);
+      const int ir = 40;
+      ring[ir] = 1.0 / g.Ac[ir];
+      F.scalar0(ring.data());
+      double q = 0.0;
+      for (int i = 0; i < g.N; ++i) q += ring[i] * g.Ac[i];
+      CHECK_NEAR(q, 1.0, 1e-10);
+      SourceFilter off;
+      off.setup(g, fs, M, 0.0);
+      CHECK(!off.on());
+    }
   }
 
   // ------------------------------------------------------------ backends

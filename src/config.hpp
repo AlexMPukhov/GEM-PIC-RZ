@@ -108,6 +108,7 @@ struct PlasmaConfig {
   std::vector<double> z_values;
   Radial radial = Radial::Uniform;
   double r_max = 1e300;            // plasma column radius
+  double smooth_length = 0.0;      // radial smoothing length a of the plasma sources (0: off)
   double channel_depth = 0.0;      // parabolic: n ~ 1 + depth r^2 / r_channel^2
   double r_channel = 1.0;
   std::vector<double> r_points, r_values;  // radial table
@@ -263,6 +264,8 @@ struct NumericsConfig {
 #endif
   int iterations = 2;        // passes per slice (1 = predictor only)
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
+  double trap_advance = 1.0;     // a streaming particle leaves its level after advancing this many steps in z
+  double theta = 0.5;            // implicitness of the R update in s (0.5: trapezoid)
   bool beam_vay = true;      // beam list pushed with the Vay pusher (false: Boris)
   unsigned long seed = 12345;
   double beam_dz_max = 10.0; // max sub-step of the beam push along s

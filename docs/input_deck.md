@@ -226,6 +226,7 @@ The density is `n(r, z) = density · f(z) · g(r)` for `r < r_max`, and 0 outsid
 | `channel_depth`, `r_channel` | number, length | — | parabolic: g = 1 + depth · r²/r_channel² |
 | `r_points`, `r_values` | length list, number list | — | table: piecewise-linear g(r) |
 | `r_max` | length | open | radius of the plasma column |
+| `smooth_length` | length | 0 (off) | a > 0: radial smoothing of all sources of the streaming plasma (electrons, ions, freed electrons), j ← (1 − a²∇²)⁻¹ j per mode, which caps the singular density and E_z spike where the electrons close the bubble (README, "Bubble closure"). The beam list and the fields acting on the particles are not smoothed. The filter commutes with the discrete divergence, so the smoothed currents conserve the smoothed charge. Choose a at least the axis cell and the slice spacing; 2 k0⁻¹ (0.25 µm, 0.09 c/ω_p) in `benchmarks/lwfa_fbpic` |
 | `free_electrons` | true/false | true | `false`: no free electrons at the start (neutral gas, ionized by the fields) |
 | `ppc_r`, `ppc_phi` | integer | 2, 8 | macroparticles per radial cell (quiet start in r²) and per ring |
 | `ppc_r_axis`, `ppc_phi_axis` | integer | 4, 16 | the same, for cells inside `r_axis_refine` |
@@ -543,6 +544,8 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 | `beam_dz_max` | length | 10 k0⁻¹ | largest sub-step of the beam push along s |
 | `beam_pusher` | `vay` \| `boris` | `vay` | pusher of the beam list. Vay keeps the cancellation E + v × B = 0 of a relativistic beam in its own field exactly; Boris adds a spurious force ~ (qEΔt)² (`boris`: the behaviour of earlier versions) |
 | `vz_beam` | number | 0.9 | a streaming particle that reaches the next s-level joins the beam list (pushed along s) if v_z ≥ vz_beam; slower particles continue streaming in the next step, entering the ζ-march at their ζ |
+| `trap_advance` | number ≥ 1 | 1 | a streaming particle leaves its s-level (and becomes trapped) when its lab position has advanced this many steps beyond the level. Values > 1 keep electrons that move forward by more than Δ without being trapped (laser, sheath) in their level and so avoid the switch of such particles between levels, a source of noise behind the bubble at small Δ (README, "Bubble closure") |
+| `theta` | 0.5 … 1 | 0.5 | implicitness of the R update in s, R¹ = R⁰ + Δ[(1 − θ)F⁰ + θF¹]: 0.5 is the trapezoid (second order); θ > 0.5 damps the spurious fast modes of the reduced equations by (1 − θ)/θ per step, at the cost of a damping (2θ − 1)(ωΔ)²/2 per step of the physical ones. Do not use with undulators (the phase of the FEL coupling becomes first order in Δz) |
 | `vz_min` | number | 0.8 | beam particles slower than this return to streaming in the same way. No particle is removed because it is slow |
 | `beam_filter` | integer 0–8 | 1 | passes of a (1,2,1)/4 filter along ζ applied to the beam current (beam-list particles) before the field solve. It removes the source of numerical Cherenkov radiation at the ζ-Nyquist wavenumber (see README, "Numerical Cherenkov radiation"). Response cos^(2p)(kh/2): one pass attenuates kh = 0.2 by 1%. 0 = off |
 

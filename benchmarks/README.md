@@ -3,7 +3,7 @@
 | directory | reference code | case | result |
 |---|---|---|---|
 | `genesis_seeded/` | GENESIS 1.3 v4 (steady state) | seeded FEL amplifiers at 10 nm and 0.8 nm | power gain length within 4 % (10 nm) and 0.6 % (0.8 nm) of GENESIS run with the same physics |
-| `lwfa_fbpic/` | FBPIC 0.27 (full PIC, spectral, quasi-cylindrical) | LWFA, a0 = 2, n0 = 3.5·10¹⁸ cm⁻³ | on-axis wake E_z of the first period to 1.6 % rms; laser field to 1 % |
+| `lwfa_fbpic/` | FBPIC 0.27 (full PIC, spectral, quasi-cylindrical) | LWFA, a0 = 2, n0 = 3.5·10¹⁸ cm⁻³ | on-axis wake E_z of the first period to 1.6 % rms; laser field to 1 %; behind the bubble with `plasma.smooth_length` |
 
 The runs were made on 2 CPU cores. The decks, input files and scripts are here; the GEM-PIC-RZ output
 tables (`fel_power.txt`, `fel.txt`, `bunches.txt`, axis files), the GENESIS outputs (`*.out.h5`) and the FBPIC lineouts are included.
@@ -94,8 +94,18 @@ small shim header defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; 
 
 ![LWFA](lwfa_fbpic/compare.png)
 
-- **At 100 µm,** where the plasma behind the laser is uniform, the first period agrees to 1.6 % rms. Behind it,
-  where the wave has steepened and is close to breaking, both codes show the same spiky structure.
+- **At 100 µm,** where the plasma behind the laser is uniform, the first period agrees to 1.6 % rms.
+- **Behind the bubble** (ζ < 13 µm) the cold-plasma run (`gem_out`) has oscillations on the scale of λ0 that
+  FBPIC does not have, and they grow when the step is halved (`gem_out_dz1.25`). Their source is the singular
+  density at the back of the bubble (main README, "Bubble closure"). With the radial smoothing of the plasma
+  sources, `plasma.smooth_length = 2 k0^-1` (0.25 µm), they are gone, and the result no longer depends on the
+  step (`gem_out_a2`, `gem_out_a2_dz1.25`):
+
+| rms of E_z − E_z(FBPIC) at 100 µm [m c ω0/e] | Δ = 2.5 µm | Δ = 1.25 µm |
+|---|---|---|
+| behind the bubble (2 … 12.5 µm), cold | 0.0018 | 0.0098 |
+| behind the bubble, a = 2 k0⁻¹ | 0.0007 | 0.0007 |
+| first period, cold / a = 2 k0⁻¹ | 1.6 % / 1.9 % of the peak | |
 - **At 50 µm** the rear of the FBPIC window is still in the up-ramp, so its wake there is weaker. In
   GEM-PIC-RZ the plasma of a step is loaded at the front of the window with the density n(s) of that step and
   streams through the whole window within the step. So the profile is a function of the propagation distance
@@ -109,5 +119,8 @@ Reproduce:
 cd lwfa_fbpic
 python3 fbpic_lwfa.py 50,100     # writes fbpic_D50.txt, fbpic_D100.txt (pip install fbpic pyfftw)
 gempic_rz gem.deck numerics.backend=openmp
-python3 compare.py
+gempic_rz gem.deck numerics.backend=openmp output.dir=gem_out_a2 plasma.smooth_length=2k0^-1
+gempic_rz gem.deck numerics.backend=openmp output.dir=gem_out_a2_dz1.25 plasma.smooth_length=2k0^-1 grid.dz=1.25um output.every=40
+gempic_rz gem.deck numerics.backend=openmp output.dir=gem_out_dz1.25 grid.dz=1.25um output.every=40
+python3 compare.py                 # or: python3 compare.py gem_out_a2
 ```

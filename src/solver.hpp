@@ -33,6 +33,8 @@ class FieldSolver {
   // to do if D and the window are the ones of the last call). Returns true if
   // the matrices were (re)computed.
   bool prepare(double D, const ZetaGrid& zg);
+  // implicitness of the R update in s: R^1 = R^0 + D[(1-theta) F^0 + theta F^1] (0.5: trapezoid)
+  double theta = 0.5;
   int classes() const { return nCls; }
   int version() const { return ver; }  // increases whenever the matrices change
   int classOf(int n) const { return cls[n]; }

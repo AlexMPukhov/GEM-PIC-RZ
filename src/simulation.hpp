@@ -28,6 +28,7 @@
 #include "grid.hpp"
 #include "ionization.hpp"
 #include "particles.hpp"
+#include "smoothing.hpp"
 #include "solver.hpp"
 #include "zgrid.hpp"
 
@@ -146,6 +147,9 @@ class Simulation {
   void pushBeam();
   void loadFresh();
   void pushStreamParticle(Particle& p, int n, double s1);
+  // plasma.smooth_length: radial smoothing of the streaming-plasma sources of half-cell n
+  void smoothStream(Currents& C, int n);
+  SourceFilter sfilter;
   // the same, depositing into half-cell kc of C and collecting freed electrons in bornOut
   void pushStreamParticle(Particle& p, int n, double s1, Currents& C, int kc, std::vector<Particle>& bornOut);
   // all streaming particles through half-cell n (threads > 1: OpenMP, per-thread buffers)

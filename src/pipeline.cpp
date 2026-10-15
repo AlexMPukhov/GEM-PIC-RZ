@@ -470,20 +470,22 @@ void PipelineRun::step() {
           S.pushStreamParticle(p, n, s1);
         }
       }
+      S.smoothStream(S.c1s, n);
       for (int m = 0; m <= M; ++m) {
         const int nm = (n > 0) ? n - 1 : 0;  // last slice: half-cell -1 := half-cell 0 (Simulation::step)
         const double wl = zv.wLo(n), wh = zv.wHi(n);
+        const double th1 = 2.0 * S.cfg.numerics.theta, th0 = 2.0 - th1;  // 1, 1 for the trapezoid
         for (int i = 0; i <= N; ++i) {
           const cd a0 = S.c0b.jr[S.c0b.f(m, nm, i)] + S.c0s.jr[S.c0s.f(m, nm, i)];
           const cd pr = (n > 0) ? S.predR[m * (N + 1) + i] : S.c1b.jr[S.c1b.f(m, 0, i)] + S.c1s.jr[S.c1s.f(m, 0, i)];
-          S.Jr[i] = wl * a0 + wh * S.c0b.jr[S.c0b.f(m, n, i)] + wh * S.c0s.jr[S.c0s.f(m, n, i)] + wl * pr +
-                    wh * S.c1b.jr[S.c1b.f(m, n, i)] + wh * S.c1s.jr[S.c1s.f(m, n, i)];
+          S.Jr[i] = th0 * (wl * a0 + wh * S.c0b.jr[S.c0b.f(m, n, i)] + wh * S.c0s.jr[S.c0s.f(m, n, i)]) +
+                    th1 * (wl * pr + wh * S.c1b.jr[S.c1b.f(m, n, i)] + wh * S.c1s.jr[S.c1s.f(m, n, i)]);
         }
         for (int i = 0; i < N; ++i) {
           const cd a0 = S.c0b.jp[S.c0b.c(m, nm, i)] + S.c0s.jp[S.c0s.c(m, nm, i)];
           const cd pr = (n > 0) ? S.predP[m * N + i] : S.c1b.jp[S.c1b.c(m, 0, i)] + S.c1s.jp[S.c1s.c(m, 0, i)];
-          S.Jp[i] = wl * a0 + wh * S.c0b.jp[S.c0b.c(m, n, i)] + wh * S.c0s.jp[S.c0s.c(m, n, i)] + wl * pr +
-                    wh * S.c1b.jp[S.c1b.c(m, n, i)] + wh * S.c1s.jp[S.c1s.c(m, n, i)];
+          S.Jp[i] = th0 * (wl * a0 + wh * S.c0b.jp[S.c0b.c(m, n, i)] + wh * S.c0s.jp[S.c0s.c(m, n, i)]) +
+                    th1 * (wl * pr + wh * S.c1b.jp[S.c1b.c(m, n, i)] + wh * S.c1s.jp[S.c1s.c(m, n, i)]);
         }
         for (int i = 0; i <= N; ++i) S.jr1[i] = S.c1b.jr[S.c1b.f(m, n, i)] + S.c1s.jr[S.c1s.f(m, n, i)];
         for (int i = 0; i < N; ++i) {
@@ -526,7 +528,7 @@ void PipelineRun::step() {
                                   [](const Particle& p) { return p.status != 0 && p.status != STATUS_WAITING; }),
                    S.stream.end());
     if (n + 1 <= Nz - 1) {
-      const double q = 0.25 * Delta * zv.wLo(n + 1);
+      const double q = 0.5 * S.cfg.numerics.theta * Delta * zv.wLo(n + 1);
       for (int m = 0; m <= M; ++m) {
         for (int i = 1; i <= N; ++i) {
           cd jt = S.c1b.jr[S.c1b.f(m, n, i)] + S.c1s.jr[S.c1s.f(m, n, i)];

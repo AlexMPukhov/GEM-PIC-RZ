@@ -570,6 +570,8 @@ void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
   // radial profile
   const std::string rad = r.word("radial_profile", "uniform", {"uniform", "parabolic", "table"});
   P.r_max = r.num("r_max", Dim::Length, 1e300);
+  P.smooth_length = r.num("smooth_length", Dim::Length, 0.0);
+  if (P.smooth_length < 0.0) r.failKey("smooth_length", "must be >= 0");
   if (rad == "uniform") {
     P.radial = PlasmaConfig::Radial::Uniform;
   } else if (rad == "parabolic") {
@@ -1077,6 +1079,10 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.beam_dz_max = r.num("beam_dz_max", Dim::Length, N.beam_dz_max);
   N.vz_min = r.num("vz_min", Dim::None, N.vz_min);
   N.vz_beam = r.num("vz_beam", Dim::None, N.vz_beam);
+  N.trap_advance = r.num("trap_advance", Dim::None, N.trap_advance);
+  if (!(N.trap_advance >= 1.0)) r.failKey("trap_advance", "must be >= 1 (in steps dz)");
+  N.theta = r.num("theta", Dim::None, N.theta);
+  if (!(N.theta >= 0.5 && N.theta <= 1.0)) r.failKey("theta", "must be in [0.5, 1]");
   if (!(N.vz_min > 0) || !(N.vz_beam < 1) || !(N.vz_min < N.vz_beam))
     r.failKey("vz_beam", "need 0 < vz_min < vz_beam < 1");
   if (N.iterations < 1) r.failKey("iterations", "must be >= 1");
@@ -1419,6 +1425,9 @@ std::string Config::summary() const {
   }
   if (plasma.present) {
     if (!plasma.free_electrons) line("%s", "        no free electrons at the start (neutral gas)");
+    if (plasma.smooth_length > 0.0)
+      line("        radial smoothing of the plasma sources over a = %.4g um (%.4g k0^-1, %.3g c/omega_p)",
+           plasma.smooth_length * units.k0inv_um(), plasma.smooth_length, plasma.smooth_length * std::sqrt(plasma.n0));
     double fsum = 0.0;
     bool anyIonization = false;
     for (size_t i = 0; i < ions.size(); ++i) {
@@ -1505,9 +1514,9 @@ std::string Config::summary() const {
     line("checkpoints: every %d steps (keep %d)%s", output.checkpoint_every, output.checkpoint_keep,
          output.walltime_hours > 0 ? (", stop at " + std::to_string(output.walltime_hours) + " h wall time").c_str()
                                    : "");
-  line("output: dir '%s', every %d steps; numerics: %d iterations/slice, beam filter %d, beam pusher %s, seed %lu, "
-       "backend %s",
-       output.dir.c_str(), output.every, numerics.iterations, numerics.beam_filter,
+  line("output: dir '%s', every %d steps; numerics: %d iterations/slice, theta %.3g, trap advance %.3g dz, beam "
+       "filter %d, beam pusher %s, seed %lu, backend %s",
+       output.dir.c_str(), output.every, numerics.iterations, numerics.theta, numerics.trap_advance, numerics.beam_filter,
        numerics.beam_vay ? "vay" : "boris", numerics.seed,
        numerics.backend == NumericsConfig::Backend::Cuda     ? "cuda"
        : numerics.backend == NumericsConfig::Backend::OpenMP ? "openmp"

@@ -52,6 +52,8 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   fnew.init(M, Nz, g.N);
   for (auto* C : {&c0b, &c0s, &c1b, &c1s}) C->init(M, Nz, g.N);
   solver.setup(g, M);
+  solver.theta = cfg.numerics.theta;
+  sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0);
   const size_t nf = size_t(M + 1) * (g.N + 1), nc = size_t(M + 1) * g.N;
   predR.assign(nf, 0.0); predRprev.assign(nf, 0.0);
   predP.assign(nc, 0.0); predPprev.assign(nc, 0.0);
@@ -548,6 +550,26 @@ void Simulation::deposit(Currents& C, int k, double wk, double x, double y, doub
   else addR(0, 1.0);
 }
 
+// plasma.smooth_length: the currents and densities that the streaming particles (plasma
+// electrons, ions, freed electrons) deposited into half-cell n are smoothed radially,
+// (1 - a^2 Lap)^-1, per mode (smoothing.hpp). The beam list is not smoothed, nor are the
+// fields acting on the particles.
+void Simulation::smoothStream(Currents& C, int n) {
+  if (!sfilter.on()) return;
+  const int N = g.N;
+  std::vector<cd> jr(size_t(N) + 1, cd(0.0)), jp(size_t(N), cd(0.0)), jz(size_t(N), cd(0.0));
+  for (int m = 0; m <= M; ++m) {
+    for (int i = 0; i <= N; ++i) jr[i] = C.jr[C.f(m, n, i)];
+    for (int i = 0; i < N; ++i) { jp[i] = C.jp[C.c(m, n, i)]; jz[i] = C.jz[C.c(m, n, i)]; }
+    sfilter.vector(m, jr.data(), jp.data());
+    sfilter.scalar(m, jz.data());
+    for (int i = 1; i <= N; ++i) C.jr[C.f(m, n, i)] = jr[i];
+    for (int i = 0; i < N; ++i) { C.jp[C.c(m, n, i)] = jp[i]; C.jz[C.c(m, n, i)] = jz[i]; }
+  }
+  sfilter.scalar0(&C.rho[size_t(n) * N]);
+  sfilter.scalar0(&C.rhoi[size_t(n) * N]);
+}
+
 // Numerical Cherenkov: the dispersion relation of the scheme has omega = 0 at
 // the zeta-Nyquist wavenumber (kappa h = pi) for every transverse k, so this
 // odd-even mode is resonant with every v ~ c source. Beam particles keep their
@@ -803,8 +825,9 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1, Currents& C, 
   g1 = std::sqrt(1.0 + ux * ux + uy * uy + uz * uz);
   double vx = 0.5 * (p.ux / g0 + ux / g1), vy = 0.5 * (p.uy / g0 + uy / g1), vz = 0.5 * (p.uz / g0 + uz / g1);
   double zeta_end = zn;
-  if (p.z + vz * dt >= s1) {  // reaches s^1 inside this half-cell -> trapped
-    double dtp = std::max(0.0, (s1 - p.z) / std::max(vz, 1e-3));
+  const double sTrap = s1 + (cfg.numerics.trap_advance - 1.0) * Delta;
+  if (p.z + vz * dt >= sTrap) {  // advanced trap_advance steps inside this half-cell -> trapped
+    double dtp = std::max(0.0, (sTrap - p.z) / std::max(vz, 1e-3));
     ux = p.ux; uy = p.uy; uz = p.uz;
     boris(ux, uy, uz, f, p.qm, dtp);
     g1 = std::sqrt(1.0 + ux * ux + uy * uy + uz * uz);
@@ -981,6 +1004,7 @@ void Simulation::step() {
         }
         pushStreamParticle(p, n, s1);
       }
+      smoothStream(c1s, n);
       // field solve, all modes
       for (int m = 0; m <= M; ++m) {
         // four-point current sums, weighted by the interpolation to slice n
@@ -989,17 +1013,18 @@ void Simulation::step() {
         // this pass (a zero there would halve the source of R(0): a growing spike)
         const int nm = (n > 0) ? n - 1 : 0;
         const double wl = zv.wLo(n), wh = zv.wHi(n);
+        const double th1 = 2.0 * cfg.numerics.theta, th0 = 2.0 - th1;  // 1, 1 for the trapezoid
         for (int i = 0; i <= N; ++i) {
           const cd a = c0b.jr[c0b.f(m, nm, i)] + c0s.jr[c0s.f(m, nm, i)];
           const cd pr = (n > 0) ? predR[m * (N + 1) + i] : c1b.jr[c1b.f(m, 0, i)] + c1s.jr[c1s.f(m, 0, i)];
-          Jr[i] = wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)] + wl * pr +
-                  wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)];
+          Jr[i] = th0 * (wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)]) +
+                  th1 * (wl * pr + wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)]);
         }
         for (int i = 0; i < N; ++i) {
           const cd a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
           const cd pr = (n > 0) ? predP[m * N + i] : c1b.jp[c1b.c(m, 0, i)] + c1s.jp[c1s.c(m, 0, i)];
-          Jp[i] = wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)] + wl * pr +
-                  wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)];
+          Jp[i] = th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
+                  th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
         }
         // j^1 at half-cell n = beam + streaming
         for (int i = 0; i <= N; ++i) jr1[i] = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
@@ -1045,7 +1070,7 @@ void Simulation::step() {
                  stream.end());
     // half-cell n is now final: correct R at slice n+1 for its predicted j^1_{n+1/2}
     if (n + 1 <= Nz - 1) {
-      const double q = 0.25 * Delta * zv.wLo(n + 1);
+      const double q = 0.5 * cfg.numerics.theta * Delta * zv.wLo(n + 1);
       for (int m = 0; m <= M; ++m) {
         for (int i = 1; i <= N; ++i) {
           cd jt = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];

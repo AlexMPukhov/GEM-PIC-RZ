@@ -1,16 +1,30 @@
 """LWFA benchmark: on-axis E_z and E_x of GEM-PIC-RZ against FBPIC at the same propagation distances.
-usage: python3 compare.py   ->  compare.png and the differences on stdout"""
+usage: python3 compare.py [run_dir]   ->  compare.png (compare_<run_dir>.png) and the differences on stdout
+       run_dir: gem_out (cold plasma, default), gem_out_a2 (plasma.smooth_length = 2 k0^-1), ..."""
 import glob
+import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+RUN = sys.argv[1] if len(sys.argv) > 1 else "gem_out"
+
+
+def axis_at(D):
+    """axis file of RUN at the propagation distance D [um] (header: z = ... mm)"""
+    for fn in sorted(glob.glob(f"{RUN}/axis_*.txt")):
+        z = float(open(fn).readline().split("z =")[1].split("mm")[0])
+        if abs(z * 1000 - D) < 1e-6:
+            return fn
+    raise SystemExit(f"{RUN}: no axis file at {D} um")
+
+
 E0 = 4.0126e12  # m c omega0 / e at 0.8 um [V/m]
 fig, axs = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
-for D, step, col in [(50, 20, "C0"), (100, 40, "C1")]:
+for D, col in [(50, "C0"), (100, "C1")]:
     f = np.loadtxt(f"fbpic_D{D}.txt")
-    g = np.loadtxt(f"gem_out/axis_{step:05d}.txt")  # zeta[um] Ex Ez ne/n0 ...
+    g = np.loadtxt(axis_at(D))  # zeta[um] Ex Ez ne/n0 ...
     zf, Ezf, Exf = f[:, 0], f[:, 1] / E0, f[:, 2] / E0
     zg, Exg, Ezg = g[:, 0], g[:, 1], g[:, 2]
     # wake region behind the laser: compare E_z (smooth); E_x (laser) over its envelope
@@ -36,4 +50,4 @@ for a in axs:
     a.legend(fontsize=7)
     a.grid(alpha=0.3)
 fig.tight_layout()
-fig.savefig("compare.png", dpi=120)
+fig.savefig("compare.png" if RUN == "gem_out" else f"compare_{RUN}.png", dpi=120)

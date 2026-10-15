@@ -77,7 +77,7 @@ bool FieldSolver::prepare(double D_, const ZetaGrid& zg) {
   Tc.assign(size_t(nCls) * (M + 1), Tridiag());
   for (int q = 0; q < nCls; ++q) {
     const double h = hCls[q];
-    const double w = h * (2.0 * D + h);
+    const double w = h * (4.0 * theta * D + h);  // h (2 Delta + h) for the trapezoid
     for (int m = 0; m <= M; ++m) {
       // --- faces: rows i0..N-1 (B_z(rho_N) = 0; for m>=1 also B_z(0) = 0)
       Tridiag& T = Tf[size_t(q) * (M + 1) + m];
@@ -172,11 +172,11 @@ void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Rp0, const c
 
   // known parts P (level s^0, trapezoid in s) and Q (from zeta_1)
   opG(e0, tf1.data()); opMf(b0, tf2.data(), im);
-  for (int i = 0; i <= N; ++i) Pr[i] = Rr0[i] + 0.5 * D * (tf1[i] + tf2[i]) - 0.25 * D * Jr[i];
+  for (int i = 0; i <= N; ++i) Pr[i] = Rr0[i] + (1.0 - theta) * D * (tf1[i] + tf2[i]) - 0.25 * D * Jr[i];
   opG(e1, tf1.data()); opMf(b1, tf2.data(), im);
   for (int i = 0; i <= N; ++i) Qr[i] = Lr1[i] - 0.25 * h * (tf1[i] - tf2[i]) - 0.5 * h * jr[i];
   opg(b0, tc1.data());
-  for (int i = 0; i < N; ++i) Pp[i] = Rp0[i] + 0.5 * D * (im / c[i] * e0[i] - tc1[i]) - 0.25 * D * Jp[i];
+  for (int i = 0; i < N; ++i) Pp[i] = Rp0[i] + (1.0 - theta) * D * (im / c[i] * e0[i] - tc1[i]) - 0.25 * D * Jp[i];
   opg(b1, tc1.data());
   for (int i = 0; i < N; ++i) Qp[i] = Lp1[i] - 0.25 * h * (im / c[i] * e1[i] + tc1[i]) - 0.5 * h * jp[i];
   Pr[0] = 0.0; Qr[0] = 0.0;  // face 0 (axis): radial components not used / zero
@@ -201,13 +201,13 @@ void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Rp0, const c
   // explicit transverse update
   opG(e, tf1.data()); opMf(b, tf2.data(), im);
   for (int i = 0; i <= N; ++i) {
-    Rr[i] = Pr[i] + 0.5 * D * (tf1[i] + tf2[i]);
+    Rr[i] = Pr[i] + theta * D * (tf1[i] + tf2[i]);
     Lr[i] = Qr[i] - 0.25 * h * (tf1[i] - tf2[i]);
   }
   Rr[0] = 0.0; Lr[0] = 0.0;
   opg(b, tc1.data());
   for (int i = 0; i < N; ++i) {
-    Rp[i] = Pp[i] + 0.5 * D * (im / c[i] * e[i] - tc1[i]);
+    Rp[i] = Pp[i] + theta * D * (im / c[i] * e[i] - tc1[i]);
     Lp[i] = Qp[i] - 0.25 * h * (im / c[i] * e[i] + tc1[i]);
   }
 }

@@ -9,7 +9,7 @@ ifeq ($(notdir $(CXX)),nvcc)
 endif
 CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra
 BUILD    := build-make
-CORE     := units deck config mapping atomic_data ionization grid solver simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import
+CORE     := units deck config mapping atomic_data ionization grid solver smoothing simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import
 OBJ      := $(CORE:%=$(BUILD)/%.o)
 # MPI (domain decomposition along zeta): enabled if mpicxx is found (make MPI=0 disables it)
 MPI ?= $(shell command -v mpicxx > /dev/null 2>&1 && echo 1)
@@ -81,6 +81,7 @@ ifeq ($(HDF5),1)
 	sh tests/flexgrid.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
 	sh tests/functions.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
 	sh tests/dopant.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
+	sh tests/smoothing.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns $(PAR)
 	sh tests/transport.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract $(PAR)
 	sh tests/beam_import.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns
 	sh tests/openpmd.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract || [ $$? -eq 77 ]
