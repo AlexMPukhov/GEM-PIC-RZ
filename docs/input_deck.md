@@ -226,6 +226,7 @@ The density is `n(r, z) = density · f(z) · g(r)` for `r < r_max`, and 0 outsid
 | `channel_depth`, `r_channel` | number, length | — | parabolic: g = 1 + depth · r²/r_channel² |
 | `r_points`, `r_values` | length list, number list | — | table: piecewise-linear g(r) |
 | `r_max` | length | open | radius of the plasma column |
+| `smooth_length_m0` | length | = `smooth_length` | smoothing length of the mode m = 0 (the wake) if different from the modes m ≥ 1 (laser-driven currents). In a dense plasma the wake needs about 0.3 c/ω_p, the laser coupling only about 0.1 c/ω_p (`benchmarks/laser_evolution`) |
 | `smooth_length` | length | 0 (off) | a > 0: radial smoothing of all sources of the streaming plasma (electrons, ions, freed electrons), j ← (1 − a²∇²)⁻¹ j per mode, which caps the singular density and E_z spike where the electrons close the bubble (README, "Bubble closure"). The beam list and the fields acting on the particles are not smoothed. The filter commutes with the discrete divergence, so the smoothed currents conserve the smoothed charge. Choose a at least the axis cell and the slice spacing; 2 k0⁻¹ (0.25 µm, 0.09 c/ω_p) in `benchmarks/lwfa_fbpic` |
 | `free_electrons` | true/false | true | `false`: no free electrons at the start (neutral gas, ionized by the fields) |
 | `ppc_r`, `ppc_phi` | integer | 2, 8 | macroparticles per radial cell (quiet start in r²) and per ring |

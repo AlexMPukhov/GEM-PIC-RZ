@@ -109,6 +109,7 @@ struct PlasmaConfig {
   Radial radial = Radial::Uniform;
   double r_max = 1e300;            // plasma column radius
   double smooth_length = 0.0;      // radial smoothing length a of the plasma sources (0: off)
+  double smooth_length_m0 = -1.0;  // a of the mode m = 0 if >= 0 (else smooth_length)
   double channel_depth = 0.0;      // parabolic: n ~ 1 + depth r^2 / r_channel^2
   double r_channel = 1.0;
   std::vector<double> r_points, r_values;  // radial table

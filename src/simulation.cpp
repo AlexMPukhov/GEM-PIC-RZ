@@ -53,7 +53,8 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   for (auto* C : {&c0b, &c0s, &c1b, &c1s}) C->init(M, Nz, g.N);
   solver.setup(g, M);
   solver.theta = cfg.numerics.theta;
-  sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0);
+  sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
+                cfg.plasma.present ? cfg.plasma.smooth_length_m0 : 0.0);
   const size_t nf = size_t(M + 1) * (g.N + 1), nc = size_t(M + 1) * g.N;
   predR.assign(nf, 0.0); predRprev.assign(nf, 0.0);
   predP.assign(nc, 0.0); predPprev.assign(nc, 0.0);

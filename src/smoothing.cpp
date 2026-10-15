@@ -77,9 +77,12 @@ void SourceFilter::applyVecLap(int m, const cd* x, cd* y) const {
     y[2 * i + 1] = (im / c[i]) * dv[i] + (cu[i + 1] - cu[i]) / (rho[i + 1] - rho[i]);
 }
 
-void SourceFilter::setup(const RadialGrid& grid, const FieldSolver& solver, int M_, double a) {
+void SourceFilter::setup(const RadialGrid& grid, const FieldSolver& solver, int M_, double a, double am0) {
   g = &grid; N = grid.N; M = M_;
-  a2 = (a > 0.0) ? a * a : 0.0;
+  if (am0 < 0.0) am0 = a;
+  a2m.assign(size_t(M) + 1, (a > 0.0) ? a * a : 0.0);
+  a2m[0] = (am0 > 0.0) ? am0 * am0 : 0.0;
+  a2 = *std::max_element(a2m.begin(), a2m.end());
   V.clear(); Sa.clear(); Sb.clear(); Sc.clear(); Scp.clear(); Sden.clear();
   if (!on()) return;
   const int n = 2 * N + 1;
@@ -88,6 +91,7 @@ void SourceFilter::setup(const RadialGrid& grid, const FieldSolver& solver, int 
   V.assign(size_t(M) + 1, Banded5());
   for (int m = 0; m <= M; ++m) {
     Banded5& B = V[m];
+    const double a2 = a2m[m];  // a = 0: identity
     B.n = n;
     B.A.assign(size_t(n) * 5, 0.0);
     // columns of 1 - a^2 Lap_vec by probing with unit vectors (the operator couples
@@ -111,6 +115,7 @@ void SourceFilter::setup(const RadialGrid& grid, const FieldSolver& solver, int 
   Sa.resize(M + 1); Sb.resize(M + 1); Sc.resize(M + 1); Scp.resize(M + 1); Sden.resize(M + 1);
   for (int m = 0; m <= M; ++m) {
     const Tridiag& P = solver.poissonMatrix(m);
+    const double a2 = a2m[m];
     Sa[m].resize(N); Sb[m].resize(N); Sc[m].resize(N); Scp[m].resize(N); Sden[m].resize(N);
     for (int i = 0; i < N; ++i) { Sa[m][i] = a2 * P.a[i]; Sb[m][i] = 1.0 + a2 * P.b[i]; Sc[m][i] = a2 * P.cc[i]; }
     double d = Sb[m][0];

@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `genesis_seeded/` | GENESIS 1.3 v4 (steady state) | seeded FEL amplifiers at 10 nm and 0.8 nm | power gain length within 4 % (10 nm) and 0.6 % (0.8 nm) of GENESIS run with the same physics |
 | `lwfa_fbpic/` | FBPIC 0.27 (full PIC, spectral, quasi-cylindrical) | LWFA, a0 = 2, n0 = 3.5·10¹⁸ cm⁻³ | on-axis wake E_z of the first period to 1.6 % rms; laser field to 1 %; behind the bubble with `plasma.smooth_length` |
+| `laser_evolution/` | FBPIC 0.27 and the envelope code Wake-T 0.9.1 | 6.8 fs pulse, a0 = 1.5, n0 = 1.7·10¹⁹ cm⁻³, 300 µm: diffraction, depletion, red-shift | laser energy to 1.3 %, red-shift to 0.002 k0, peak field to 5 % (FBPIC); Wake-T underestimates the depletion fivefold |
 
 The runs were made on 2 CPU cores. The decks, input files and scripts are here; the GEM-PIC-RZ output
 tables (`fel_power.txt`, `fel.txt`, `bunches.txt`, axis files), the GENESIS outputs (`*.out.h5`) and the FBPIC lineouts are included.
@@ -75,6 +76,71 @@ python3 compare.py 0.8nm gemx_out_nocorr gemx_out   # gemx_out_nocorr: with corr
 ```
 GENESIS 4 was built from github.com/svenreiche/Genesis-1.3-Version4 (v1.10.10) against serial HDF5. That needed a
 small shim header defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; it was run on one MPI rank.
+
+## Laser evolution against FBPIC and Wake-T
+
+A short, intense pulse in a dense plasma, followed for 300 µm, six Rayleigh lengths: it diffracts, gives a quarter of
+its energy to the wake and is red-shifted by 4.5 %. Same case in the three codes (`gem.deck`, `fbpic_laser.py`,
+`waket_laser.py`):
+- **Laser:** a0 = 1.5, w0 = 3.56 µm (28 k0⁻¹, P/P_c = 0.56), field 1/e half length 2.04 µm (6.8 fs; 8.0 fs FWHM of
+  the intensity), λ = 0.8 µm, linear polarization, starting at focus.
+- **Plasma:** n0 = 0.01 n_c = 1.74·10¹⁹ cm⁻³ after a 10 µm linear ramp, immobile ions.
+- **Window:** 24.95 µm (two plasma periods and a half), laser centre 18.6 µm from the rear.
+- **FBPIC:** Δz = λ/24, Δr = 0.125 µm, 2 modes, 8 particles per cell, open boundaries.
+- **GEM-PIC-RZ:** h = 0.2 k0⁻¹, Δ = 2 µm (and 1 µm), 130 radial cells (0.3 k0⁻¹ on the axis), source smoothing
+  `smooth_length = 1 k0^-1` and `smooth_length_m0 = 3 k0^-1` (see below).
+- **Wake-T:** laser envelope + quasi-static 2D plasma model (Baxevanis–Stupakov), 490 × 150 cells, dz_fields = 1 µm,
+  4 envelope substeps; results identical with twice the cells in each direction or half the step.
+
+Diagnostics (`compare.py`): laser energy W/W0 (fields of the modes m ≥ 1; Wake-T: |i k0 a + ∂_ξ a|²), the peak of
+|E_x| on the axis, and the spectral centroid ⟨|k|⟩/k0 of the laser fields.
+
+| z | W/W0: FBPIC / GEM / Wake-T | max\|E_x\|: FBPIC / GEM / Wake-T | ⟨\|k\|⟩/k0: FBPIC / GEM / Wake-T |
+|---|---|---|---|
+| 100 µm | 0.967 / 0.964 / 0.971 | 0.780 / 0.793 / 1.045 | 0.9665 / 0.9668 / 0.9723 |
+| 200 µm | 0.906 / 0.894 / 0.958 | 0.424 / 0.429 / 0.862 | 0.9574 / 0.9574 / 0.9592 |
+| 300 µm | 0.731 / 0.731 / 0.945 | 0.331 / 0.372 / 1.002 | 0.9547 / 0.9546 / 0.9464 |
+
+![laser evolution](laser_evolution/compare.png)
+
+- **GEM-PIC-RZ vs FBPIC:** over the whole 300 µm the laser energy agrees to 0.013 (of W0), the red-shift to
+  0.0023 k0 and the peak field to 5 % (13 % at the end, where the pulse is weak and spread). The wake on the axis
+  at 300 µm agrees too. With Δ = 1 µm the results are the same to within 0.03 in W/W0.
+- **Wake-T:** in the envelope model the pulse stays focused (peak field 1.0 instead of 0.33 at 300 µm), drives a
+  wake several times stronger and loses only 5.5 % of its energy instead of 27 %. The pulse is 2.5 laser cycles long
+  and loses 4.5 % of its frequency, where the assumptions of the envelope model (slowly varying envelope,
+  ω0 ≫ ω_p) are strained. Resolution does not change this.
+- **Cost:** GEM-PIC-RZ 6.7 min on one core (Δ = 2 µm), FBPIC 3.7 h on two cores, Wake-T 10 min on one core.
+
+**Stability in a dense plasma.** At 0.01 n_c the cold-plasma run (`gem_out`) is unstable: E_z behind the laser
+reaches ±1 (FBPIC: 0.05) and electrons are trapped spuriously, while the laser diagnostics stay close to FBPIC.
+These are the fast spurious modes of the main README ("Bubble closure"): they change sign from step to step and
+grow at the density spikes of the nonlinear wake. Halving the step (Δ = 1 µm) delays but does not stop them in a
+longer window. Remedies tried:
+
+| GEM-PIC-RZ | wake 3–4 periods behind the laser (window extended by 10 µm, 50 µm), max\|E_z\| | laser W/W0 at 300 µm |
+|---|---|---|
+| cold, Δ = 2 µm | 1.18 | (unstable) |
+| cold, Δ = 1 µm | 0.16 | 0.757 |
+| a = 1 k0⁻¹ | 1.18 | 0.732 |
+| a = 3 k0⁻¹ | 0.06 | 0.773 (smoothing of the laser-driven currents changes the laser) |
+| a = 3 k0⁻¹ for m = 0 only | 0.07, but the m = 1 fields grow at the rear | |
+| **a = 1 k0⁻¹, m = 0: 3 k0⁻¹** | **0.07** | **0.731** |
+| θ = 0.6 | 0.09 | 0.578 (damps the laser) |
+| FBPIC | 0.06 | 0.731 |
+
+The wake needs a smoothing length of about 0.3 c/ω_p at this density, the laser-driven (m = 1) currents only
+0.1 c/ω_p; `plasma.smooth_length_m0` sets the first, `plasma.smooth_length` the second.
+
+Reproduce:
+```
+cd laser_evolution
+python3 fbpic_laser.py 300                       # fbpic_out/ (about 4 h on 2 cores)
+python3 waket_laser.py 300                       # waket_out/ (pip install wake-t)
+gempic_rz gem.deck output.dir=gem_out_a1m3 plasma.smooth_length=1k0^-1 plasma.smooth_length_m0=3k0^-1
+gempic_rz gem.deck output.dir=gem_out_a1m3_dz1 plasma.smooth_length=1k0^-1 plasma.smooth_length_m0=3k0^-1 grid.dz=1um output.every=10
+python3 compare.py                               # compare.png, table (HDF5 files -> laser_<run>.txt)
+```
 
 ## LWFA against FBPIC
 

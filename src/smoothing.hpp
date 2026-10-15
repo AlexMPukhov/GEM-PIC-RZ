@@ -39,10 +39,11 @@ struct Banded5 {
 
 class SourceFilter {
  public:
-  // a: smoothing length (code units); a <= 0 switches the filter off
-  void setup(const RadialGrid& grid, const FieldSolver& solver, int M, double a);
+  // a: smoothing length (code units) of the modes m >= 1 and, unless am0 >= 0 is given, of m = 0;
+  // a <= 0 (for all modes) switches the filter off
+  void setup(const RadialGrid& grid, const FieldSolver& solver, int M, double a, double am0 = -1.0);
   bool on() const { return a2 > 0.0; }
-  double length() const { return a2 > 0.0 ? std::sqrt(a2) : 0.0; }
+  double length(int m) const { return std::sqrt(a2m[size_t(m)]); }
   // j_r on the faces (N+1 values; face 0 untouched), j_phi on the centres (N values)
   void vector(int m, cd* jr, cd* jp);
   // centre quantity of mode m (j_z, or the m = 0 densities with m = 0)
@@ -56,7 +57,8 @@ class SourceFilter {
   int N = 0, M = 0;
 
  private:
-  double a2 = 0.0;
+  double a2 = 0.0;              // largest a^2 of the modes
+  std::vector<double> a2m;      // a^2 per mode
   const RadialGrid* g = nullptr;
   std::vector<Banded5> V;            // per mode: 1 - a^2 Lap_vec
   std::vector<std::vector<double>> Sa, Sb, Sc;  // per mode: 1 - a^2 Lap_m (sub, diag, super), factorized

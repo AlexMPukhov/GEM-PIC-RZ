@@ -572,6 +572,8 @@ void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
   P.r_max = r.num("r_max", Dim::Length, 1e300);
   P.smooth_length = r.num("smooth_length", Dim::Length, 0.0);
   if (P.smooth_length < 0.0) r.failKey("smooth_length", "must be >= 0");
+  P.smooth_length_m0 = r.num("smooth_length_m0", Dim::Length, -1.0);
+  if (r.has("smooth_length_m0") && P.smooth_length_m0 < 0.0) r.failKey("smooth_length_m0", "must be >= 0");
   if (rad == "uniform") {
     P.radial = PlasmaConfig::Radial::Uniform;
   } else if (rad == "parabolic") {
@@ -1425,9 +1427,12 @@ std::string Config::summary() const {
   }
   if (plasma.present) {
     if (!plasma.free_electrons) line("%s", "        no free electrons at the start (neutral gas)");
-    if (plasma.smooth_length > 0.0)
-      line("        radial smoothing of the plasma sources over a = %.4g um (%.4g k0^-1, %.3g c/omega_p)",
-           plasma.smooth_length * units.k0inv_um(), plasma.smooth_length, plasma.smooth_length * std::sqrt(plasma.n0));
+    if (plasma.smooth_length > 0.0 || plasma.smooth_length_m0 > 0.0) {
+      const double am0 = plasma.smooth_length_m0 >= 0.0 ? plasma.smooth_length_m0 : plasma.smooth_length;
+      line("        radial smoothing of the plasma sources over a = %.4g um (%.4g k0^-1, %.3g c/omega_p) for m >= 1, "
+           "%.4g um (%.4g k0^-1) for m = 0", plasma.smooth_length * units.k0inv_um(), plasma.smooth_length,
+           plasma.smooth_length * std::sqrt(plasma.n0), am0 * units.k0inv_um(), am0);
+    }
     double fsum = 0.0;
     bool anyIonization = false;
     for (size_t i = 0; i < ions.size(); ++i) {

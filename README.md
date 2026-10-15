@@ -520,6 +520,10 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
   0.0001 rms (1.6 % → 1.9 % rms of the peak against FBPIC), and the peak E_z at the back changes from 0.047
   (spike) to 0.040 (FBPIC 0.042).
 - **Choice of a:** at least the axis cell and the slice spacing. Off by default.
+- **Dense plasmas** (0.01 n_c, `benchmarks/laser_evolution`): the fast modes also grow in the nonlinear wake several
+  periods behind the laser, with E_z up to 20 times the FBPIC value. They need a ≈ 0.3 c/ω_p for the wake (mode
+  m = 0), while the laser-driven currents (m = 1) need only ≈ 0.1 c/ω_p and are changed by more:
+  `plasma.smooth_length_m0` sets a for m = 0 separately (here 3 and 1 k0⁻¹).
 
 **Other switches** (both off by default, kept for studies):
 - `numerics.trap_advance = k`: an electron leaves its level only after advancing k steps. With k = 4 to 8
@@ -643,6 +647,9 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 - **LWFA vs FBPIC** (a0 = 2, n0 = 3.5·10¹⁸ cm⁻³): the on-axis wake of the first period agrees to 1.6 % rms after
   100 µm, at 1/50 of the computing time. Behind the bubble the cold-plasma run has spurious oscillations that
   `plasma.smooth_length` removes (see "Bubble closure").
+- **Laser evolution vs FBPIC and Wake-T** (6.8 fs, a0 = 1.5, 0.01 n_c, 300 µm): laser energy (depletion) to 1.3 %,
+  red-shift to 0.002 k0 and peak field to 5 % against FBPIC, at 1/60 of the computing time; the envelope code
+  Wake-T underestimates the depletion fivefold for this 2.5-cycle pulse.
 
 ## Checks
 
