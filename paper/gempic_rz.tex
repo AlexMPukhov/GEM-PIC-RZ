@@ -44,6 +44,8 @@ This paper describes GEM-PIC-RZ, the implementation of the scheme in quasi-cylin
 (v) a set of tests against analytic references and a benchmark against FBPIC (Sec.~\ref{sec:valid}).
 Since the carrier is resolved, the same equations contain the spontaneous and stimulated emission of an electron beam in an undulator; Sec.~\ref{sec:fel} summarizes this free-electron-laser (FEL) capability, which will be the subject of a separate publication.
 
+Like QUARZ~\cite{QUARZ}, GEM-PIC-RZ is a \emph{zero-touch} code: every line of its source code, of its test suite, of its benchmark scripts and of its documentation was written by an AI agent, the large language model Claude~\cite{Claude}, working with a compiler, a shell and the test suite. The author directed the work without writing or editing a single line of code. The human contributions were those that require physical judgment: the GEM-PIC formulation itself~\cite{GEMPIC}, the choice of methods and of the problems to solve, physical conventions (for example, the Galilean transformation used for the particles), the criteria that decide whether a result can be trusted, and the interpretation of the results. The agent worked under a fixed rule: no feature counts as done before it passes a test against an independent analytic or numerical reference, and every change is rerun against the whole suite, so the correctness of the code rests on tests rather than on line-by-line human review. Several numerical errors described in this paper (the numerical Cherenkov radiation, the closure at the rear of the window, the self-fields of bunches with $v < c$, the undulator kick and the timing of the beam current) were found in this way, by tests that failed against their references. Every commit in the public repository~\cite{GEMPICRZ} records the AI session that produced it, so the claim can be checked.
+
 %---------------------------------------------------------------------------
 \section{Model}\label{sec:model}
 
@@ -249,12 +251,10 @@ GEM-PIC-RZ solves Maxwell's equations in the Galilean variables $(\zeta, s)$ wit
 
 The model's limits follow from its ordering. Backward-propagating radiation (Raman backscatter, reflection from overdense plasma) is not described, since $\partial_s L$ is dropped. Within these limits the code agrees with a full PIC code at a small fraction of its cost, and it extends naturally to radiation by the accelerated beam. Planned work includes cross-code benchmarks for beam-driven wakes and for laser depletion, GPU performance measurements, and the FEL applications.
 
-GEM-PIC-RZ is open source~\cite{GEMPICRZ}; the decks and scripts of the tests in this paper are part of the repository.
-
-\todo{Optional: a paragraph on the development of the code with an AI agent, as in the QUARZ paper~\cite{QUARZ}, if wanted.}
+GEM-PIC-RZ is open source~\cite{GEMPICRZ}; the decks and scripts of the tests in this paper are part of the repository. Its development, like that of QUARZ, shows that a production-grade simulation code can be built by an AI agent under the direction of a physicist, when every feature is held to an independent test.
 
 \begin{acknowledgments}
-\todo{Funding, computing time.}
+This work was supported by DFG and BMBF. The author gratefully acknowledges the Gauss Centre for Supercomputing e.V. (gauss-centre.eu) for funding this project (lpqed) by providing computing time through the John von Neumann Institute for Computing (NIC) on the GCS Supercomputer JUPITER at J\"ulich Supercomputing Centre (JSC).
 \end{acknowledgments}
 
 \begin{thebibliography}{99}
@@ -288,6 +288,7 @@ GEM-PIC-RZ is open source~\cite{GEMPICRZ}; the decks and scripts of the tests in
 \bibitem{Rosenzweig2005} J. B. Rosenzweig \textit{et al.}, Effects of ion motion in intense beam-driven plasma wakefield accelerators, Phys. Rev. Lett. \textbf{95}, 195002 (2005).
 \bibitem{Reiche1999} S. Reiche, GENESIS 1.3: a fully 3D time-dependent FEL simulation code, Nucl. Instrum. Methods Phys. Res., Sect. A \textbf{429}, 243 (1999).
 \bibitem{Xie1995} M. Xie, Design optimization for an X-ray free electron laser driven by SLAC linac, in \textit{Proc. PAC'95} (IEEE, 1995), p.~183.
+\bibitem{Claude} Anthropic, Claude, large language model (model \texttt{claude-opus-5-5}), \url{https://www.anthropic.com/claude}, used in September and October 2026.
 \bibitem{GEMPICRZ} A. Pukhov, GEM-PIC-RZ, \url{https://github.com/AlexMPukhov/GEM-PIC-RZ} (2026).
 \end{thebibliography}
 
