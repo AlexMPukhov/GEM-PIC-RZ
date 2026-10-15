@@ -246,10 +246,10 @@ files pass the openPMD validator without errors or warnings; details in
 [`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
 
 openPMD 1.1 has no non-uniform grids. Besides the interpolated fields the files therefore hold the exact data
-on the code's own nodes (`output.openpmd_grid = both`, the default; or `native`): records `native_*` with the
-node positions in `gridCoordinates_r` / `gridCoordinates_z`. This is the form we propose as an extension of the
-standard ([`docs/openpmd_rectilinear.md`](docs/openpmd_rectilinear.md)); QUARZ writes the same. `h5_extract`
-and `tools/openpmd_rectilinear.py` read these records.
+on the code's own nodes (`output.openpmd_grid = both`, the default; or `native`): records `native_*` whose
+node positions are data sets referenced by the mesh attribute `gridCoordinates`. This is the form we propose for
+openPMD 2.0 ([`docs/openpmd_rectilinear.md`](docs/openpmd_rectilinear.md)); QUARZ writes an interim variant.
+`h5_extract` and `tools/openpmd_rectilinear.py` read both.
 
 ## Checkpoints and restart
 

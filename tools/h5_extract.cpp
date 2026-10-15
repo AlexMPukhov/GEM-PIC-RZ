@@ -89,6 +89,29 @@ struct File {
     H5Aclose(a);
     return v;
   }
+  // array of fixed- or variable-length strings
+  std::vector<std::string> attrStrings(const char* name, const char* obj) const {
+    hid_t a = H5Aopen_by_name(id, obj, name, H5P_DEFAULT, H5P_DEFAULT);
+    if (a < 0) throw std::runtime_error(std::string("attribute ") + obj + ":" + name);
+    hid_t t = H5Aget_type(a), sp = H5Aget_space(a);
+    const size_t n = size_t(H5Sget_simple_extent_npoints(sp));
+    std::vector<std::string> out;
+    if (H5Tis_variable_str(t) > 0) {
+      std::vector<char*> p(n);
+      H5Aread(a, t, p.data());
+      for (auto* c : p) out.emplace_back(c ? c : "");
+      H5Dvlen_reclaim(t, sp, H5P_DEFAULT, p.data());
+    } else {
+      const size_t len = H5Tget_size(t);
+      std::string buf(len * n, '\0');
+      H5Aread(a, t, &buf[0]);
+      for (size_t k = 0; k < n; ++k) out.emplace_back(buf.substr(k * len, len).c_str());
+    }
+    H5Tclose(t);
+    H5Sclose(sp);
+    H5Aclose(a);
+    return out;
+  }
   // openPMD: name of the (first) iteration group under /data
   std::string firstIteration() const {
     hid_t g = H5Gopen2(id, "/data", H5P_DEFAULT);
@@ -164,7 +187,7 @@ struct Data {
   }
 
   // openPMD file of GEM-PIC-RZ with the native records (output.openpmd_grid = native | both):
-  // rectilinear meshes native_<name> with the node positions in gridCoordinates_r / _z and the modes
+  // rectilinear meshes native_<name> with the node positions referenced by gridCoordinates and the modes
   // as cos / sin parts, F_0 = A_0, F_m = (A_{2m-1} - i A_{2m}) / 2 (docs/openpmd_rectilinear.md)
   void fromOpenPMD(const File& f) {
     const std::string it = f.firstIteration(), base = "/data/" + it + "/meshes/";
@@ -177,9 +200,19 @@ struct Data {
     E0 = f.attrD("unitSI", er.c_str());
     z_m = f.attrVec("gridGlobalOffset", er.c_str())[1] * L;
     um = L * 1e6;
-    rho = f.attrVec("gridCoordinates_r", er.c_str());
-    c = f.attrVec("gridCoordinates_r", (base + "native_E_t").c_str());
-    zs = f.attrVec("gridCoordinates_z", er.c_str());
+    // coordinates of axis k (0: r, 1: z): data set named in the attribute gridCoordinates (openPMD 2.0
+    // proposal), or the interim per-axis attribute gridCoordinates_<label>
+    auto axis = [&](const std::string& rec, int k, const char* label) {
+      const std::string obj = base + rec;
+      if (f.hasAttr("gridCoordinates", obj.c_str())) {
+        const std::string p = f.attrStrings("gridCoordinates", obj.c_str())[size_t(k)];
+        return f.read<double>(p.c_str());
+      }
+      return f.attrVec((std::string("gridCoordinates_") + label).c_str(), obj.c_str());
+    };
+    rho = axis("native_E_r", 0, "r");
+    c = axis("native_E_t", 0, "r");
+    zs = axis("native_E_r", 1, "z");
     N = int(c.size());
     Nz = int(zs.size()) - 1;
     auto modes = [&](const char* nm, int L_) {

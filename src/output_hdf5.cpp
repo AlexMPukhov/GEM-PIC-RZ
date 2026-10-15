@@ -146,9 +146,10 @@ class Writer {
     }
     return H5Gopen2(file_, path.c_str(), H5P_DEFAULT);
   }
-  // dataset without the descriptive attributes (openPMD sets its own), returned open
-  hid_t plain(const std::string& path, const std::vector<hsize_t>& dims, const double* data) {
-    hid_t ds = create(path, dims, single_ ? H5T_IEEE_F32LE : H5T_IEEE_F64LE);
+  // dataset without the descriptive attributes (openPMD sets its own), returned open;
+  // forceDouble: always float64 (grid coordinates)
+  hid_t plain(const std::string& path, const std::vector<hsize_t>& dims, const double* data, bool forceDouble = false) {
+    hid_t ds = create(path, dims, (single_ && !forceDouble) ? H5T_IEEE_F32LE : H5T_IEEE_F64LE);
     if (ds < 0) throw std::runtime_error("HDF5 error: dataset " + path);
     check(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data), "write " + path);
     return ds;
@@ -717,10 +718,11 @@ void Simulation::writeOpenPMD() {
   }
 
   // ---- native records (output.openpmd_grid = native | both): every mode on the code's own staggered,
-  // possibly non-uniform r-zeta nodes, without interpolation. Scalar meshes "native_<name>" with the node
-  // positions in the attributes gridCoordinates_r and gridCoordinates_z, following the proposal for
-  // rectilinear meshes (docs/openpmd_rectilinear.md); geometry "other" until it is part of the standard,
-  // so that readers that only know regular grids do not misplace the data. Fields in m c omega0 / e and
+  // possibly non-uniform r-zeta nodes, without interpolation. Scalar meshes "native_<name>"; the node
+  // positions are data sets <basePath>gridCoordinates/{r_faces, r_centers, zeta_slices, zeta_halfcells},
+  // referenced by the mesh attribute gridCoordinates (one path per axis), as in the proposal for
+  // rectilinear meshes in openPMD 2.0 (docs/openpmd_rectilinear.md). geometry "other" (intended geometry
+  // in geometryParameters) while the files are openPMD 1.1, so that readers of regular grids skip them. Fields in m c omega0 / e and
   // m omega0 / e, densities in units of n0 (unitSI converts to SI). E_r and B_phi on the axis (face 0):
   // the regular limit, -i E_phi and i B_r of mode 1 extrapolated to r = 0, else 0.
   if (O.openpmd_native) {
@@ -733,9 +735,17 @@ void Simulation::writeOpenPMD() {
       for (size_t k = 1; k < x.size(); ++k) d = std::min(d, x[k] - x[k - 1]);
       return x.size() > 1 ? d : 1.0;
     };
+    const std::string gc = base + "/gridCoordinates";
+    { Handle h(W.groups(gc), H5Gclose, gc); }
+    auto coords = [&](const char* nm, const std::vector<double>& x) {
+      Handle h(W.plain(gc + "/" + nm, {hsize_t(x.size())}, x.data(), true), H5Dclose, nm);
+      return gc + "/" + nm;
+    };
+    const std::string pRf = coords("r_faces", rf), pRc = coords("r_centers", rcn);
+    const std::string pZs = coords("zeta_slices", zsl), pZh = coords("zeta_halfcells", zh);
     auto nativeMesh = [&](const std::string& nm, int modes, const std::vector<double>& rr,
-                          const std::vector<double>& zz, const std::vector<double>& data,
-                          const std::vector<double>& dim, double unitSI) {
+                          const std::vector<double>& zz, const std::string& pr, const std::string& pz,
+                          const std::vector<double>& data, const std::vector<double>& dim, double unitSI) {
       Handle ds(W.plain(mp + "/" + nm, {hsize_t(2 * modes - 1), hsize_t(rr.size()), hsize_t(zz.size())}, data.data()),
                 H5Dclose, nm);
       Writer::attr(ds, "geometry", std::string("other"));
@@ -746,8 +756,7 @@ void Simulation::writeOpenPMD() {
       Writer::attr(ds, "gridSpacing", std::vector<double>{minStep(rr), minStep(zz)});
       Writer::attr(ds, "gridGlobalOffset", std::vector<double>{0.0, s0});
       Writer::attr(ds, "gridUnitSI", L);
-      Writer::attr(ds, "gridCoordinates_r", rr);
-      Writer::attr(ds, "gridCoordinates_z", zz);
+      Writer::attr(ds, "gridCoordinates", std::vector<std::string>{pr, pz});
       Writer::attr(ds, "unitDimension", dim);
       Writer::attr(ds, "timeOffset", 0.0);
       Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
@@ -780,7 +789,8 @@ void Simulation::writeOpenPMD() {
               d[(size_t(2 * m) * NR + i) * NZ + n] = -2.0 * v.imag();
             }
           }
-      nativeMesh(nname[q], M + 1, rr, zsl, d, q < 3 ? unitDim(1, 1, -3, -1) : unitDim(0, 1, -2, -1), q < 3 ? E0 : B0);
+      nativeMesh(nname[q], M + 1, rr, zsl, onFaces[q] ? pRf : pRc, pZs, d,
+                 q < 3 ? unitDim(1, 1, -3, -1) : unitDim(0, 1, -2, -1), q < 3 ? E0 : B0);
     }
     // densities, mode 0, on the radial centres and the half-cells
     std::vector<double> d(size_t(N) * Nz);
@@ -789,14 +799,14 @@ void Simulation::writeOpenPMD() {
         const size_t idx = size_t(k) * N + i;
         d[size_t(i) * Nz + k] = -(c0s.rho[idx] + c0b.rho[idx]) / n_ref;
       }
-    nativeMesh("native_n_e", 1, rcn, zh, d, unitDim(-3, 0, 0, 0), n_ref * nc);
+    nativeMesh("native_n_e", 1, rcn, zh, pRc, pZh, d, unitDim(-3, 0, 0, 0), n_ref * nc);
     if (!cfg.ions.empty()) {
       for (int i = 0; i < N; ++i)
         for (int k = 0; k < Nz; ++k) {
           const size_t idx = size_t(k) * N + i;
           d[size_t(i) * Nz + k] = (c0s.rhoi[idx] + c0b.rhoi[idx]) / n_ref;
         }
-      nativeMesh("native_Zn_i", 1, rcn, zh, d, unitDim(-3, 0, 0, 0), n_ref * nc);
+      nativeMesh("native_Zn_i", 1, rcn, zh, pRc, pZh, d, unitDim(-3, 0, 0, 0), n_ref * nc);
     }
   }
 
