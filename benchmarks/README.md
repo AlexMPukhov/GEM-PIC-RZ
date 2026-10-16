@@ -5,6 +5,7 @@
 | `genesis_seeded/` | GENESIS 1.3 v4 (steady state) | seeded FEL amplifiers at 10 nm and 0.8 nm | power gain length within 4 % (10 nm) and 0.6 % (0.8 nm) of GENESIS run with the same physics |
 | `lwfa_fbpic/` | FBPIC 0.27 (full PIC, spectral, quasi-cylindrical) | LWFA, a0 = 2, n0 = 3.5·10¹⁸ cm⁻³ | on-axis wake E_z of the first period to 1.6 % rms; laser field to 1 %; behind the bubble with `plasma.smooth_length` |
 | `ionization_fbpic/` | FBPIC 0.27 (with ADK ionization) | ionization injection from a N5+ dopant, a0 = 2.3, 3.5·10¹⁸ cm⁻³, 200 µm | injected charge above 5 MeV to 10 %, its mean energy and spectrum to 2–5 % at the same position of the bunch |
+| `downramp_fbpic/` | FBPIC 0.27 | density down-ramp injection (2 → 1 n0 over 10 µm), a0 = 1.8 | **open:** GEM-PIC-RZ traps 10–25 pC above 2 MeV depending on the step, FBPIC 51 pC |
 | `laser_evolution/` | FBPIC 0.27 and the envelope code Wake-T 0.9.1 | 6.8 fs pulse, a0 = 1.5, n0 = 1.7·10¹⁹ cm⁻³, 300 µm: diffraction, depletion, red-shift | laser energy to 1.3 %, red-shift to 0.002 k0, peak field to 5 % (FBPIC); Wake-T underestimates the depletion fivefold |
 
 The runs were made on 2 CPU cores. The decks, input files and scripts are here; the GEM-PIC-RZ output
@@ -103,6 +104,35 @@ of the pulse. The K-shell electrons released there slip back and are trapped in 
 - Above 5 MeV the spectra agree up to the highest energy (26 vs 25 MeV). Below about 4 MeV FBPIC has more electrons:
   sheath electrons that are not trapped, which GEM-PIC-RZ streams through the window.
 - Without the source smoothing GEM-PIC-RZ traps 30 % more charge than FBPIC (0.95 instead of 0.73 pC at s = 100 µm).
+
+## Density down-ramp injection against FBPIC (open issue)
+
+The laser of `lwfa_fbpic/` with a0 = 1.8 crosses a plateau of 2 n0 (n0 = 0.002 n_c), which drops linearly to n0
+between z = 60 and 70 µm. The wake lengthens behind the ramp, and background electrons are trapped there. Without
+the ramp (constant 2 n0) GEM-PIC-RZ traps nothing; with it, the trapping starts at the ramp, as in FBPIC.
+The trapped charge does not agree and does not converge with the step:
+
+| electrons above 2 MeV, bunch at z ≈ 136–150 µm | Q [pC] | ⟨E⟩ [MeV] |
+|---|---|---|
+| FBPIC (ct = 150 µm, bunch at 136 µm) | 51.0 | 4.1 |
+| GEM-PIC-RZ Δ = 2.5 µm | 9.9 | 6.0 |
+| Δ = 1.25 µm | 20.9 | 6.6 |
+| Δ = 0.5 µm | 12.2 | 5.6 |
+| Δ = 0.25 µm (to 150 µm) | 14.2 | 6.5 |
+| Δ = 0.125 µm in the ramp, 1.25 µm elsewhere | ≈ 31 (at 115 µm) | 2.1 |
+
+Findings so far:
+- **Before the ramp:** the plateau wake agrees with FBPIC to 2·10⁻³ m c ω0/e rms for Δ = 2.5 and 1.25 µm.
+- **What changes the charge:** in a free-hand z grid, the steps before and after the ramp change it as much as the
+  steps inside it. `numerics.trap_advance` (electrons kept in their level for several steps) suppresses the
+  trapping almost completely (4 pC). `vz_beam = 0.99` changes little, and neither does stronger smoothing of the wake.
+- **Interpretation:** the trapped electrons sit at the back of a bubble that lengthens by about 30 % over 10 µm.
+  In GEM-PIC-RZ a streaming electron sees the fields of one level until its z has advanced by Δ, and then
+  continues in the next level or on the beam list. The non-monotonic dependence on Δ points to this level
+  switching (cf. "Bubble closure" in the main README) rather than to the neglect of ∂_s in the reduced field
+  equations. The latter is also strained here, though, since the back of the bubble moves at about 0.5 c through
+  the window.
+- **Not yet tested:** a ramp several plasma wavelengths long.
 
 ## Laser evolution against FBPIC and Wake-T
 

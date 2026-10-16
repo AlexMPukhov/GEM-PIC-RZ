@@ -1,0 +1,49 @@
+# deck /tmp/claude-0/-home-claude/bdc0ad2f-519d-57f8-a934-6af23a267423/scratchpad/ramp_0.125.deck after command-line overrides
+
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = stretched
+  dr_min            = 0.3 k0^-1
+  dr_max            = 3.0 k0^-1
+  transition_cell   = 40
+  transition_cells  = 8
+  nr                = 100
+  dzeta             = 0.25 k0^-1
+  nzeta             = 1200
+  z_grid            = table
+  z_points          = 0 50 58 85 95 um
+  dz_points         = 1.25 1.25 0.125 0.125 1.25 um
+  z_end             = 200 um
+  r_absorber        = 160 k0^-1
+  absorber_strength = 0.2
+}
+
+laser {
+  a0          = 1.8
+  waist       = 63 k0^-1
+  length_1e   = 25 k0^-1
+  zeta_center = 240 k0^-1
+}
+
+plasma {
+  density       = 0.002 n_c
+  z_points      = 0 20 60 70 um
+  z_values      = 0 2 2 1
+  r_max         = 150 k0^-1
+  ppc_r         = 2
+  ppc_phi       = 8
+  smooth_length = 2 k0^-1
+}
+
+output {
+  dir       = /home/claude/gem-pic-rz/benchmarks/downramp_fbpic/gem_out_zr0.125
+  every     = 1000
+  maps      = false
+  particles = true
+}
+
+numerics {
+  iterations = 2
+}
+

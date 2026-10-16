@@ -1,0 +1,17 @@
+ct =     0.00 um  freed 0.000 pC  E>1 MeV 0.000 pC  E>5 MeV 0.000 pC
+Total time taken (with compilation): 0:35:36
+ct =    25.00 um  freed 4.061 pC  E>1 MeV 0.219 pC  E>5 MeV 0.000 pC
+Total time taken (with compilation): 0:23:53
+ct =    50.00 um  freed 9.720 pC  E>1 MeV 1.058 pC  E>5 MeV 0.000 pC
+Total time taken (with compilation): 0:24:23
+ct =    75.00 um  freed 13.358 pC  E>1 MeV 3.432 pC  E>5 MeV 0.041 pC
+Total time taken (with compilation): 0:24:38
+ct =   100.00 um  freed 16.090 pC  E>1 MeV 5.515 pC  E>5 MeV 0.475 pC
+Total time taken (with compilation): 0:25:00
+ct =   125.00 um  freed 17.842 pC  E>1 MeV 7.418 pC  E>5 MeV 0.928 pC
+Total time taken (with compilation): 0:28:03
+ct =   150.00 um  freed 18.661 pC  E>1 MeV 8.670 pC  E>5 MeV 1.305 pC
+Total time taken (with compilation): 0:24:54
+ct =   175.00 um  freed 18.841 pC  E>1 MeV 9.317 pC  E>5 MeV 1.580 pC
+Total time taken (with compilation): 0:24:51
+ct =   200.00 um  freed 18.021 pC  E>1 MeV 9.241 pC  E>5 MeV 1.757 pC
