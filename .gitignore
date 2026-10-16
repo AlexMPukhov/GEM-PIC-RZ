@@ -10,3 +10,4 @@ paper/*.aux
 paper/*.log
 paper/*.out
 paper/*Notes.bib
+paper/*_diff.*
