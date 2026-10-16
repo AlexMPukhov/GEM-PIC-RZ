@@ -674,3 +674,7 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 - **Missing physics:** the energy that ionization takes from the laser (ionization current) and collisional ionization are not modelled. Ion species follow the plasma profile or their own (`profile = own`).
 - **Laser envelope:** the laser is initialized as a paraxial Gaussian beam (or, with `profile_function`, as the given field at z = 0 with flat phase fronts). The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle.
 - **Radial absorber:** it is a simple damping of R and has not been tested for reflection.
+- **Density down-ramp injection (open, future work):** not reproduced (2–5x less trapped charge than FBPIC, step
+  dependent; `benchmarks/downramp_fbpic`). Attributed to the GT2 frame of the particles; GT1 should describe it but
+  produces stripes in the fields where plasma particles reach the next slow-time level inside the window. No solution
+  yet; to be discussed before work starts.

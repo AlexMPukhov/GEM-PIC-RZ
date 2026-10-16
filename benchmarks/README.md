@@ -126,12 +126,11 @@ Findings so far:
 - **What changes the charge:** in a free-hand z grid, the steps before and after the ramp change it as much as the
   steps inside it. `numerics.trap_advance` (electrons kept in their level for several steps) suppresses the
   trapping almost completely (4 pC). `vz_beam = 0.99` changes little, and neither does stronger smoothing of the wake.
-- **Interpretation:** the trapped electrons sit at the back of a bubble that lengthens by about 30 % over 10 µm.
-  In GEM-PIC-RZ a streaming electron sees the fields of one level until its z has advanced by Δ, and then
-  continues in the next level or on the beam list. The non-monotonic dependence on Δ points to this level
-  switching (cf. "Bubble closure" in the main README) rather than to the neglect of ∂_s in the reduced field
-  equations. The latter is also strained here, though, since the back of the bubble moves at about 0.5 c through
-  the window.
+- **Interpretation (Alexander, 2026-10-16):** the discrepancy is due to the GT2 choice for the particles (a level is a
+  plane z = s; trapping is decided with the fields of one plane while the bubble back moves through the window).
+  GT1 (s = ct, levels are instants, as in FBPIC) should describe it, but in GT1 plasma particles that reach the next
+  slow-time level inside the window stop being pushed there, which imprints stripes on the fields. No solution yet;
+  future work, to be discussed with Alexander. The code has no GT1 particle push at present.
 - **Not yet tested:** a ramp several plasma wavelengths long.
 
 ## Laser evolution against FBPIC and Wake-T

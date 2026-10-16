@@ -1,6 +1,6 @@
 """Fig. LWFA benchmark: on-axis E_z and E_x of GEM-PIC-RZ and FBPIC (benchmarks/lwfa_fbpic).
-(a) E_z at 50 and 100 um with plasma.smooth_length = 2 k0^-1; (b) behind the bubble at 100 um: cold plasma
-and smoothed sources, steps 2.5 and 1.25 um; (c) laser field E_x at 100 um.
+(a) E_z at 50 and 100 um with plasma.smooth_length = 2 k0^-1; (b) laser field E_x at 100 um.
+(The comparison behind the bubble, cold and smoothed, is in fig_closure.py.)
 usage (from paper/): python3 scripts/fig_lwfa.py  ->  figs/fig_lwfa.pdf"""
 import glob
 import matplotlib
@@ -21,8 +21,7 @@ def axis(run, D):
 
 
 plt.rcParams.update({"font.size": 9, "font.family": "serif", "mathtext.fontset": "cm"})
-fig, axs = plt.subplots(3, 1, figsize=(3.4, 5.6), sharex=False,
-                        gridspec_kw={"height_ratios": [1.0, 1.0, 0.8]})
+fig, axs = plt.subplots(2, 1, figsize=(3.4, 4.0), gridspec_kw={"height_ratios": [1.2, 0.8]})
 for D, col, fcol in [(50, "#999999", "#e8a0a8"), (100, "#1f4e9c", "#d1495b")]:
     f = np.loadtxt(B + f"fbpic_D{D}.txt")
     g = axis("gem_out_a2", D)
@@ -30,30 +29,18 @@ for D, col, fcol in [(50, "#999999", "#e8a0a8"), (100, "#1f4e9c", "#d1495b")]:
     axs[0].plot(g[:, 0], g[:, 2], "-", color=col, lw=1.2, label=f"GEM-PIC-RZ, {D} µm")
     axs[0].plot(f[m, 0], f[m, 1] / E0, "--", color=fcol, lw=1.0, label=f"FBPIC, {D} µm")
 f = np.loadtxt(B + "fbpic_D100.txt")
-m = (f[:, 0] >= 0) & (f[:, 0] <= 16)
-for run, c, ls, lab in [("gem_out", "#bbbbbb", "-", r"cold, $\Delta = 2.5$ µm"),
-                        ("gem_out_dz1.25", "#f0a35e", "-", r"cold, $\Delta = 1.25$ µm"),
-                        ("gem_out_a2", "#1f4e9c", "-", r"$a = 0.25$ µm, $\Delta = 2.5$ µm"),
-                        ("gem_out_a2_dz1.25", "#6fa8dc", ":", r"$a = 0.25$ µm, $\Delta = 1.25$ µm")]:
-    g = axis(run, 100)
-    axs[1].plot(g[:, 0], g[:, 2], ls, color=c, lw=1.0 if ls == "-" else 1.4, label=lab)
-axs[1].plot(f[m, 0], f[m, 1] / E0, "--", color="k", lw=0.8, label="FBPIC")
-axs[1].set_xlim(0, 16)
 g = axis("gem_out_a2", 100)
 mm = (f[:, 0] >= 0) & (f[:, 0] <= 38.2)
-axs[2].plot(g[:, 0], g[:, 1], "-", color="#1f4e9c", lw=0.7, label="GEM-PIC-RZ")
-axs[2].plot(f[mm, 0], f[mm, 2] / E0, "--", color="#d1495b", lw=0.7, label="FBPIC")
+axs[1].plot(g[:, 0], g[:, 1], "-", color="#1f4e9c", lw=0.7, label="GEM-PIC-RZ")
+axs[1].plot(f[mm, 0], f[mm, 2] / E0, "--", color="#d1495b", lw=0.7, label="FBPIC")
 axs[0].set_ylabel(r"$E_z(r=0)$ $[mc\omega_0/e]$")
-axs[1].set_ylabel(r"$E_z(r=0)$ $[mc\omega_0/e]$")
-axs[2].set_ylabel(r"$E_x(r=0)$ $[mc\omega_0/e]$")
-for a in (axs[0], axs[2]):
+axs[1].set_ylabel(r"$E_x(r=0)$ $[mc\omega_0/e]$")
+for a in axs:
     a.set_xlim(0, 38.2)
-axs[2].set_xlabel(r"$\zeta$ [µm]")
 axs[1].set_xlabel(r"$\zeta$ [µm]")
 axs[0].legend(fontsize=6, loc="lower left", frameon=False)
-axs[1].legend(fontsize=5.5, loc="upper left", frameon=False)
-axs[2].legend(fontsize=6, loc="upper left", frameon=False)
-for a, t in zip(axs, ["(a)", "(b)", "(c)"]):
+axs[1].legend(fontsize=6, loc="upper left", frameon=False)
+for a, t in zip(axs, ["(a)", "(b)"]):
     a.text(0.97, 0.88, t, transform=a.transAxes, ha="right")
 fig.tight_layout(h_pad=0.4)
 fig.savefig("figs/fig_lwfa.pdf")
