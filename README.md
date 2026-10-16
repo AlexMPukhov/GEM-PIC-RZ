@@ -44,7 +44,38 @@ build/h5_extract diag/data_00050.h5 lineout 2.0 90              # E, B at r = 2 
 build/h5_extract diag/data_00050.h5 energy                      # field energy and its zeta-Nyquist part
 build/gempic_rz my.deck output.checkpoint_every=100             # checkpoints for restarts
 build/gempic_rz my.deck --restart latest                        # continue from the newest one
+python3 tools/gempic_gui.py my.deck                             # GUI in the web browser (see below)
 ```
+
+### GUI
+
+`tools/gempic_gui.py` is an optional graphical front end for desktop and notebook runs, like the one of
+QUARZ. It is a small local web server (Python standard library, numpy, and h5py for the HDF5 frames) and
+a page without external dependencies, so it works offline:
+
+```
+python3 tools/gempic_gui.py examples/lwfa_witness.deck            # opens the browser
+python3 tools/gempic_gui.py my.deck --no-browser --port 8766       # remote: ssh -L 8766:127.0.0.1:8766 host
+```
+
+- **Deck:** editor with the example decks, Save, Check (`gempic_rz deck --check`), extra command-line
+  overrides that are not saved in the deck.
+- **Run:** threads (`numerics.backend = openmp` for more than one), MPI ranks, Stop, the log and the progress.
+  The deck is checked first; a deck with errors is refused with the message.
+- **Live frames:** the GUI adds `hdf5` to `output.format` (and sets `output.every` if "frames every" is
+  given) on the command line; the deck file is not changed. Every output step then writes
+  `data_NNNNN.h5` (written as `.tmp` and renamed, so a frame is never read half-written).
+- **Plots:** 2D map in the plane y = 0 (x = +r at φ = 0, x = −r at φ = π) of E_x, E_y, E_z, B_x, B_y, B_z
+  (code units m c ω₀/e, m ω₀/e) and of n_e/n₀, Z n_i/n₀, with a robust colour range; click to set the
+  cuts along ζ (at x) and across (at ζ); frame slider and playback; the bunch table `bunches.txt`
+  (energy, spread, charge, sizes, emittances against z). Finished runs can be browsed the same way.
+- **Fields:** built from the modes as the particle gather does (staggered faces and centres, regular
+  values on the axis). The test `gui` compares them with the code's own axis and map output to the
+  print precision of those files, runs a 2-rank MPI run through the GUI, and checks the token and the
+  error handling. Without h5py, or with a build without HDF5, the GUI shows the text maps
+  `map_NNNNN.txt` (E_x, E_z, densities).
+- **Security:** the server listens on 127.0.0.1 only, and every request needs the random token in the
+  URL it prints.
 
 ## Input deck
 
@@ -116,6 +147,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
 | `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); a γ = 100 bunch keeps its energy in its own field; ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
 | `tools/h5_extract.cpp` | reads the HDF5 files and the native records of the openPMD files: tables of axis, map, beam, field line-outs (also an example reader) |
+| `tools/gempic_gui.py`, `tools/gempic_gui.html` | GUI: deck editor, run control and live plots in the browser (see "GUI"); test `tests/gui.sh`, `tests/gui_check.py` |
 | `tools/openpmd_rectilinear.py` | Python reader of openPMD meshes on regular and rectilinear (non-uniform) grids, GEM-PIC-RZ and QUARZ |
 | `tests/hdf5.sh` | HDF5 files read back against the text output (double and single precision) |
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |

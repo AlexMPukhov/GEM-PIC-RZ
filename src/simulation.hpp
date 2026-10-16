@@ -162,6 +162,7 @@ class Simulation {
   void report(const DiagSums& D, bool files);       // console, tables, files
   void writeFiles();
   void writeHdf5();     // output_hdf5.cpp
+  void writeHdf5File(const std::string& path);  // output_hdf5.cpp: the content of data_NNNNN.h5
   void writeOpenPMD();  // output_hdf5.cpp (openPMD 1.1.0)
   void readCheckpoint(const std::string& path);
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt

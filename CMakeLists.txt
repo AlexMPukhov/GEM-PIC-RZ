@@ -224,6 +224,9 @@ if(GEMPIC_HAVE_HDF5)
   set_tests_properties(openpmd PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
+  # GUI (tools/gempic_gui.py): runs started through its HTTP API; fields against the code's gather
+  add_test(NAME gui COMMAND sh ${CMAKE_SOURCE_DIR}/tests/gui.sh $<TARGET_FILE:gempic_rz>)
+  set_tests_properties(gui PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME cherenkov
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/cherenkov.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
 endif()

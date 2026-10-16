@@ -368,6 +368,15 @@ void Simulation::writeHdf5() {
   fs::create_directories(O.dir);
   char name[1024];
   std::snprintf(name, sizeof name, "%s/data_%05d.h5", O.dir.c_str(), step_no);
+  // written as name.tmp and renamed when complete: a reader (e.g. tools/gempic_gui.py during a run)
+  // never sees a partial data_NNNNN.h5
+  const std::string tmp = std::string(name) + ".tmp";
+  writeHdf5File(tmp);
+  fs::rename(tmp, name);
+}
+
+void Simulation::writeHdf5File(const std::string& name) {
+  const auto& O = cfg.output;
   H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);  // errors are reported by exceptions
   Writer W(name, O.hdf5_single, O.hdf5_compression);
 
@@ -1078,6 +1087,7 @@ std::string Simulation::latestCheckpoint(const std::string& dir) {
 
 namespace gem {
 void Simulation::writeHdf5() { throw std::runtime_error("this build has no HDF5 support"); }
+void Simulation::writeHdf5File(const std::string&) { throw std::runtime_error("this build has no HDF5 support"); }
 void Simulation::writeOpenPMD() { throw std::runtime_error("this build has no HDF5 support"); }
 std::string Simulation::writeCheckpoint() { throw std::runtime_error("checkpoints need HDF5 support"); }
 void Simulation::readCheckpoint(const std::string&) { throw std::runtime_error("restarts need HDF5 support"); }
