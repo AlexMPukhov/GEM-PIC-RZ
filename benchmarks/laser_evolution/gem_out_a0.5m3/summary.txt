@@ -1,0 +1,13 @@
+units: lambda0 = 0.8 um, 1/k0 = 0.12732 um, 1/omega0 = 0.42471 fs, n_c = 1.742e+21 cm^-3
+grid : modes m = 0..1
+       radial stretched: Nr = 130, dr = 0.0382 .. 0.2546 um, transition at r = 3.806 um (cell 80.00, width 10 cells), r_max = 15.79 um
+       window: Nz = 980, dzeta = 0.02546 um, length = 24.96 um
+       dz = 2 um, z_end = 0.3 mm (150 steps); absorber r > 13.42 um, strength 0.2
+laser[0]: a0 = 1.5, lambda = 0.8 um, w0 = 3.565 um (zR = 0.04991 mm), tau_FWHM = 8.001 fs, zeta_c = 18.59 um, focus at z = 0 mm, linear, P = 0.961 TW
+plasma: n0 = 1.742e+19 cm^-3 (0.01 n_c), lambda_p = 8 um, radial profile: uniform, r_max = open (up to the grid edge)
+        longitudinal profile: (0 mm, 0) (0.01 mm, 1)
+        macroparticles per cell: 2 x 8, and 4 x 16 for r < 1.273 um
+        radial smoothing of the plasma sources over a = 0.06366 um (0.5 k0^-1, 0.05 c/omega_p) for m >= 1, 0.382 um (3 k0^-1) for m = 0
+        immobile ion background: 1 of the positive charge
+output format: text + hdf5 (HDF5 double precision, compression 0)
+output: dir 'gem_out_a0.5m3', every 5 steps; numerics: 2 iterations/slice, theta 0.5, trap advance 1 dz, beam filter 1, beam pusher vay, seed 12345, backend serial

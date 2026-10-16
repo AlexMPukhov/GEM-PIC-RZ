@@ -1,0 +1,15 @@
+units: lambda0 = 0.8 um, 1/k0 = 0.12732 um, 1/omega0 = 0.42471 fs, n_c = 1.742e+21 cm^-3
+grid : modes m = 0..1
+       radial stretched: Nr = 100, dr = 0.0382 .. 0.382 um, transition at r = 2.481 um (cell 40.00, width 8 cells), r_max = 24.45 um
+       window: Nz = 1200, dzeta = 0.03183 um, length = 38.2 um
+       dz = 2.5 um, z_end = 0.2 mm (80 steps); absorber r > 20.37 um, strength 0.2
+laser[0]: a0 = 2.3, lambda = 0.8 um, w0 = 8.021 um (zR = 0.2527 mm), tau_FWHM = 12.5 fs, zeta_c = 30.56 um, focus at z = 0 mm, linear, P = 11.4 TW
+plasma: n0 = 3.484e+18 cm^-3 (0.002 n_c), lambda_p = 17.89 um, radial profile: uniform, r_max = 19.1 um
+        longitudinal profile: (0 mm, 0) (0.02 mm, 1)
+        macroparticles per cell: 2 x 8, and 4 x 16 for r < 1.273 um
+        radial smoothing of the plasma sources over a = 0.5093 um (4 k0^-1, 0.179 c/omega_p) for m >= 1, 0.5093 um (4 k0^-1) for m = 0
+ion[0] 'N5+': Z = 5, mass = 14.007 u (25533.2 m_e), atom density 3.484e+16 cm^-3 (0.01 n0), mobile
+        ADK field ionization up to Z = 7, ionization energies [eV] 5->6: 552.067, 6->7: 667.046
+        immobile ion background: 0.95 of the positive charge
+        ionization energies: NIST Atomic Spectra Database ver. 5.12 (Kramida, Ralchenko, Reader and NIST ASD Team, 2024), ionization energies retrieved 2026-09-27
+output: dir 'gem_out_a4', every 10 steps; numerics: 2 iterations/slice, theta 0.5, trap advance 1 dz, beam filter 1, beam pusher vay, seed 12345, backend serial

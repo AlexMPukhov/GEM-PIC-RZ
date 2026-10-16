@@ -1,0 +1,55 @@
+# deck gem.deck after command-line overrides
+
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = stretched
+  dr_min            = 0.3 k0^-1
+  dr_max            = 3.0 k0^-1
+  transition_cell   = 40
+  transition_cells  = 8
+  nr                = 100
+  dzeta             = 0.25 k0^-1
+  nzeta             = 1200
+  dz                = 2.5 um
+  z_end             = 200 um
+  r_absorber        = 160 k0^-1
+  absorber_strength = 0.2
+}
+
+laser {
+  a0          = 2.3
+  waist       = 63 k0^-1
+  length_1e   = 25 k0^-1
+  zeta_center = 240 k0^-1
+}
+
+plasma {
+  density       = 0.002 n_c
+  z_points      = 0 20 um
+  z_values      = 0 1
+  r_max         = 150 k0^-1
+  ppc_r         = 2
+  ppc_phi       = 8
+  smooth_length = 1k0^-1
+}
+
+ion {
+  element          = N
+  charge_state     = 5
+  ionization       = adk
+  max_charge_state = 7
+  density          = 2e-5 n_c
+}
+
+output {
+  dir       = gem_out_a1
+  every     = 10
+  maps      = false
+  particles = true
+}
+
+numerics {
+  iterations = 2
+}
+

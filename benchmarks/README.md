@@ -248,3 +248,16 @@ gempic_rz gem.deck numerics.backend=openmp output.dir=gem_out_a2_dz1.25 plasma.s
 gempic_rz gem.deck numerics.backend=openmp output.dir=gem_out_dz1.25 grid.dz=1.25um output.every=40
 python3 compare.py                 # or: python3 compare.py gem_out_a2
 ```
+
+## Sensitivity to the smoothing length and the step
+
+`python3 sensitivity.py` (in `benchmarks/`) collects the FBPIC comparisons of all four laser-plasma benchmarks for
+`plasma.smooth_length` a = 0, 1, 2, 4 k0^-1 and half the step (laser evolution: m >= 1 length 0.5 ... 3 with the
+m = 0 length 1 ... 4) and writes `sensitivity.txt`, the numbers of Table IV of the paper. Runs: `gem_out_a<a>[_dz<dz>]`
+in each benchmark directory (laser: `gem_out_a<m1>m<m0>`), made with the deck of the directory plus
+`output.dir=... plasma.smooth_length=... [plasma.smooth_length_m0=...] [grid.dz=...]`. Result:
+- robust (a <= 2, both steps): wake up to the bubble back, laser energy and red-shift, energy of injected electrons;
+- bounded: the wake behind the closure converges with the step only for a >= 2 k0^-1 (0.002 n_c) and an m = 0 length
+  >= 2 k0^-1 (0.01 n_c); a = 4 lowers E_z at the bubble back by 15 %; m >= 1 lengths >= 3 k0^-1 change the laser energy;
+- sensitive: injected charge (+17 % ... -10 % of FBPIC for a = 0 ... 2, -43 % for a = 4);
+- down-ramp: 10-22 pC for every a and step against 51 pC in FBPIC, so not caused by the smoothing.

@@ -1,0 +1,30 @@
+LWFA wake at 100 um (a0 = 2, 0.002 n_c): rms(E_z - FBPIC) in the first period [% of peak], behind the bubble (zeta 1-12.5 um) [1e-3 m c w0/e], max E_z at the bubble back (FBPIC 0.042)
+  a = 0      dz 2.5:  1.6 %  1.78 0.047   dz 1.25:  2.0 %  9.72 0.069
+  a = 1      dz 2.5:  1.8 %  1.07 0.042   dz 1.25:  2.0 %  1.76 0.042
+  a = 2      dz 2.5:  1.9 %  0.70 0.040   dz 1.25:  2.1 %  0.72 0.041
+  a = 4      dz 2.5:  3.4 %  1.53 0.036   dz 1.25:  3.6 %  1.91 0.035
+
+Laser evolution at 300 um (a0 = 1.5, 0.01 n_c): W/W0 (FBPIC 0.731), <k>/k0 (FBPIC 0.9547), rms(E_z - FBPIC) on the axis [% of the FBPIC peak]
+  cold             z   300  W/W0 0.740  <k>/k0 0.9549  wake rms 1294.1 %
+  a = 0.5 / 3      z   300  W/W0 0.726  <k>/k0 0.9549  wake rms   19.1 %
+  a = 1 / 2        z   300  W/W0 0.731  <k>/k0 0.9546  wake rms   19.3 %
+  a = 1 / 3        z   300  W/W0 0.731  <k>/k0 0.9546  wake rms   18.5 %
+  a = 1 / 4        z   300  W/W0 0.730  <k>/k0 0.9547  wake rms   19.4 %
+  a = 2 / 3        z   300  W/W0 0.747  <k>/k0 0.9535  wake rms   15.7 %
+  a = 3 / 3        z   300  W/W0 0.773  <k>/k0 0.9518  wake rms   10.4 %
+  a = 1 / 1        z   300  W/W0 0.732  <k>/k0 0.9546  wake rms   82.7 %
+  a = 1 / 3, dz 1  z   300  W/W0 0.761  <k>/k0 0.9541  wake rms   23.6 %
+
+Ionization injection, bunch at z = 175 um: Q(E > 5 MeV) [pC], <E> [MeV] (FBPIC, interpolated: 1.70, 12.1)
+  a = 0             1.99 ( +17 %)   12.3
+  a = 1             1.84 (  +8 %)   12.1
+  a = 2             1.54 ( -10 %)   11.9
+  a = 4             0.96 ( -43 %)   11.0
+  a = 1, dz 1.25    1.95 ( +15 %)   12.0
+  a = 2, dz 1.25    1.68 (  -1 %)   11.7
+
+Down-ramp injection at s = 150 um: Q(E > 2 MeV) [pC] (FBPIC at ct = 150 um: 51.0)
+  a = 0      dz 2.5:  18.8   dz 1.25:  21.9
+  a = 1      dz 2.5:  14.4   dz 1.25: --
+  a = 2      dz 2.5:   9.9   dz 1.25:  20.9
+  a = 4      dz 2.5:  10.1   dz 1.25:  17.0
