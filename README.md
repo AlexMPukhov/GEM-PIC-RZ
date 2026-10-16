@@ -647,6 +647,9 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 - **LWFA vs FBPIC** (a0 = 2, n0 = 3.5·10¹⁸ cm⁻³): the on-axis wake of the first period agrees to 1.6 % rms after
   100 µm, at 1/50 of the computing time. Behind the bubble the cold-plasma run has spurious oscillations that
   `plasma.smooth_length` removes (see "Bubble closure").
+- **Ionization injection vs FBPIC** (N5+ dopant, a0 = 2.3, 200 µm): the injected charge above 5 MeV agrees to 10 %
+  and its mean energy, energy spread and spectrum to 2–5 % at the same lab position of the bunch, at 1/50 of the
+  computing time.
 - **Laser evolution vs FBPIC and Wake-T** (6.8 fs, a0 = 1.5, 0.01 n_c, 300 µm): laser energy (depletion) to 1.3 %,
   red-shift to 0.002 k0 and peak field to 5 % against FBPIC, at 1/60 of the computing time; the envelope code
   Wake-T underestimates the depletion fivefold for this 2.5-cycle pulse.

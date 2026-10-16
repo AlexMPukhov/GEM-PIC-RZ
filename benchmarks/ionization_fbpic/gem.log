@@ -1,0 +1,181 @@
+GEM-PIC-RZ   deck: gem.deck
+units: lambda0 = 0.8 um, 1/k0 = 0.12732 um, 1/omega0 = 0.42471 fs, n_c = 1.742e+21 cm^-3
+grid : modes m = 0..1
+       radial stretched: Nr = 100, dr = 0.0382 .. 0.382 um, transition at r = 2.481 um (cell 40.00, width 8 cells), r_max = 24.45 um
+       window: Nz = 1200, dzeta = 0.03183 um, length = 38.2 um
+       dz = 2.5 um, z_end = 0.2 mm (80 steps); absorber r > 20.37 um, strength 0.2
+laser[0]: a0 = 2.3, lambda = 0.8 um, w0 = 8.021 um (zR = 0.2527 mm), tau_FWHM = 12.5 fs, zeta_c = 30.56 um, focus at z = 0 mm, linear, P = 11.4 TW
+plasma: n0 = 3.484e+18 cm^-3 (0.002 n_c), lambda_p = 17.89 um, radial profile: uniform, r_max = 19.1 um
+        longitudinal profile: (0 mm, 0) (0.02 mm, 1)
+        macroparticles per cell: 2 x 8, and 4 x 16 for r < 1.273 um
+        radial smoothing of the plasma sources over a = 0.2546 um (2 k0^-1, 0.0894 c/omega_p) for m >= 1, 0.2546 um (2 k0^-1) for m = 0
+ion[0] 'N5+': Z = 5, mass = 14.007 u (25533.2 m_e), atom density 3.484e+16 cm^-3 (0.01 n0), mobile
+        ADK field ionization up to Z = 7, ionization energies [eV] 5->6: 552.067, 6->7: 667.046
+        immobile ion background: 0.95 of the positive charge
+        ionization energies: NIST Atomic Spectra Database ver. 5.12 (Kramida, Ralchenko, Reader and NIST ASD Team, 2024), ionization energies retrieved 2026-09-27
+output: dir 'gem_out', every 10 steps; numerics: 2 iterations/slice, theta 0.5, trap advance 1 dz, beam filter 1, beam pusher vay, seed 12345, backend serial
+WARNING: laser: the pulse front is closer than 3 length_1e to the front of the window
+backend: serial (reference implementation, 1 thread)
+step     0  z =   0.0000 mm  |Ex|max = 2.300  Ez = [0.0000, 0.0000]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.000
+      N5+        <Z> leaving the window = 0.0000   freed 0 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     1  z =   0.0025 mm  |Ex|max = 2.300  Ez = [-0.0017, 0.0019]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.004
+      N5+        <Z> leaving the window = 5.0449   freed 0.04483 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     2  z =   0.0050 mm  |Ex|max = 2.300  Ez = [-0.0075, 0.0060]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.012
+      N5+        <Z> leaving the window = 5.0424   freed 0.1271 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     3  z =   0.0075 mm  |Ex|max = 2.299  Ez = [-0.0125, 0.0105]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.020
+      N5+        <Z> leaving the window = 5.0398   freed 0.199 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     4  z =   0.0100 mm  |Ex|max = 2.297  Ez = [-0.0167, 0.0303]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.028
+      N5+        <Z> leaving the window = 5.0462   freed 0.3233 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     5  z =   0.0125 mm  |Ex|max = 2.295  Ez = [-0.0331, 0.0476]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.036
+      N5+        <Z> leaving the window = 5.0406   freed 0.3649 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     6  z =   0.0150 mm  |Ex|max = 2.292  Ez = [-0.0361, 0.0532]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.044
+      N5+        <Z> leaving the window = 5.0472   freed 0.5191 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     7  z =   0.0175 mm  |Ex|max = 2.287  Ez = [-0.0343, 0.0563]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.052
+      N5+        <Z> leaving the window = 5.0470   freed 0.6113 pC   trapped (ionization injection) 0.0000 pC (N = 0)
+step     8  z =   0.0200 mm  |Ex|max = 2.282  Ez = [-0.0422, 0.0693]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.059
+      N5+        <Z> leaving the window = 5.0398   freed 0.5972 pC   trapped (ionization injection) 0.0002 pC (N = 9)
+step     9  z =   0.0225 mm  |Ex|max = 2.281  Ez = [-0.0397, 0.0608]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0428   freed 0.6847 pC   trapped (ionization injection) 0.0108 pC (N = 162)
+step    10  z =   0.0250 mm  |Ex|max = 2.285  Ez = [-0.0428, 0.0778]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0404   freed 0.6466 pC   trapped (ionization injection) 0.1571 pC (N = 833)
+step    11  z =   0.0275 mm  |Ex|max = 2.288  Ez = [-0.0473, 0.1311]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0416   freed 0.6659 pC   trapped (ionization injection) 0.5320 pC (N = 1992)
+step    12  z =   0.0300 mm  |Ex|max = 2.290  Ez = [-0.0431, 0.1136]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0423   freed 0.6768 pC   trapped (ionization injection) 0.7506 pC (N = 2541)
+step    13  z =   0.0325 mm  |Ex|max = 2.292  Ez = [-0.0534, 0.1080]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0432   freed 0.6905 pC   trapped (ionization injection) 1.0575 pC (N = 3689)
+step    14  z =   0.0350 mm  |Ex|max = 2.292  Ez = [-0.0394, 0.1370]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0402   freed 0.6424 pC   trapped (ionization injection) 1.3363 pC (N = 4649)
+step    15  z =   0.0375 mm  |Ex|max = 2.292  Ez = [-0.0402, 0.0995]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0370   freed 0.5916 pC   trapped (ionization injection) 1.6338 pC (N = 5736)
+step    16  z =   0.0400 mm  |Ex|max = 2.290  Ez = [-0.0402, 0.1020]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0472   freed 0.7552 pC   trapped (ionization injection) 1.8463 pC (N = 6631)
+step    17  z =   0.0425 mm  |Ex|max = 2.288  Ez = [-0.0406, 0.1105]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0439   freed 0.7018 pC   trapped (ionization injection) 2.0365 pC (N = 7073)
+step    18  z =   0.0450 mm  |Ex|max = 2.284  Ez = [-0.0412, 0.0780]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0382   freed 0.6103 pC   trapped (ionization injection) 2.2723 pC (N = 7599)
+step    19  z =   0.0475 mm  |Ex|max = 2.280  Ez = [-0.0412, 0.1013]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0407   freed 0.6506 pC   trapped (ionization injection) 2.4748 pC (N = 8038)
+step    20  z =   0.0500 mm  |Ex|max = 2.274  Ez = [-0.0411, 0.0840]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0418   freed 0.669 pC   trapped (ionization injection) 2.6503 pC (N = 8616)
+step    21  z =   0.0525 mm  |Ex|max = 2.274  Ez = [-0.0414, 0.0815]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0416   freed 0.6657 pC   trapped (ionization injection) 2.8316 pC (N = 9166)
+step    22  z =   0.0550 mm  |Ex|max = 2.279  Ez = [-0.0412, 0.0867]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0439   freed 0.7022 pC   trapped (ionization injection) 2.9801 pC (N = 9715)
+step    23  z =   0.0575 mm  |Ex|max = 2.282  Ez = [-0.0409, 0.0671]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0453   freed 0.7246 pC   trapped (ionization injection) 3.0485 pC (N = 10417)
+step    24  z =   0.0600 mm  |Ex|max = 2.284  Ez = [-0.0412, 0.0793]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0443   freed 0.7088 pC   trapped (ionization injection) 3.2016 pC (N = 11220)
+step    25  z =   0.0625 mm  |Ex|max = 2.286  Ez = [-0.0411, 0.0641]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0385   freed 0.6157 pC   trapped (ionization injection) 3.3248 pC (N = 11720)
+step    26  z =   0.0650 mm  |Ex|max = 2.286  Ez = [-0.0410, 0.0720]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0413   freed 0.6597 pC   trapped (ionization injection) 3.3921 pC (N = 12016)
+step    27  z =   0.0675 mm  |Ex|max = 2.284  Ez = [-0.0409, 0.0660]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0423   freed 0.6769 pC   trapped (ionization injection) 3.5815 pC (N = 12203)
+step    28  z =   0.0700 mm  |Ex|max = 2.282  Ez = [-0.0409, 0.0632]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0422   freed 0.675 pC   trapped (ionization injection) 3.7323 pC (N = 12522)
+step    29  z =   0.0725 mm  |Ex|max = 2.278  Ez = [-0.0410, 0.0624]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0407   freed 0.6501 pC   trapped (ionization injection) 3.9116 pC (N = 12834)
+step    30  z =   0.0750 mm  |Ex|max = 2.275  Ez = [-0.0409, 0.0577]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0399   freed 0.6382 pC   trapped (ionization injection) 3.9890 pC (N = 13144)
+step    31  z =   0.0775 mm  |Ex|max = 2.280  Ez = [-0.0409, 0.0616]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0425   freed 0.6792 pC   trapped (ionization injection) 4.1100 pC (N = 13629)
+step    32  z =   0.0800 mm  |Ex|max = 2.284  Ez = [-0.0408, 0.0539]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0416   freed 0.6657 pC   trapped (ionization injection) 4.2388 pC (N = 14246)
+step    33  z =   0.0825 mm  |Ex|max = 2.286  Ez = [-0.0411, 0.0605]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0358   freed 0.5718 pC   trapped (ionization injection) 4.3025 pC (N = 14799)
+step    34  z =   0.0850 mm  |Ex|max = 2.286  Ez = [-0.0406, 0.0543]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0404   freed 0.6466 pC   trapped (ionization injection) 4.4011 pC (N = 15200)
+step    35  z =   0.0875 mm  |Ex|max = 2.286  Ez = [-0.0409, 0.0557]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0416   freed 0.6657 pC   trapped (ionization injection) 4.4385 pC (N = 15843)
+step    36  z =   0.0900 mm  |Ex|max = 2.286  Ez = [-0.0407, 0.0513]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0355   freed 0.5678 pC   trapped (ionization injection) 4.5077 pC (N = 16548)
+step    37  z =   0.0925 mm  |Ex|max = 2.282  Ez = [-0.0408, 0.0546]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0399   freed 0.6374 pC   trapped (ionization injection) 4.5607 pC (N = 17042)
+step    38  z =   0.0950 mm  |Ex|max = 2.278  Ez = [-0.0406, 0.0519]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0404   freed 0.6455 pC   trapped (ionization injection) 4.6330 pC (N = 17440)
+step    39  z =   0.0975 mm  |Ex|max = 2.273  Ez = [-0.0407, 0.0508]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0401   freed 0.6411 pC   trapped (ionization injection) 4.7202 pC (N = 17871)
+step    40  z =   0.1000 mm  |Ex|max = 2.271  Ez = [-0.0406, 0.0518]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0370   freed 0.5918 pC   trapped (ionization injection) 4.8191 pC (N = 18253)
+step    41  z =   0.1025 mm  |Ex|max = 2.275  Ez = [-0.0411, 0.0503]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0421   freed 0.6736 pC   trapped (ionization injection) 4.9296 pC (N = 18660)
+step    42  z =   0.1050 mm  |Ex|max = 2.279  Ez = [-0.0401, 0.0515]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0368   freed 0.5885 pC   trapped (ionization injection) 4.9568 pC (N = 19232)
+step    43  z =   0.1075 mm  |Ex|max = 2.281  Ez = [-0.0409, 0.0516]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0348   freed 0.5564 pC   trapped (ionization injection) 5.0677 pC (N = 19621)
+step    44  z =   0.1100 mm  |Ex|max = 2.281  Ez = [-0.0401, 0.0511]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0410   freed 0.655 pC   trapped (ionization injection) 5.1128 pC (N = 20067)
+step    45  z =   0.1125 mm  |Ex|max = 2.280  Ez = [-0.0407, 0.0499]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0383   freed 0.6123 pC   trapped (ionization injection) 5.1103 pC (N = 20769)
+step    46  z =   0.1150 mm  |Ex|max = 2.278  Ez = [-0.0401, 0.0490]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0374   freed 0.5986 pC   trapped (ionization injection) 5.0947 pC (N = 21273)
+step    47  z =   0.1175 mm  |Ex|max = 2.273  Ez = [-0.0402, 0.0498]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0377   freed 0.6033 pC   trapped (ionization injection) 5.1358 pC (N = 21713)
+step    48  z =   0.1200 mm  |Ex|max = 2.267  Ez = [-0.0399, 0.0478]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0370   freed 0.5915 pC   trapped (ionization injection) 5.2265 pC (N = 21969)
+step    49  z =   0.1225 mm  |Ex|max = 2.259  Ez = [-0.0404, 0.0496]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0367   freed 0.5871 pC   trapped (ionization injection) 5.2925 pC (N = 22154)
+step    50  z =   0.1250 mm  |Ex|max = 2.250  Ez = [-0.0396, 0.0501]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0367   freed 0.5873 pC   trapped (ionization injection) 5.2921 pC (N = 22308)
+step    51  z =   0.1275 mm  |Ex|max = 2.251  Ez = [-0.0399, 0.0504]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0376   freed 0.601 pC   trapped (ionization injection) 5.2721 pC (N = 22492)
+step    52  z =   0.1300 mm  |Ex|max = 2.252  Ez = [-0.0399, 0.0502]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0375   freed 0.6004 pC   trapped (ionization injection) 5.2416 pC (N = 22671)
+step    53  z =   0.1325 mm  |Ex|max = 2.251  Ez = [-0.0395, 0.0496]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0357   freed 0.5703 pC   trapped (ionization injection) 5.2128 pC (N = 22894)
+step    54  z =   0.1350 mm  |Ex|max = 2.250  Ez = [-0.0398, 0.0514]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0361   freed 0.5766 pC   trapped (ionization injection) 5.1600 pC (N = 22646)
+step    55  z =   0.1375 mm  |Ex|max = 2.246  Ez = [-0.0400, 0.0470]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.063
+      N5+        <Z> leaving the window = 5.0358   freed 0.573 pC   trapped (ionization injection) 5.1724 pC (N = 22120)
+step    56  z =   0.1400 mm  |Ex|max = 2.242  Ez = [-0.0399, 0.0491]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0342   freed 0.5474 pC   trapped (ionization injection) 5.2098 pC (N = 22085)
+step    57  z =   0.1425 mm  |Ex|max = 2.235  Ez = [-0.0412, 0.0487]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0350   freed 0.5592 pC   trapped (ionization injection) 5.2128 pC (N = 22147)
+step    58  z =   0.1450 mm  |Ex|max = 2.228  Ez = [-0.0395, 0.0492]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0368   freed 0.5877 pC   trapped (ionization injection) 5.2438 pC (N = 22167)
+step    59  z =   0.1475 mm  |Ex|max = 2.219  Ez = [-0.0402, 0.0496]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0348   freed 0.5567 pC   trapped (ionization injection) 5.3740 pC (N = 22163)
+step    60  z =   0.1500 mm  |Ex|max = 2.209  Ez = [-0.0403, 0.0478]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0356   freed 0.5685 pC   trapped (ionization injection) 5.3286 pC (N = 22309)
+step    61  z =   0.1525 mm  |Ex|max = 2.208  Ez = [-0.0399, 0.0498]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0341   freed 0.5449 pC   trapped (ionization injection) 5.3162 pC (N = 22511)
+step    62  z =   0.1550 mm  |Ex|max = 2.208  Ez = [-0.0390, 0.0479]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0304   freed 0.4856 pC   trapped (ionization injection) 5.2401 pC (N = 22414)
+step    63  z =   0.1575 mm  |Ex|max = 2.207  Ez = [-0.0398, 0.0492]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0325   freed 0.5193 pC   trapped (ionization injection) 5.2160 pC (N = 22817)
+step    64  z =   0.1600 mm  |Ex|max = 2.204  Ez = [-0.0387, 0.0500]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0367   freed 0.5867 pC   trapped (ionization injection) 5.1165 pC (N = 23047)
+step    65  z =   0.1625 mm  |Ex|max = 2.200  Ez = [-0.0395, 0.0476]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0332   freed 0.5307 pC   trapped (ionization injection) 5.1776 pC (N = 23402)
+step    66  z =   0.1650 mm  |Ex|max = 2.195  Ez = [-0.0385, 0.0485]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0313   freed 0.5009 pC   trapped (ionization injection) 5.0834 pC (N = 23617)
+step    67  z =   0.1675 mm  |Ex|max = 2.188  Ez = [-0.0385, 0.0474]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0292   freed 0.467 pC   trapped (ionization injection) 5.0361 pC (N = 23963)
+step    68  z =   0.1700 mm  |Ex|max = 2.179  Ez = [-0.0388, 0.0471]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0296   freed 0.4736 pC   trapped (ionization injection) 5.0673 pC (N = 24277)
+step    69  z =   0.1725 mm  |Ex|max = 2.171  Ez = [-0.0382, 0.0461]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.062
+      N5+        <Z> leaving the window = 5.0324   freed 0.5179 pC   trapped (ionization injection) 5.0222 pC (N = 24507)
+step    70  z =   0.1750 mm  |Ex|max = 2.169  Ez = [-0.0380, 0.0469]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0289   freed 0.4614 pC   trapped (ionization injection) 5.0079 pC (N = 24582)
+step    71  z =   0.1775 mm  |Ex|max = 2.168  Ez = [-0.0380, 0.0461]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0291   freed 0.465 pC   trapped (ionization injection) 4.9226 pC (N = 24787)
+step    72  z =   0.1800 mm  |Ex|max = 2.166  Ez = [-0.0378, 0.0470]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0277   freed 0.4437 pC   trapped (ionization injection) 4.8380 pC (N = 24832)
+step    73  z =   0.1825 mm  |Ex|max = 2.164  Ez = [-0.0378, 0.0462]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0260   freed 0.4165 pC   trapped (ionization injection) 4.8092 pC (N = 24945)
+step    74  z =   0.1850 mm  |Ex|max = 2.159  Ez = [-0.0375, 0.0460]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0289   freed 0.4623 pC   trapped (ionization injection) 4.7148 pC (N = 24756)
+step    75  z =   0.1875 mm  |Ex|max = 2.154  Ez = [-0.0379, 0.0464]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0270   freed 0.4321 pC   trapped (ionization injection) 4.6954 pC (N = 24360)
+step    76  z =   0.1900 mm  |Ex|max = 2.147  Ez = [-0.0374, 0.0453]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0282   freed 0.4507 pC   trapped (ionization injection) 4.6444 pC (N = 24088)
+step    77  z =   0.1925 mm  |Ex|max = 2.138  Ez = [-0.0372, 0.0456]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0299   freed 0.4785 pC   trapped (ionization injection) 4.5884 pC (N = 23856)
+step    78  z =   0.1950 mm  |Ex|max = 2.129  Ez = [-0.0374, 0.0445]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.061
+      N5+        <Z> leaving the window = 5.0269   freed 0.4307 pC   trapped (ionization injection) 4.5529 pC (N = 23710)
+step    79  z =   0.1975 mm  |Ex|max = 2.117  Ez = [-0.0369, 0.0458]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.060
+      N5+        <Z> leaving the window = 5.0278   freed 0.4447 pC   trapped (ionization injection) 4.5382 pC (N = 23565)
+step    80  z =   0.2000 mm  |Ex|max = 2.110  Ez = [-0.0369, 0.0450]  trapped 0.000 pC (N = 0)  Zn_i/n0(axis)max = 0.060
+      N5+        <Z> leaving the window = 5.0240   freed 0.384 pC   trapped (ionization injection) 4.5715 pC (N = 23480)
+done: 80 steps in 508.8 s, particles returned from the beam list to streaming: 32399

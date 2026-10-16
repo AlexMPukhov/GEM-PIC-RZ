@@ -1,0 +1,44 @@
+# Ionization injection benchmark: GEM-PIC-RZ against FBPIC (fbpic_ionization.py), see ../README.md.
+# The LWFA case of ../lwfa_fbpic with a0 = 2.3 (0.002 n_c, no self-injection) with a nitrogen dopant: N5+ atoms
+# (1 % of the free-electron density) are field-ionized (ADK) to N6+ and N7+ near the peak of the pulse, and the
+# K-shell electrons are trapped in the bubble.
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = stretched
+  dr_min            = 0.3 k0^-1
+  dr_max            = 3.0 k0^-1
+  transition_cell   = 40
+  transition_cells  = 8
+  nr                = 100
+  dzeta             = 0.25 k0^-1
+  nzeta             = 1200
+  dz                = 2.5 um
+  z_end             = 200 um
+  r_absorber        = 160 k0^-1
+  absorber_strength = 0.2
+}
+laser {
+  a0          = 2.3
+  waist       = 63 k0^-1          # 8.0214 um
+  length_1e   = 25 k0^-1          # 3.1831 um (tau = 10.618 fs)
+  zeta_center = 240 k0^-1         # 30.56 um
+}
+plasma {
+  density       = 0.002 n_c
+  z_points      = 0, 20 um
+  z_values      = 0, 1
+  r_max         = 150 k0^-1       # 19.1 um
+  ppc_r         = 2
+  ppc_phi       = 8
+  smooth_length = 2 k0^-1
+}
+ion {
+  element          = N
+  charge_state     = 5
+  ionization       = adk
+  max_charge_state = 7
+  density          = 2e-5 n_c         # nitrogen atoms, 1 % of the free electrons
+}
+output { dir = gem_out; every = 10; maps = false; particles = true }
+numerics { iterations = 2 }

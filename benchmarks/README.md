@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `genesis_seeded/` | GENESIS 1.3 v4 (steady state) | seeded FEL amplifiers at 10 nm and 0.8 nm | power gain length within 4 % (10 nm) and 0.6 % (0.8 nm) of GENESIS run with the same physics |
 | `lwfa_fbpic/` | FBPIC 0.27 (full PIC, spectral, quasi-cylindrical) | LWFA, a0 = 2, n0 = 3.5·10¹⁸ cm⁻³ | on-axis wake E_z of the first period to 1.6 % rms; laser field to 1 %; behind the bubble with `plasma.smooth_length` |
+| `ionization_fbpic/` | FBPIC 0.27 (with ADK ionization) | ionization injection from a N5+ dopant, a0 = 2.3, 3.5·10¹⁸ cm⁻³, 200 µm | injected charge above 5 MeV to 10 %, its mean energy and spectrum to 2–5 % at the same position of the bunch |
 | `laser_evolution/` | FBPIC 0.27 and the envelope code Wake-T 0.9.1 | 6.8 fs pulse, a0 = 1.5, n0 = 1.7·10¹⁹ cm⁻³, 300 µm: diffraction, depletion, red-shift | laser energy to 1.3 %, red-shift to 0.002 k0, peak field to 5 % (FBPIC); Wake-T underestimates the depletion fivefold |
 
 The runs were made on 2 CPU cores. The decks, input files and scripts are here; the GEM-PIC-RZ output
@@ -76,6 +77,32 @@ python3 compare.py 0.8nm gemx_out_nocorr gemx_out   # gemx_out_nocorr: with corr
 ```
 GENESIS 4 was built from github.com/svenreiche/Genesis-1.3-Version4 (v1.10.10) against serial HDF5. That needed a
 small shim header defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; it was run on one MPI rank.
+
+## Ionization injection against FBPIC
+
+The LWFA case of `lwfa_fbpic/` with a0 = 2.3 (no self-injection) and a nitrogen dopant: N5+ ions with 1 % of the
+free-electron density (3.48·10¹⁸ cm⁻³, 0.002 n_c, 20 µm linear ramp), field-ionized by ADK to N6+ and N7+ near the peak
+of the pulse. The K-shell electrons released there slip back and are trapped in the bubble.
+- **FBPIC** (`fbpic_ionization.py`): Δz = λ/24, Δr = 0.2 µm, 2 modes, electrons 8 and ions 16 particles per cell,
+  `make_ionizable('N', level_start=5)`; 3.4 h on 2 cores for 200 µm.
+- **GEM-PIC-RZ** (`gem.deck`): the grid of `lwfa_fbpic/`, Δ = 2.5 µm (and 1.25 µm), mobile N ions with ADK,
+  `smooth_length = 2 k0^-1`; 8.5 min on one core.
+- **Comparison** (`python3 ../compare_injection.py ionization gem_out gem_out_dz1.25`): electrons from nitrogen above
+  5 MeV. GEM-PIC-RZ's level s is the plane z = s, and its trapped electrons are at the lab position z = s. An FBPIC
+  output at ct holds the bunch 17 µm behind the laser, at z = ct − 17 µm. The two are therefore compared at the
+  same lab position of the bunch, not at the same s and ct; at the same s and ct the bunch in GEM-PIC-RZ is 17 µm
+  further on.
+
+| lab position of the bunch | Q(E > 5 MeV): FBPIC / GEM Δ = 2.5 / 1.25 µm | ⟨E⟩ [MeV] | ΔE_rms [MeV] |
+|---|---|---|---|
+| 84 µm (FBPIC ct = 100 µm) | 0.48 / 0.45 / 0.47 pC (GEM interpolated) | 6.6 / 6.7 / 6.6 | 1.2 / 1.2 / 1.2 |
+| 183 µm (ct = 200 µm; GEM run to s = 182.5 µm) | 1.76 / 1.58 pC | 12.6 / 12.4 | 5.4 / 5.2 |
+
+- The ionized fraction of the dopant agrees (3.2 % N6+ and 0.3 % N7+ behind the laser), as do the peak laser field
+  (2.29 vs 2.27) and the wake.
+- Above 5 MeV the spectra agree up to the highest energy (26 vs 25 MeV). Below about 4 MeV FBPIC has more electrons:
+  sheath electrons that are not trapped, which GEM-PIC-RZ streams through the window.
+- Without the source smoothing GEM-PIC-RZ traps 30 % more charge than FBPIC (0.95 instead of 0.73 pC at s = 100 µm).
 
 ## Laser evolution against FBPIC and Wake-T
 
@@ -177,8 +204,10 @@ python3 compare.py                               # compare.png, table (HDF5 file
   streams through the whole window within the step. So the profile is a function of the propagation distance
   s and constant across the window. This is how the code samples the plasma profile, not an error; it matters
   only where the profile changes over a window length.
-- **Coordinates:** FBPIC's plasma profile is the lab profile of GEM-PIC-RZ, which loads the plasma at the front of
-  the window, so it is shifted by the 7.64 µm between the laser centre and the window front.
+- **Coordinates:** the FBPIC profile here is shifted by the 7.64 µm between the laser centre and the window front.
+  The correct mapping (a level s of GEM-PIC-RZ is the plane z = s that the laser centre crosses at t = s/c, the
+  GT2 transformation) has no shift, as used in `ionization_fbpic/` and `laser_evolution/`. The shift matters only
+  in the up-ramp; at 100 µm the plasma is uniform in both.
 
 Reproduce:
 ```
