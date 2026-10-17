@@ -1,0 +1,18 @@
+units: lambda0 = 0.01063 um, 1/k0 = 0.001691 um, 1/omega0 = 0.0056406 fs, n_c = 9.875e+24 cm^-3
+grid : modes m = 0..2
+       radial table: Nr = 122, dr = 1 .. 30 um, r_max = 1027 um, max cell-to-cell change 5.3 %
+       reference points (r, dr) [um]: (0, 1) (40, 1) (400, 20) (1000, 30)
+       window: Nz = 18372, dzeta = 0.000332 um, length = 6.1 um
+       dz = 312.5 um, z_end = 1000 mm (3200 steps); absorber r > 2000 um, strength 0.2
+laser[0]: a0 = 7.637e-06, lambda = 0.01063 um, w0 = 30 um (zR = 266.1 mm), tau_FWHM = 7.087 fs, zeta_c = 3.02 um, focus at z = 0 mm, linear, P = 1e-05 TW
+        envelope_function(zeta) = zeta < 1.42 um ? 0 : zeta < 1.52 um ? sin(pi / 2 * (zeta - 1.42 um) / (0.1 um))^2 : zeta < 4.57 um ? 1 : zeta < 4.67 um ? sin(pi / 2 * (4.67 um - zeta) / (0.1 um))^2 : 0 (tau_FWHM: estimate)
+box for bunch 'b' (v < c): r_max >= 2.1e+03 um (gamma L; now 1.03e+03 um), gaps >= 1.45 um at both ends (now 1.48 um ahead, 1.46 um behind after 1.06 um slippage): window >= 6.06 um (now 6.1 um)
+undulator[0]: planar, period = 10 mm, K = 1.5 (B0 = 1.606 T), z = 0 ... 1000 mm (100 periods, ramps 1 periods), no focusing
+        resonant wavelength (on axis): b 0.01062 um
+bunch[0] 'b': electrons, Q = 28.02 pC, E = 510.49 MeV (gamma 1000), dE/E = 0, sigma_x,y = 10, 10 um, eps_n = 0, 0 um, length 2.1 um at zeta = 3.57 um, 640000 macroparticles
+        shot noise: Fawley beamlets of 8 macroparticles at 0.01063 um
+        profile_z(zeta) = zeta < 2.62 um ? sin(pi / 2 * (zeta - 2.52 um) / (0.1 um))^2 : zeta > 4.52 um ? sin(pi / 2 * (4.62 um - zeta) / (0.1 um))^2 : 1 on 2.52 ... 4.62 um
+output format: hdf5 (HDF5 double precision, compression 0)
+FEL diagnostics: fel.txt every step, bunching at 0.010625 um
+        fel_harmonics.txt: harmonics 1 ... 3, modes m = 0 ... 2, slices of 0.2125 um
+output: dir 'fel_out', every 400 steps; numerics: 1 iterations/slice, theta 0.5, trap advance 1 dz, beam filter 0, beam pusher vay, seed 12345, backend openmp
