@@ -12,3 +12,5 @@ paper/*.out
 paper/*Notes.bib
 paper/*_diff.*
 __pycache__/
+benchmarks/harmonics/em_*/
+benchmarks/harmonics/fel_out*/

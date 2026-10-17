@@ -1,0 +1,46 @@
+# Harmonics of a seeded FEL amplifier in a planar undulator: GEM-PIC-RZ against GENESIS 1.3 v4 (steady state).
+#  planar undulator, period 1 cm, K = 1.5, 100 periods, no natural focusing in both codes
+#  beam 511 MeV (gamma = 1000), 4 kA, sigma_r = 10 um, zero emittance, no energy spread
+#  lambda_r = lambda_u (1 + K^2/2) / (2 gamma^2) = 10.625 nm = lambda0; rho = 8.5e-3; saturation near 85 periods
+#  seed 10 MW, w0 = 30 um, linear polarization along x (the plane of the electron wiggle)
+#  m_max = 3: fundamental and 3rd harmonic in the odd modes m = 1, 3; 2nd harmonic in the even modes m = 0, 2.
+#  GENESIS has no source term for even harmonics (planar undulator, its coupling is on-axis Bessel factors).
+#  The bunch is a 1.9 um flat top (179 lambda_r) longer than the slippage (1.06 um).
+grid {
+  lambda0       = 10.625 nm
+  m_max         = 2               # 2nd harmonic in m = 0, 2; fundamental and on-axis 3rd harmonic in m = 1
+  radial_grid   = table
+  r_points      = 0, 40, 400, 1000 um
+  dr_points     = 1, 1,  20,  30   um
+  r_max         = 1 mm            # shields the Coulomb field beyond 1 mm like a pipe (negligible here)
+  dzeta         = 0.33203 nm      # lambda_r / 32: 16 points per lambda_r / 2
+  window_length = 6.1 um
+  dz            = 0.625 mm        # lambda_u / 16
+  z_end         = 1.0 m
+  r_absorber    = 0.8 mm
+}
+undulator { type = planar; period = 1 cm; K = 1.5; periods = 100; ramp_periods = 1; natural_focusing = false }
+bunch {
+  name           = b
+  charge         = 28.02 pC           # 4 kA over 2.1 um (flat part + half the edges)
+  gamma          = 1000
+  sigma_x        = 10 um
+  emittance_x    = 0 um
+  distribution_z = function
+  profile_z      = "zeta < 2.62 um ? sin(pi / 2 * (zeta - 2.52 um) / (0.1 um))^2 : zeta > 4.52 um ? sin(pi / 2 * (4.62 um - zeta) / (0.1 um))^2 : 1"
+  zeta_min       = 2.52 um
+  zeta_max       = 4.62 um
+  macroparticles = 640000
+  shot_noise     = fawley
+  beamlet        = 8                   # quiet up to the 7th harmonic
+  noise_wavelength = 10.625 nm
+}
+laser {
+  a0                = 7.6375e-6         # seed power 10 MW (linear: P = 21.5 GW (a0 w0 / lambda)^2)
+  waist             = 30 um
+  envelope_function = "zeta < 1.42 um ? 0 : zeta < 1.52 um ? sin(pi / 2 * (zeta - 1.42 um) / (0.1 um))^2 : zeta < 4.57 um ? 1 : zeta < 4.67 um ? sin(pi / 2 * (4.67 um - zeta) / (0.1 um))^2 : 0"
+  zeta_center       = 3.02 um
+  polarization      = linear
+}
+output { dir = fel_out; every = 0; format = hdf5; particles = false; fel_slice = 0.2 um }
+numerics { iterations = 1; beam_dz_max = 0.625 mm; beam_filter = 0 }

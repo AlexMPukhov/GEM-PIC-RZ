@@ -1,0 +1,2 @@
+UND: UNDULATOR = {lambdau = 0.01, nwig = 100, aw = 1.0606602, helical = false, kx = 0, ky = 0};
+LINE: LINE = {UND};

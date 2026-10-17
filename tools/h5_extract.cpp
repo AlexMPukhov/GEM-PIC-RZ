@@ -13,7 +13,9 @@
 //                                          zeta[um] Ex Ey Ez Bx By Bz at (r, phi)
 //  h5_extract <file> beam                  x y zeta[um] ux uy uz q[pC] species
 //  h5_extract <file> spectrum zlo zhi [k1 k2 nk]  spectral energy density dW/dk of the modes m >= 1
-//                                          (radiation) over zlo <= zeta < zhi [um], k in units of k0
+//                                          (radiation) over zlo <= zeta < zhi [um], k in units of k0,
+//                                          then of every mode m = 0 ... m_max (even harmonics of a
+//                                          planar undulator radiate in m = 0, 2)
 //  h5_extract <file> energy [zlo zhi]      field energy (|E|^2+|B|^2)/2 dV of the window (or of the
 //                                          slices zlo <= zeta < zhi [um]), per mode group, and its
 //                                          zeta-Nyquist part (grid-scale odd-even noise, e.g.
@@ -330,7 +332,8 @@ struct Data {
   }
   // spectral energy density dW/dk of the modes m >= 1 (radiation of a centred
   // beam) over the slices zlo <= zeta < zhi: W(m>=1) = int_0^inf dW/dk dk
-  double spectrum(double k, double zlo, double zhi) const {
+  // per mode m = 0 ... M (factor 2 for m >= 1: F_0 + 2 Re sum_m F_m e^{i m phi})
+  std::vector<double> spectrumModes(double k, double zlo, double zhi) const {
     std::vector<double> Af(N + 1), Ac(N);
     Af[0] = 0.5 * c[0] * c[0];
     for (int i = 1; i <= N; ++i) Af[i] = rho[i] * ((i < N ? c[i] : 2 * rho[N] - c[N - 1]) - c[i - 1]);
@@ -341,24 +344,31 @@ struct Data {
       ep[n] = std::polar(hn, -k * zs[n]);
       em[n] = std::polar(hn, k * zs[n]);
     }
-    double S = 0;
-    for (int m = 1; m <= M; ++m) {
+    std::vector<double> S(M + 1, 0.0);
+    std::vector<cd> a(N + 1), b(N + 1);
+    for (int m = 0; m <= M; ++m) {
+      const double fac = (m == 0) ? 1.0 : 2.0;
       auto acc = [&](const std::vector<cd>& F, int L, const std::vector<double>& A) {
-        for (int i = (L == N + 1 ? 1 : 0); i < L; ++i) {
-          cd a = 0, b = 0;
-          for (int n = 0; n < Nz; ++n) {
-            if (zs[n] < zlo || zs[n] >= zhi) continue;
-            const cd f = F[(size_t(m) * (Nz + 1) + n) * L + i];
-            a += f * ep[n];
-            b += f * em[n];
-          }
-          S += 2.0 * A[i] * (std::norm(a) + std::norm(b));
+        std::fill(a.begin(), a.end(), cd(0));
+        std::fill(b.begin(), b.end(), cd(0));
+        for (int n = 0; n < Nz; ++n) {
+          if (zs[n] < zlo || zs[n] >= zhi) continue;
+          const cd* f = &F[(size_t(m) * (Nz + 1) + n) * L];
+          for (int i = 0; i < L; ++i) { a[i] += f[i] * ep[n]; b[i] += f[i] * em[n]; }
         }
+        for (int i = (L == N + 1 ? 1 : 0); i < L; ++i) S[m] += fac * A[i] * (std::norm(a[i]) + std::norm(b[i]));
       };
       acc(Er, N + 1, Af); acc(Bphi, N + 1, Af); acc(Bz, N + 1, Af);
       acc(Ephi, N, Ac); acc(Br, N, Ac); acc(Ez, N, Ac);
+      S[m] *= 0.5;  // pi / (2 pi)
     }
-    return 0.5 * S;  // pi / (2 pi)
+    return S;
+  }
+  double spectrum(double k, double zlo, double zhi) const {
+    const std::vector<double> S = spectrumModes(k, zlo, zhi);
+    double t = 0;
+    for (int m = 1; m <= M; ++m) t += S[m];
+    return t;
   }
   double nE(int k, int i) const { return ne[size_t(std::min(k, Nz - 1)) * N + i]; }
   double nI(int k, int i) const { return ni[size_t(std::min(k, Nz - 1)) * N + i]; }
@@ -451,10 +461,16 @@ int main(int argc, char** argv) {
       const double zlo = std::atof(argv[3]) / D.um, zhi = std::atof(argv[4]) / D.um;
       const double k1 = argc > 5 ? std::atof(argv[5]) : 0.5, k2 = argc > 6 ? std::atof(argv[6]) : 1.5;
       const int nk = argc > 7 ? std::atoi(argv[7]) : 201;
-      std::printf("# k[k0]  lambda[um]  dW/dk (modes m >= 1, slices %s ... %s um; code units)\n", argv[3], argv[4]);
+      std::printf("# k[k0]  lambda[um]  dW/dk (modes m >= 1, slices %s ... %s um; code units), then dW/dk of each mode"
+                  " m = 0 ... %d (m = 0 includes fields that move with the beam)\n", argv[3], argv[4], D.M);
       for (int j = 0; j < nk; ++j) {
         const double k = k1 + (k2 - k1) * j / std::max(1, nk - 1);
-        std::printf("%.6f %.6f %.6e\n", k, 2.0 * M_PI / k * D.um, D.spectrum(k, zlo, zhi));
+        const std::vector<double> S = D.spectrumModes(k, zlo, zhi);
+        double t = 0;
+        for (int m = 1; m <= D.M; ++m) t += S[m];
+        std::printf("%.6f %.6f %.6e", k, 2.0 * M_PI / k * D.um, t);
+        for (int m = 0; m <= D.M; ++m) std::printf(" %.6e", S[m]);
+        std::printf("\n");
       }
     } else if (what == "lineout") {
       if (argc < 5) throw std::runtime_error("lineout needs <r_um> <phi_deg>");
