@@ -979,6 +979,8 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   if (O.fel_wavelength < 0) r.failKey("fel_wavelength", "must be positive");
   O.fel_slice = r.num("fel_slice", Dim::Length, 0.0);
   if (O.fel_slice < 0) r.failKey("fel_slice", "must be positive");
+  O.fel_harmonics = int(r.integer("fel_harmonics", 1));
+  if (O.fel_harmonics < 1 || O.fel_harmonics > 9) r.failKey("fel_harmonics", "must be between 1 and 9");
   if (O.map_stride < 1) r.failKey("map_stride", "must be >= 1");
 }
 
@@ -1498,6 +1500,9 @@ std::string Config::summary() const {
   }
   if (output.fel)
     line("FEL diagnostics: fel.txt every step, bunching at %.5g um", output.fel_wavelength * um);
+  if (output.fel && output.fel_harmonics > 1)
+      line("        fel_harmonics.txt: harmonics 1 ... %d, modes m = 0 ... %d, slices of %.4g um", output.fel_harmonics,
+           grid.M, output.fel_slice * um);
   if (output.openpmd) {
     const double dr = output.openpmd_dr > 0 ? output.openpmd_dr : grid.dr_min;
     double dzt = output.openpmd_dzeta;

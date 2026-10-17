@@ -42,4 +42,5 @@
 &end
 &track
   output_step = 4
+  bunchharm   = 3
 &end

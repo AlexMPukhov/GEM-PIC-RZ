@@ -15,5 +15,5 @@ grid {
 undulator { type = planar; period = 14.2222 mm; K = 0.5; periods = 10; ramp_periods = 1; natural_focusing = false }
 bunch { name = b; charge = 1 fC; gamma = 100; sigma_x = 100 um; emittance_x = 0 um
         sigma_z = 0.1 um; zeta_center = 19 um; macroparticles = 100000 }
-output { dir = undulator_out; every = 0; format = hdf5; particles = false }
+output { dir = undulator_out; every = 0; format = hdf5; particles = false; fel_harmonics = 3 }
 numerics { iterations = 1; beam_dz_max = 0.4444 mm; beam_filter = 0 }

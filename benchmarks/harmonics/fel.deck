@@ -42,5 +42,5 @@ laser {
   zeta_center       = 3.02 um
   polarization      = linear
 }
-output { dir = fel_out; every = 0; format = hdf5; particles = false; fel_slice = 0.2 um }
+output { dir = fel_out; format = hdf5; particles = false; fel_slice = 0.2125 um; fel_harmonics = 3; every = 400 }
 numerics { iterations = 1; beam_dz_max = 0.625 mm; beam_filter = 0 }

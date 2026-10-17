@@ -60,6 +60,9 @@ struct DiagSums {
   // resonant part: per slice, mode m >= 1 and radial point (faces 1..N, then centres 0..N-1) the sums
   // sum_n F_n exp(-+ i k zeta_n) h_n of R and L (8 doubles: R+, R-, L+, L- as re, im)
   std::vector<double> rslices;
+  // harmonics (output.fel_harmonics = H > 1): per slice, harmonic h = 1..H, mode m = 0..M and radial point the
+  // same 8 sums at +-h k; and the bunching of all bunches per slice and harmonic {sum |q| cos, sum |q| sin}
+  std::vector<double> hslices, hbunch;
   void add(const DiagSums& o);
 };
 
@@ -168,6 +171,7 @@ class Simulation {
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt
   void writeBunchTable(const DiagSums& D);
   void writeFelTable(const DiagSums& D);
+  void writeFelHarmonics(const DiagSums& D);
   void writeIonizationTable(const DiagSums& D);
 };
 

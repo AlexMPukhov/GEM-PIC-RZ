@@ -198,6 +198,8 @@ class PipelineRun {
     B.put(D.Wrad); B.put(D.W0); B.put(D.Pmax); B.put(D.zPmax);
     B.putVec(D.pslices);
     B.putVec(D.rslices);
+    B.putVec(D.hslices);
+    B.putVec(D.hbunch);
     B.put<unsigned long long>(D.slices.size());
     for (const auto& kv : D.slices) { B.put(kv.first); B.putVec(kv.second); }
   }
@@ -213,6 +215,8 @@ class PipelineRun {
     D.Wrad = B.get<double>(); D.W0 = B.get<double>(); D.Pmax = B.get<double>(); D.zPmax = B.get<double>();
     D.pslices = B.getVec<double>();
     D.rslices = B.getVec<double>();
+    D.hslices = B.getVec<double>();
+    D.hbunch = B.getVec<double>();
     const size_t ns = size_t(B.get<unsigned long long>());
     for (size_t i = 0; i < ns; ++i) {
       const int sp = B.get<int>();

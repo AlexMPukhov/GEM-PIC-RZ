@@ -245,6 +245,7 @@ struct OutputConfig {
   double fel_wavelength = 0;  // bunching wavelength (default: resonance of undulator[0] for bunch[0])
   int fel_mode = -1;          // deck: -1 auto, 0 off, 1 on
   double fel_slice = 0;       // slices for the largest bunching (default 20 fel_wavelength)
+  int fel_harmonics = 1;      // > 1: fel_harmonics.txt, power per harmonic 1..H and mode m = 0..M, bunching
   bool hdf5_single = false;  // store floating-point data in single precision
   int hdf5_compression = 0;  // gzip level 0..9 (0: none)
   // checkpoints for restarts (checkpoint_NNNNN.h5, complete state in double precision)

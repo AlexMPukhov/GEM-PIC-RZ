@@ -89,6 +89,10 @@ void DiagSums::add(const DiagSums& o) {
   for (size_t j = 0; j < o.pslices.size(); ++j) pslices[j] += o.pslices[j];
   if (rslices.size() < o.rslices.size()) rslices.resize(o.rslices.size(), 0.0);
   for (size_t j = 0; j < o.rslices.size(); ++j) rslices[j] += o.rslices[j];
+  if (hslices.size() < o.hslices.size()) hslices.resize(o.hslices.size(), 0.0);
+  for (size_t j = 0; j < o.hslices.size(); ++j) hslices[j] += o.hslices[j];
+  if (hbunch.size() < o.hbunch.size()) hbunch.resize(o.hbunch.size(), 0.0);
+  for (size_t j = 0; j < o.hbunch.size(); ++j) hbunch[j] += o.hbunch[j];
   for (const auto& kv : o.slices) {
     auto& v = slices[kv.first];
     if (v.size() < kv.second.size()) v.resize(kv.second.size(), 0.0);
@@ -119,12 +123,21 @@ DiagSums Simulation::diagSums(int n0, int n1) const {
     const double k = 2.0 * PI / cfg.output.fel_wavelength;
     const double ls = cfg.output.fel_slice;
     const size_t ns = size_t(std::ceil(zv.node(Nz) / ls)) + 1;
+    const int H = cfg.output.fel_harmonics;
     for (const auto& p : beam) {
       Moments& m = D.moments[p.sp];
       const double w = std::fabs(p.q), c = w * std::cos(k * p.zeta), s = w * std::sin(k * p.zeta);
       m.br += c;
       m.bi += s;
       if (p.sp < 0) continue;
+      if (H > 1) {
+        if (D.hbunch.empty()) D.hbunch.assign(ns * 2 * H, 0.0);
+        const size_t jh = std::min(ns - 1, size_t(std::max(0.0, p.zeta / ls)));
+        for (int h = 1; h <= H; ++h) {
+          D.hbunch[(jh * H + (h - 1)) * 2] += w * std::cos(h * k * p.zeta);
+          D.hbunch[(jh * H + (h - 1)) * 2 + 1] += w * std::sin(h * k * p.zeta);
+        }
+      }
       auto& v = D.slices[p.sp];
       if (v.empty()) v.assign(3 * ns, 0.0);
       const size_t j = std::min(ns - 1, size_t(std::max(0.0, p.zeta / ls)));
@@ -174,6 +187,24 @@ DiagSums Simulation::diagSums(int n0, int n1) const {
             for (int t = 0; t < 4; ++t) { b[2 * t] += v[t].real(); b[2 * t + 1] += v[t].imag(); }
           }
       }
+      // harmonics h = 1..H, all modes m = 0..M (writeFelHarmonics)
+      if (H > 1) {
+        const size_t per = size_t(H) * (M + 1) * 2 * N * 8;
+        if (D.hslices.empty()) D.hslices.assign(ns * per, 0.0);
+        double* base = &D.hslices[jp * per];
+        for (int h = 1; h <= H; ++h) {
+          const cd hp = std::polar(hn, -h * k * zv.node(n)), hm = std::conj(hp);
+          for (int m = 0; m <= M; ++m)
+            for (int q = 0; q < 2 * N; ++q) {
+              const bool face = q < N;
+              const size_t j = face ? fold.f(m, n, q + 1) : fold.c(m, n, q - N);
+              const cd R = face ? fold.Rr[j] : fold.Rp[j], L = face ? fold.Lr[j] : fold.Lp[j];
+              const cd v[4] = {R * hp, R * hm, L * hp, L * hm};
+              double* b = base + ((size_t(h - 1) * (M + 1) + m) * 2 * N + q) * 8;
+              for (int t = 0; t < 4; ++t) { b[2 * t] += v[t].real(); b[2 * t + 1] += v[t].imag(); }
+            }
+        }
+      }
     }
   }
   return D;
@@ -212,6 +243,7 @@ void Simulation::report(const DiagSums& D, bool files) {
   writeBunchTable(D);
   writeIonizationTable(D);
   if (cfg.output.fel) writeFelTable(D);
+  if (cfg.output.fel && cfg.output.fel_harmonics > 1) writeFelHarmonics(D);
   if (files && cfg.output.text) writeFiles();
   if (files && cfg.output.hdf5) writeHdf5();
   if (files && cfg.output.openpmd) writeOpenPMD();
@@ -221,7 +253,7 @@ void Simulation::report(const DiagSums& D, bool files) {
 // interrupted run: keep the comments and the lines of steps <= N.
 void Simulation::trimTables() {
   if (comm::rank() != 0) return;  // only rank 0 writes the output
-  for (const char* t : {"/bunches.txt", "/ionization.txt", "/fel.txt", "/fel_power.txt"}) {
+  for (const char* t : {"/bunches.txt", "/ionization.txt", "/fel.txt", "/fel_power.txt", "/fel_harmonics.txt"}) {
     const std::string name = cfg.output.dir + t;
     FILE* fp = std::fopen(name.c_str(), "r");
     if (!fp) continue;
@@ -316,6 +348,61 @@ void Simulation::writeFelTable(const DiagSums& D) {
     std::fprintf(fq, " %12.5e", Pres[j]);
   std::fprintf(fq, "\n");
   std::fclose(fq);
+}
+
+// fel_harmonics.txt: per step, harmonic h and mode m the power of the radiation at h k in every slice (as
+// fel_power.txt, demodulated at +-h k; m = 0 with half the weight of m >= 1), and per harmonic the bunching
+// |<exp(i h k zeta)>| of all bunches in every slice (column m = -1)
+void Simulation::writeFelHarmonics(const DiagSums& D) {
+  const std::string name = cfg.output.dir + "/fel_harmonics.txt";
+  const bool fresh = (step_no == 0) || !std::filesystem::exists(name);
+  FILE* fp = std::fopen(name.c_str(), fresh ? "w" : "a");
+  if (!fp) return;
+  const Units& u = cfg.units;
+  const double L = u.k0inv_um() * 1e-6, E0 = MC2_MEV * 1e6 / L, eps0 = 8.8541878128e-12;
+  const double PW = eps0 * C_LIGHT * E0 * E0 * L * L;
+  const int N = g.N, H = cfg.output.fel_harmonics;
+  const size_t nsl = D.pslices.size() / 2, per = size_t(H) * (M + 1) * 2 * N * 8;
+  if (fresh) {
+    std::fprintf(fp, "# harmonics of lambda = %.6g um: power [W] of the radiation at lambda / h in mode m (demodulated at"
+                     " +-h k; the total is the sum over m) in the slices zeta_j <= zeta < zeta_j + %.4g um;\n"
+                     "# m = -1: bunching |<exp(i h k zeta)>| of all bunches in the slice. Even harmonics of a planar"
+                     " undulator radiate in m = 0, 2, ...;\n# m = 0 also holds the fields of the bunching that move with"
+                     " the beam (not radiation)\n",
+                 cfg.output.fel_wavelength * u.k0inv_um(), cfg.output.fel_slice * u.k0inv_um());
+    std::fprintf(fp, "# step  z[mm]  h  m  then one column per slice; zeta_j [um]:");
+    for (size_t j = 0; j < nsl; ++j) std::fprintf(fp, " %.4g", j * cfg.output.fel_slice * u.k0inv_um());
+    std::fprintf(fp, "\n");
+  }
+  for (int h = 1; h <= H; ++h) {
+    std::fprintf(fp, "%6d %10.5f %2d %2d", step_no, s0 * u.k0inv_um() * 1e-3, h, -1);
+    for (size_t j = 0; j < nsl; ++j) {
+      double q = 0.0;
+      for (const auto& kv : D.slices)
+        if (j * 3 < kv.second.size()) q += kv.second[3 * j];
+      const size_t o = (j * H + (h - 1)) * 2;
+      const double b = (q > 0 && o + 1 < D.hbunch.size()) ? std::hypot(D.hbunch[o], D.hbunch[o + 1]) / q : 0.0;
+      std::fprintf(fp, " %12.5e", b);
+    }
+    std::fprintf(fp, "\n");
+    for (int m = 0; m <= M; ++m) {
+      std::fprintf(fp, "%6d %10.5f %2d %2d", step_no, s0 * u.k0inv_um() * 1e-3, h, m);
+      for (size_t j = 0; j < nsl; ++j) {
+        const double Hs = D.pslices[2 * j + 1];
+        double s = 0.0;
+        if (Hs > 0 && D.hslices.size() >= (j + 1) * per)
+          for (int q = 0; q < 2 * N; ++q) {
+            const double* b = &D.hslices[j * per + ((size_t(h - 1) * (M + 1) + m) * 2 * N + q) * 8];
+            const double A = q < N ? g.Af[q + 1] : g.Ac[q - N];
+            s += A * (b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3] - b[4] * b[4] - b[5] * b[5] -
+                      b[6] * b[6] - b[7] * b[7]);
+          }
+        std::fprintf(fp, " %12.5e", Hs > 0 ? (m == 0 ? 0.5 : 1.0) * PI * s / (Hs * Hs) * PW : 0.0);
+      }
+      std::fprintf(fp, "\n");
+    }
+  }
+  std::fclose(fp);
 }
 
 void Simulation::writeBunchTable(const DiagSums& D) {
