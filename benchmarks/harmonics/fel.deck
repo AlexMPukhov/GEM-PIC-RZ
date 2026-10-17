@@ -15,9 +15,9 @@ grid {
   r_max         = 1 mm            # shields the Coulomb field beyond 1 mm like a pipe (negligible here)
   dzeta         = 0.33203 nm      # lambda_r / 32: 16 points per lambda_r / 2
   window_length = 6.1 um
-  dz            = 0.625 mm        # lambda_u / 16
+  dz            = 0.3125 mm       # lambda_u / 32: at lambda_u / 16 the beam blows up transversely (planar only, see README)
   z_end         = 1.0 m
-  r_absorber    = 0.8 mm
+  r_absorber    = 2 mm            # off
 }
 undulator { type = planar; period = 1 cm; K = 1.5; periods = 100; ramp_periods = 1; natural_focusing = false }
 bunch {
@@ -43,4 +43,4 @@ laser {
   polarization      = linear
 }
 output { dir = fel_out; format = hdf5; particles = false; fel_slice = 0.2125 um; fel_harmonics = 3; every = 400 }
-numerics { iterations = 1; beam_dz_max = 0.625 mm; beam_filter = 0 }
+numerics { iterations = 1; beam_dz_max = 0.3125 mm; beam_filter = 0 }

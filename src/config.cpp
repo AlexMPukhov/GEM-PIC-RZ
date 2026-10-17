@@ -1218,6 +1218,16 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   for (const Block* b : deck.all("undulator")) {
     UndulatorConfig U;
     readUndulator(*b, deck, c.units, U);
+    // planar undulator, high current (benchmarks/harmonics: 4 kA, gamma 1000, K = 1.5): with the field step
+    // lambda_u / 16 the beam blew up transversely (eps_n 0 -> 2.8 um in 25 periods; lambda_u / 24: 0.13 um,
+    // / 32: 0.04 um, / 64: 0.02 um), and the gain dropped; the helical case is far less sensitive
+    const double dzMax = c.grid.zTable ? c.grid.dz_max : c.grid.dz;
+    double qmax = 0.0;
+    for (const auto& B : c.bunches) qmax = std::max(qmax, B.charge_pC);
+    if (U.type == UndulatorConfig::Type::Planar && qmax >= 1.0 && dzMax > U.period / 32.0 * 1.0001)
+      warn.push_back(b->label() + ": planar undulator with dz = period / " +
+                     std::to_string(int(std::lround(U.period / dzMax))) +
+                     ": use dz <= period / 32 with intense beams (at period / 16 a 4 kA beam blew up transversely)");
     c.undulators.push_back(U);
   }
   for (const char* kind : {"quadrupole", "plasma_lens", "solenoid"})
