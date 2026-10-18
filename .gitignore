@@ -16,3 +16,7 @@ benchmarks/harmonics/em_*/
 benchmarks/harmonics/fel_out*/
 benchmarks/harmonics/*.log
 benchmarks/harmonics/genesis/*.log
+paper_fel/*.aux
+paper_fel/*.log
+paper_fel/*.out
+paper_fel/*Notes.bib
