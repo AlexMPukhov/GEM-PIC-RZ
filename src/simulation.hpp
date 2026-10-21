@@ -130,6 +130,14 @@ class Simulation {
   void beginStep();  // Delta of this step, matrices of the field solver
 
   void initLasers();
+  // flying focus (cfg.flying_focus): incident field G(r, zeta) of R_r,1 at s = 0 on the faces (n (N+1) + i) and
+  // centres (n N + i); at level s, R_r,1 = Re(G e^{-i kappa s}) and R_phi,1 = i R_r,1
+  std::vector<cd> ffGf, ffGc;
+  void setupFlyingFocus();
+  double ffInc(bool face, int n, int i, double s) const {
+    const cd G = face ? ffGf[size_t(n) * (g.N + 1) + i] : ffGc[size_t(n) * g.N + i];
+    return (G * std::polar(1.0, -cfg.flying_focus.kappa() * s)).real();
+  }
   void initBunches();
   void initBunchFields();
   void addBeamFields(double sign, bool deckGamma);  // co-moving self-fields of the beam list
@@ -159,7 +167,7 @@ class Simulation {
   void pushStreamSlice(int n, double s1, int threads);
   void ionize(Particle& p, double E1, double E0, double dt, std::vector<Particle>& bornOut);
   double fieldBound(const Fields& F, int n) const;
-  void absorber();
+  void absorber(double s);  // at level s (flying focus: the incident field of that level)
 
   DiagSums diagSums(int n0, int n1) const;          // slices / half-cells [n0, n1) and the beam list
   void report(const DiagSums& D, bool files);       // console, tables, files

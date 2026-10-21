@@ -106,7 +106,7 @@ class PipelineRun {
   void sendDiag(int k);
   void reportStep(int k);
   bool finiteOwn() const;
-  void absorbSlice(Fields& F, int n) const;
+  void absorbSlice(Fields& F, int n, double s) const;
 
   // ---- packing of slices / half-cells
   void putSlice(Buffer& B, const Fields& F, int n) const {
@@ -270,7 +270,7 @@ void PipelineRun::partition() {
   lastStep = S.step_no + S.cfg.grid.stepsFrom(S.s0);
 }
 
-void PipelineRun::absorbSlice(Fields& F, int n) const {
+void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
   const double ra = S.cfg.grid.r_absorber, rm = S.g.rho[S.g.N];
   if (ra >= rm) return;
   auto damp = [&](double rr) {
@@ -278,9 +278,22 @@ void PipelineRun::absorbSlice(Fields& F, int n) const {
     const double x = (rr - ra) / (rm - ra);
     return std::max(0.0, 1.0 - S.cfg.grid.absorber_strength * x * x);
   };
+  const bool ff = S.cfg.flying_focus.present;  // as Simulation::absorber
   for (int m = 0; m <= S.M; ++m) {
-    for (int i = 0; i <= S.g.N; ++i) F.Rr[F.f(m, n, i)] *= damp(S.g.rho[i]);
-    for (int i = 0; i < S.g.N; ++i) F.Rp[F.c(m, n, i)] *= damp(S.g.c[i]);
+    for (int i = 0; i <= S.g.N; ++i) {
+      const double d = damp(S.g.rho[i]);
+      if (d == 1.0) continue;
+      const cd inc = (ff && m == 1) ? cd(S.ffInc(true, n, i, s)) : cd(0.0);
+      cd& R = F.Rr[F.f(m, n, i)];
+      R = inc + d * (R - inc);
+    }
+    for (int i = 0; i < S.g.N; ++i) {
+      const double d = damp(S.g.c[i]);
+      if (d == 1.0) continue;
+      const cd inc = (ff && m == 1) ? cd(0.0, 1.0) * S.ffInc(false, n, i, s) : cd(0.0);
+      cd& R = F.Rp[F.c(m, n, i)];
+      R = inc + d * (R - inc);
+    }
   }
 }
 
@@ -543,13 +556,13 @@ void PipelineRun::step() {
           S.fnew.Rp[S.fnew.c(m, n + 1, i)] -= q * (jt - S.predPprev[m * N + i]);
         }
       }
-      absorbSlice(S.fnew, n + 1);  // slice n+1 is final
+      absorbSlice(S.fnew, n + 1, s1);  // slice n+1 is final
     }
     S.predRprev.swap(S.predR);
     S.predPprev.swap(S.predP);
     if (++done == pf + 3 && r < P - 1) sendFront(k, newForFront);
   }
-  if (r == 0) absorbSlice(S.fnew, 0);
+  if (r == 0) absorbSlice(S.fnew, 0, s1);
   for (auto& v : S.exitStates) std::fill(v.begin(), v.end(), 0.0);
   if (r == 0)
     for (const auto& p : S.stream)

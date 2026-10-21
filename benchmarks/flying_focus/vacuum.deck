@@ -1,0 +1,19 @@
+# Flying focus, vacuum test: a luminal Bessel pulse (focus-wave mode) fed through the radial absorber layer.
+#  lambda = 0.8 um, a0 = 2 on the axis, 50 fs (intensity FWHM), cone angle 0.05 rad (core radius 6.1 um,
+#  transverse wavelength 16 um). The pattern must stay unchanged in the window (v_focus = c): on the axis
+#  E_x = a0 exp(-(zeta - zeta_c)^2 / L^2) cos(zeta - zeta_c - kappa s), kappa = 1 - cos(theta).
+grid {
+  lambda0       = 0.8 um
+  m_max         = 1
+  radial_grid   = uniform
+  dr            = 0.5 um
+  r_max         = 60 um
+  r_absorber    = 40 um          # feeding / absorbing layer 40 ... 60 um
+  dzeta         = 0.03333 um     # lambda / 24
+  window_length = 130 um
+  dz            = 10 um
+  z_end         = 2 mm
+}
+flying_focus { a0 = 2; cone_angle = 50 mrad; tau_fwhm = 50 fs; zeta_center = 90 um }
+output { dir = vac_out; every = 50; maps = true; map_stride = 8; particles = false }
+numerics { iterations = 1 }

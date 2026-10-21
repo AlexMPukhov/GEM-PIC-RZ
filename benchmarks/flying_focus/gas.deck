@@ -1,0 +1,40 @@
+# Flying focus in a neutral gas (test model): the luminal Bessel pulse of vacuum.deck ionizes hydrogen near the
+# axis and drives a wake. To keep the radial box small, the hydrogen gets an artificial ionization potential of
+# 200 eV (ADK estimate for 50 fs at 0.8 um: full ionization for a >= 0.8, 4 % at a = 0.5, 0.25 % at a = 0.4,
+# ~1e-4 at a = 0.33): the plasma forms within r ~ 15-25 um of the axis, the converging wave beyond is in neutral gas.
+#  lambda = 0.8 um, a0 = 2 on the axis, 50 fs, cone angle 50 mrad; H atoms 1e18 cm^-3 (lambda_p = 33 um)
+#  gas column r < 55 um, feeding/absorbing layer 60 ... 80 um (plasma-free)
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = uniform
+  dr                = 0.5 um
+  r_max             = 80 um
+  r_absorber        = 60 um
+  absorber_strength = 1          # flying focus: R = incident field at r_max
+  dzeta             = 0.03333 um # lambda / 24
+  window_length     = 135 um
+  dz                = 2.5 um
+  z_end             = 1 mm
+}
+flying_focus { a0 = 2; cone_angle = 50 mrad; tau_fwhm = 50 fs; zeta_center = 90 um }
+plasma {
+  density        = 1e18 cm^-3
+  free_electrons = false         # neutral gas: all electrons come from ionization
+  z_points       = 0, 50 um
+  z_values       = 0, 1
+  r_max          = 55 um
+  ppc_r          = 2
+  ppc_phi        = 8
+  smooth_length  = 2 k0^-1
+}
+ion {
+  element               = H
+  charge_state          = 0
+  ionization            = adk
+  ionization_potentials = 200 eV   # artificial (13.6 eV in reality), see above
+  density               = 1e18 cm^-3
+  mobile                = false
+}
+output { dir = gas_out; every = 40; maps = true; map_stride = 8; particles = false }
+numerics { iterations = 2 }

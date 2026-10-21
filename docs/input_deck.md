@@ -213,6 +213,40 @@ z_end         = 0.5 mm
 The field at z = 0 is the paraxial Gaussian beam
 `E = a0 ω/q · exp(−r²/(w0² q)) · exp(−(ζ−ζc)²/L²) · exp(i(ω(ζ−ζc) + cep))`, with `q = 1 + i(0 − z_focus)/zR` and `zR = ω w0²/2`. The pulses of all laser blocks are added.
 
+## `flying_focus` (0 or 1 block)
+
+A luminal Bessel pulse (focus-wave mode): a converging conical wave whose intensity peak moves with the window at c,
+so that the driver neither dephases nor depletes. It is fed in from the side.
+- **Field:** each frequency ω has the cone angle that gives k_z = ω − κ, with κ = ω0(1 − cos θ). Then
+  k_⊥² = 2ωκ − κ² − ω_p², and the pattern moves at exactly c:
+  E_x = Re[e^{−iκs} Σ_ω a(ω) J0(k_⊥(ω) r) e^{iω(ζ−ζc)+i·cep}].
+- **Spectrum and polarization:** a(ω) is Gaussian, so on the axis E_x = a0 exp(−(ζ−ζc)²/L²) cos(…). The
+  polarization is linear along x (mode m = 1).
+- **Boundary condition (total field / scattered field):** in the radial absorber layer
+  r_absorber < r < r_max, R relaxes to the incident field, R ← R_inc + d(r)(R − R_inc). The layer therefore feeds
+  the converging wave and absorbs only what the plasma adds.
+- **Choice of absorber strength:** use `grid.absorber_strength = 1`, so that R = R_inc at r_max. With the default
+  0.2 the field near the axis fell by 9 % in 2 mm.
+
+| key | kind | default | meaning |
+|-----|------|---------|---------|
+| `a0` | number | — | peak normalized amplitude on the axis |
+| `cone_angle` | angle | — | θ at ω0 (core radius 2.405/(k sin θ), transverse wavelength λ/sin θ) |
+| `tau_fwhm` *or* `length_1e` | time / length | — | on-axis intensity FWHM, or 1/e half length of the field |
+| `zeta_center` | length | — | centre of the on-axis envelope |
+| `cep` | angle | 0 | carrier-envelope phase |
+| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ |
+
+Requirements and checks:
+- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere. The conical wave has the same transverse wavelength at every
+  radius, so the grid cannot coarsen outward.
+- **Window:** it must reach ζc + 3L + r_max θ/2. The rings at radius r run ahead of the axial focus by about rθ/2.
+- **Layer:** it must not contain plasma that differs from `background_density`, such as a neutral gas that gets
+  ionized there.
+- **Tests:** `benchmarks/flying_focus/` (vacuum: on-axis amplitude within 2 % over 2 mm, constant phase offset
+  0.08 rad, group velocity c to 3·10⁻⁵).
+- **Backends:** serial, OpenMP and MPI give identical results; the GPU kernel is the OpenMP one and compiles with nvcc, but has not been run on a GPU yet.
+
 ## `plasma` (0 or 1 block)
 
 The density is `n(r, z) = density · f(z) · g(r)` for `r < r_max`, and 0 outside.

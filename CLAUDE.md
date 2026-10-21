@@ -13,4 +13,6 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     `benchmarks/harmonics/`, `benchmarks/high_rho/`, `benchmarks/genesis_seeded/`.
   - Code paper: `paper/gempic_rz.tex`.
   - GPU check: `benchmarks/gpu/` (not yet run on a GPU).
+  - Flying focus (luminal Bessel pulse fed through the radial boundary, `flying_focus` block): first tests in
+    `benchmarks/flying_focus/` (README there); production runs planned on Alexander's cluster.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

@@ -733,6 +733,7 @@ struct EngineState {
   par::Array<int> cnt;
   par::Array<unsigned long long> lcnt;
   par::Array<double> bound, freed, exitSt;
+  par::Array<cplx> ffGf, ffGc;  // flying focus: incident field G(r, zeta) (Simulation::ffGf, ffGc)
   size_t nf = 0, nc = 0, nd = 0;
   int zStride = 1, maxSpan = 0;
   // host copies of the counters
@@ -841,6 +842,10 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   dev::FieldStore& Fo = E.F[E.iold];
   up(Fo.Rr, sim.fold.Rr); up(Fo.Lr, sim.fold.Lr); up(Fo.Bz, sim.fold.Bz);
   up(Fo.Rp, sim.fold.Rp); up(Fo.Lp, sim.fold.Lp); up(Fo.Ez, sim.fold.Ez);
+  if (sim.cfg.flying_focus.present) {
+    E.ffGf.reserve(sim.ffGf.size()); up(E.ffGf, sim.ffGf);
+    E.ffGc.reserve(sim.ffGc.size()); up(E.ffGc, sim.ffGc);
+  }
   const size_t cf = size_t(M + 1) * Nz * (N + 1), cc = size_t(M + 1) * Nz * N;
   E.nd = size_t(Nz) * N;
   for (int k = 0; k < 2; ++k) { E.Cb[k].init(cf, cc, E.nd); E.Cs[k].init(cf, cc, E.nd); }
@@ -1246,6 +1251,12 @@ void Engine::step() {
     const double ra = sim.cfg.grid.r_absorber, rm = sim.g.rho[N], str = sim.cfg.grid.absorber_strength;
     if (ra < rm) {
       const GridV g = P.g;
+      // flying focus: R relaxes to the incident field Re(G e^{-i kappa s1}) (m = 1), see Simulation::absorber
+      const bool ff = sim.cfg.flying_focus.present;
+      const cplx* Gf = ff ? E.ffGf.data() : nullptr;
+      const cplx* Gc = ff ? E.ffGc.data() : nullptr;
+      const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
+      const double cph = cos(kph), sph = sin(kph);
       par::forN(long(M + 1) * Nz * (N + 1), GEM_LAMBDA(long idx) {
         const int i = int(idx % (N + 1));
         const long mn = idx / (N + 1);
@@ -1255,8 +1266,22 @@ void Engine::step() {
           const double x = (r - ra) / (rm - ra);
           return fmax(0.0, 1.0 - str * x * x);
         };
-        fn.Rr[fn.f(m, nn, i)] = fn.Rr[fn.f(m, nn, i)] * dmp(g.rho[i]);
-        if (i < N) fn.Rp[fn.c(m, nn, i)] = fn.Rp[fn.c(m, nn, i)] * dmp(g.c[i]);
+        const double df = dmp(g.rho[i]);
+        if (df < 1.0) {
+          double inc = 0.0;
+          if (ff && m == 1) { const cplx G = Gf[size_t(nn) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
+          const cplx R = fn.Rr[fn.f(m, nn, i)];
+          fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
+        }
+        if (i < N) {
+          const double dc = dmp(g.c[i]);
+          if (dc < 1.0) {
+            double inc = 0.0;  // incident R_phi,1 = i inc
+            if (ff && m == 1) { const cplx G = Gc[size_t(nn) * N + i]; inc = G.re * cph - G.im * sph; }
+            const cplx R = fn.Rp[fn.c(m, nn, i)];
+            fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
+          }
+        }
       });
     }
   }

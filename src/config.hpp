@@ -98,6 +98,26 @@ struct LaserConfig {
   double zR() const { return 0.5 * omega * waist * waist; }
 };
 
+// ---------------------------------------------------------------- flying focus
+// Luminal Bessel pulse (focus-wave mode): a converging conical wave of cone angle theta whose cone angle
+// depends on the frequency, k_perp(omega)^2 = 2 omega kappa - kappa^2 with kappa = omega0 (1 - cos theta), so
+// that every frequency has k_z = omega - kappa: the pattern moves with the window at c (no dephasing),
+//     E_x(r, zeta, s) = Re[ e^{-i kappa s} sum_omega a(omega) J0(k_perp(omega) r) e^{i omega (zeta - zeta_c) + i cep} ],
+// In a uniform background plasma (omega_p^2 = background) k_perp^2 = 2 omega kappa - kappa^2 - omega_p^2.
+// a(omega) Gaussian: on the axis E_x = a0 omega0 exp(-(zeta - zeta_c)^2 / L^2) cos(...). It is fed through the
+// radial absorber layer (total-field / scattered-field): there R relaxes to the incident field, and only the
+// difference (what the plasma radiates or scatters) is absorbed. Linear polarization along x, mode m = 1.
+struct FlyingFocusConfig {
+  bool present = false;
+  double a0 = 1.0;
+  double theta = 0.05;     // cone angle at omega0 [rad]
+  double length_1e = 10.0; // 1/e half length of the on-axis field envelope
+  double zeta_center = 0;
+  double cep = 0;
+  double background = 0;   // density [n_c] of a uniform plasma in which the incident field propagates (0: vacuum)
+  double kappa() const { return 1.0 - std::cos(theta); }  // omega0 (1 - cos theta), code units
+};
+
 // ---------------------------------------------------------------- plasma
 struct PlasmaConfig {
   enum class Radial { Uniform, Parabolic, Table };
@@ -280,6 +300,7 @@ struct Config {
   Units units;
   GridConfig grid;
   std::vector<LaserConfig> lasers;
+  FlyingFocusConfig flying_focus;
   PlasmaConfig plasma;
   std::vector<IonConfig> ions;
   std::vector<BunchConfig> bunches;

@@ -1,0 +1,28 @@
+# Flying focus in a preformed plasma (model for real hydrogen): with the physical 13.6 eV, hydrogen is ionized
+# already at a ~ 0.005 (~5e13 W/cm^2 for 50 fs), far out in r (~0.25 m for an ideal Bessel envelope at a0 = 2) and
+# early in the pulse front, with negligible ionization heating. So the whole box is plasma, and the incident
+# conical wave is that of a uniform plasma (flying_focus.background_density): k_perp^2 = 2 omega kappa - kappa^2 -
+# omega_p^2. The feeding/absorbing layer lies in the plasma; the response there is linear (a ~ 0.3).
+#  lambda = 0.8 um, a0 = 2 on the axis, 50 fs, cone angle 50 mrad, n_e = 1e18 cm^-3
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = uniform
+  dr                = 0.5 um
+  r_max             = 80 um
+  r_absorber        = 60 um
+  absorber_strength = 1
+  dzeta             = 0.03333 um
+  window_length     = 135 um
+  dz                = 2.5 um
+  z_end             = 1 mm
+}
+flying_focus { a0 = 2; cone_angle = 50 mrad; tau_fwhm = 50 fs; zeta_center = 90 um; background_density = 1e18 cm^-3 }
+plasma {
+  density       = 1e18 cm^-3
+  ppc_r         = 2
+  ppc_phi       = 8
+  smooth_length = 2 k0^-1
+}
+output { dir = plasma_out; every = 40; maps = true; map_stride = 8; particles = false }
+numerics { iterations = 2 }

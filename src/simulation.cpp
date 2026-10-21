@@ -69,8 +69,14 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
     exitStates[s].assign(std::max(I.Zmax, I.Z) + 1, 0.0);
     if (I.ionization) adk[s].setup(I.ip_eV, I.Z, I.Zmax, cfg.units, 2.0 * zv.node(Nz));
   }
+  if (cfg.flying_focus.present) setupFlyingFocus();
   if (restartFile.empty()) {
     initLasers();
+    if (cfg.flying_focus.present)  // the incident field of level s0 in the whole box
+      for (int n = 0; n < Nz; ++n) {
+        for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(1, n, i)] += ffInc(true, n, i, s0);
+        for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(1, n, i)] += I1 * ffInc(false, n, i, s0);
+      }
     initBunches();
     initBunchFields();
   } else {
@@ -1090,7 +1096,7 @@ void Simulation::step() {
   for (auto& v : exitStates) std::fill(v.begin(), v.end(), 0.0);
   for (const auto& p : stream)
     if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) exitStates[ionIndex(p.sp)][p.Zi] += p.w;
-  absorber();
+  absorber(s1);
   std::swap(fold, fnew);
   std::swap(c0b, c1b);
   std::swap(c0s, c1s);
@@ -1099,8 +1105,9 @@ void Simulation::step() {
   if (!cfg.chicanes.empty()) applyChicanes(za, s0);
 }
 
-// damp R near the outer radial boundary
-void Simulation::absorber() {
+// damp R near the outer radial boundary; with a flying focus only the difference to the incident field
+// (total-field / scattered-field: the layer feeds the converging wave and absorbs what the plasma adds)
+void Simulation::absorber(double s) {
   const double ra = cfg.grid.r_absorber, rm = g.rho[g.N];
   if (ra >= rm) return;
   auto damp = [&](double r) {
@@ -1108,11 +1115,62 @@ void Simulation::absorber() {
     double x = (r - ra) / (rm - ra);
     return std::max(0.0, 1.0 - cfg.grid.absorber_strength * x * x);
   };
+  const bool ff = cfg.flying_focus.present;
   for (int m = 0; m <= M; ++m)
     for (int n = 0; n < Nz; ++n) {
-      for (int i = 0; i <= g.N; ++i) fnew.Rr[fnew.f(m, n, i)] *= damp(g.rho[i]);
-      for (int i = 0; i < g.N; ++i) fnew.Rp[fnew.c(m, n, i)] *= damp(g.c[i]);
+      for (int i = 0; i <= g.N; ++i) {
+        const double d = damp(g.rho[i]);
+        if (d == 1.0) continue;
+        const cd inc = (ff && m == 1) ? cd(ffInc(true, n, i, s)) : cd(0.0);
+        cd& R = fnew.Rr[fnew.f(m, n, i)];
+        R = inc + d * (R - inc);
+      }
+      for (int i = 0; i < g.N; ++i) {
+        const double d = damp(g.c[i]);
+        if (d == 1.0) continue;
+        const cd inc = (ff && m == 1) ? I1 * ffInc(false, n, i, s) : cd(0.0);
+        cd& R = fnew.Rp[fnew.c(m, n, i)];
+        R = inc + d * (R - inc);
+      }
     }
+}
+
+// incident field of the flying focus at s = 0: G(r, zeta) = sum_j c_j J0(k_j r) e^{i w_j (zeta - zeta_c) + i cep},
+// c_j the Gaussian spectrum of the on-axis envelope, k_j = sqrt(2 w_j kappa - kappa^2) (k_z = w_j - kappa)
+void Simulation::setupFlyingFocus() {
+  const auto& F = cfg.flying_focus;
+  const double kap = F.kappa(), Lz = F.length_1e, amp = F.a0;  // a0 omega0, omega0 = 1
+  const int nw = 241;
+  const double w0 = 1.0 - 6.0 / Lz, w1 = 1.0 + 6.0 / Lz, dw = (w1 - w0) / (nw - 1);
+  std::vector<double> wj(nw), kj(nw);
+  std::vector<cd> cj(nw);
+  for (int j = 0; j < nw; ++j) {
+    wj[j] = w0 + dw * j;
+    kj[j] = std::sqrt(std::max(0.0, 2.0 * wj[j] * kap - kap * kap - F.background));
+    // int dw (L / (2 sqrt(pi))) e^{-(w - 1)^2 L^2 / 4} e^{i w d} = e^{i d} e^{-d^2 / L^2}
+    cj[j] = amp * dw * Lz / (2.0 * std::sqrt(PI)) * std::exp(-0.25 * (wj[j] - 1.0) * (wj[j] - 1.0) * Lz * Lz) *
+            std::polar(1.0, F.cep);
+  }
+  auto fill = [&](std::vector<cd>& G, const std::vector<double>& rr, int nr, int i0) {
+    G.assign(size_t(Nz) * nr, cd(0.0));
+    std::vector<double> J(size_t(nr) * nw);
+    for (int i = i0; i < nr; ++i)
+      for (int j = 0; j < nw; ++j) J[size_t(i) * nw + j] = std::cyl_bessel_j(0.0, kj[j] * rr[i]);
+    std::vector<cd> e(nw);
+    for (int n = 0; n < Nz; ++n) {
+      const double d = zv.node(n) - F.zeta_center;
+      for (int j = 0; j < nw; ++j) e[j] = cj[j] * std::polar(1.0, wj[j] * d);
+      for (int i = i0; i < nr; ++i) {
+        cd sum = 0.0;
+        const double* Ji = &J[size_t(i) * nw];
+        for (int j = 0; j < nw; ++j) sum += Ji[j] * e[j];
+        G[size_t(n) * nr + i] = sum;
+      }
+    }
+  };
+  std::vector<double> rf(g.rho.begin(), g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
+  fill(ffGf, rf, g.N + 1, 1);
+  fill(ffGc, rc, g.N, 0);
 }
 
 bool Simulation::finite() const {

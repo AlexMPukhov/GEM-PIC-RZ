@@ -550,6 +550,42 @@ void readLaser(const Block& b, const Deck& d, const Units& u, const GridConfig& 
     warn.push_back(b.label() + ": fewer than ~12 points per laser wavelength in zeta (dzeta too large)");
 }
 
+
+
+void readFlyingFocus(const Block& b, const Deck& d, const Units& u, const GridConfig& g, FlyingFocusConfig& F,
+                     std::vector<std::string>& warn) {
+  BlockReader r(b, d, u);
+  F.present = true;
+  F.a0 = r.num("a0", Dim::None);
+  F.theta = r.num("cone_angle", Dim::Angle);
+  if (!(F.theta > 0 && F.theta < 0.5)) r.failKey("cone_angle", "must be between 0 and 0.5 rad");
+  if (r.oneOf("tau_fwhm", "length_1e") == 0)
+    F.length_1e = r.num("tau_fwhm", Dim::Time) / std::sqrt(2.0 * std::log(2.0));
+  else
+    F.length_1e = r.num("length_1e", Dim::Length);
+  if (!(F.length_1e > 0)) r.failKey(r.has("tau_fwhm") ? "tau_fwhm" : "length_1e", "must be positive");
+  F.zeta_center = r.num("zeta_center", Dim::Length);
+  if (F.zeta_center < 0 || F.zeta_center > g.window()) r.failKey("zeta_center", "lies outside the window");
+  F.cep = r.num("cep", Dim::Angle, 0.0);
+  F.background = r.num("background_density", Dim::Density, 0.0);
+  if (F.background < 0) r.failKey("background_density", "must be >= 0");
+  if (2.0 * F.kappa() - F.kappa() * F.kappa() <= F.background)
+    r.failKey("background_density", "too high for this cone angle: no conical wave (k_perp^2 < 0); "
+                                    "needs omega_p^2 < omega^2 sin^2(theta)");
+  if (g.M < 1) r.error(b.line, "a flying focus needs azimuthal mode 1: set grid.m_max >= 1");
+  if (!(g.r_absorber < g.r_max))
+    r.error(b.line, "the flying focus is fed through the radial absorber layer: set grid.r_absorber < r_max");
+  // the conical wave has the transverse wavelength 2 pi / (k sin theta) at every radius
+  const double lperp = 2.0 * PI / std::sin(F.theta);
+  if (g.dr_max > lperp / 10.0)
+    warn.push_back(b.label() + ": dr_max = " + std::to_string(g.dr_max / lperp).substr(0, 5) +
+                   " transverse wavelengths 2 pi / (k sin theta): use dr <= 1/10 of it everywhere");
+  // the rings ahead of the axial focus: at radius r the converging wave is ~ r theta / 2 ahead in zeta
+  if (F.zeta_center + 3.0 * F.length_1e + 0.5 * g.r_max * F.theta > g.window())
+    warn.push_back(b.label() + ": the converging wave at r_max (r theta / 2 ahead) and the pulse need room in front "
+                   "of zeta_center: window too short");
+}
+
 void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
   (void)g;
   // longitudinal profile
@@ -1169,7 +1205,7 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 // ============================================================================
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
-  deck.checkBlockNames({"constants", "grid", "laser", "plasma", "ion", "bunch", "undulator", "quadrupole",
+  deck.checkBlockNames({"constants", "grid", "laser", "flying_focus", "plasma", "ion", "bunch", "undulator", "quadrupole",
                         "plasma_lens", "solenoid", "chicane", "output", "numerics"});
   Config c;
   g_consts = &c.constants;  // the expressions of all blocks see the constants
@@ -1187,6 +1223,7 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   }
   if (!c.lasers.empty() && c.grid.M < 1)
     throw DeckError(deck.where(grid->line) + ": a laser needs azimuthal mode 1: set grid.m_max >= 1");
+  if (const Block* b = deck.single("flying_focus")) readFlyingFocus(*b, deck, c.units, c.grid, c.flying_focus, warn);
   if (const Block* b = deck.single("plasma")) readPlasma(*b, deck, c.units, c.grid, c.plasma, warn);
   double fsum = 0.0;
   for (const Block* b : deck.all("ion")) {
@@ -1299,7 +1336,8 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     }
   }
 
-  if (c.lasers.empty() && c.bunches.empty()) warn.push_back("the deck defines neither a laser nor a bunch");
+  if (c.lasers.empty() && c.bunches.empty() && !c.flying_focus.present)
+    warn.push_back("the deck defines neither a laser nor a bunch");
   if (!c.plasma.present) warn.push_back("no plasma block: vacuum propagation");
   if (warnings) *warnings = warn;
   return c;
@@ -1507,6 +1545,14 @@ std::string Config::summary() const {
     if (output.openpmd) f += f.empty() ? "openpmd" : " + openpmd";
     line("output format: %s (HDF5 %s precision, compression %d)", f.c_str(), output.hdf5_single ? "single" : "double",
          output.hdf5_compression);
+  }
+  if (flying_focus.present) {
+    const auto& F = flying_focus;
+    line("flying focus: luminal Bessel pulse, a0 = %.4g on the axis, cone angle %.4g mrad (core radius %.4g um, "
+         "transverse wavelength %.4g um), length_1e = %.4g um at zeta = %.4g um; fed through the absorber layer r > %.4g um",
+         F.a0, F.theta * 1e3, 2.405 / std::sin(F.theta) * um, 2.0 * PI / std::sin(F.theta) * um, F.length_1e * um,
+         F.zeta_center * um, grid.r_absorber * um);
+    if (F.background > 0) line("        incident field in a uniform plasma of %.4g n_c", F.background);
   }
   if (output.fel)
     line("FEL diagnostics: fel.txt every step, bunching at %.5g um", output.fel_wavelength * um);
