@@ -1,0 +1,58 @@
+# =====================================================================================================================
+#  Flying focus in hydrogen: PRODUCTION deck (cluster). Start here.
+# ---------------------------------------------------------------------------------------------------------------------
+#  Physics. The driver is an ideal flying focus: a luminal Bessel pulse ("focus-wave mode"), a converging conical
+#  wave whose on-axis intensity peak moves at exactly c. Energy flows in from the side, so the driver neither
+#  dephases (it moves with the window) nor depletes (it is refilled from the rings). It is fed into the box through
+#  the radial absorber layer r_absorber < r < r_max: there the field relaxes to the prescribed incident wave and only
+#  what the plasma adds is absorbed (total-field / scattered-field method, docs/input_deck.md, block flying_focus).
+#
+#  Why a preformed plasma. Real hydrogen (13.6 eV) is ionized by a 50 fs pulse already at a ~ 0.005
+#  (~5e13 W/cm^2). The incident intensity only falls off as I(r)/I_axis ~ 2/(pi k_perp r), so the gas is ionized
+#  out to ~0.25 m: there is no neutral region to put the boundary in. The ionization happens early in the pulse
+#  front at low field and hardly heats the electrons, so the plasma is modelled as preformed everywhere, and the
+#  incident wave is computed in that plasma (background_density = plasma density). The layer then contains plasma;
+#  its response there must stay close to linear (a ~ 0.25 at r = 120 um here).
+#
+#  Cost: Nr = 300, Nzeta = 5600, 2 modes (~3 GB), 2000 steps; ~12 s per step on 2 CPU cores (~7 h): use MPI ranks
+#  (pipeline in zeta) or one GPU (numerics.backend = cuda; the GPU engine does not combine with MPI yet).
+#     mpirun -np 32 gempic_rz ff_plasma.deck numerics.backend=openmp      (OMP_NUM_THREADS per rank)
+#     build-gpu/gempic_rz ff_plasma.deck
+# =====================================================================================================================
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1              # linear polarization: laser in m = 1, wake in m = 0
+  radial_grid       = uniform        # the conical wave has the same transverse wavelength (lambda / sin theta = 16 um)
+  dr                = 0.5 um         #   at every radius: no coarsening outward; keep dr <= lambda / (10 sin theta)
+  r_max             = 150 um
+  r_absorber        = 120 um         # feeding / absorbing layer 120 ... 150 um (several transverse wavelengths wide)
+  absorber_strength = 1              # MUST be 1 for the flying focus: R = incident field at r_max (0.2 lost 9 % in 2 mm)
+  dzeta             = 0.025 um       # lambda / 32 (the vacuum carrier phase error scales with dzeta^2)
+  window_length     = 140 um         # 2.5 lambda_p behind the pulse + pulse + r_max theta / 2 = 3.75 um of ring lead
+  dz                = 2.5 um         # plasma step (kappa phase per step k theta^2 dz / 2 = 0.025 rad)
+  z_end             = 5 mm
+}
+flying_focus {
+  a0                 = 2             # peak on the axis
+  cone_angle         = 50 mrad       # core radius 2.405 / (k sin theta) = 6.1 um
+  tau_fwhm           = 50 fs         # on-axis intensity FWHM
+  zeta_center        = 95 um         # needs zeta_center + 3 length_1e + r_max theta / 2 < window_length
+  background_density = 1e18 cm^-3    # = plasma.density: the incident wave is the one of this plasma
+}
+plasma {
+  density       = 1e18 cm^-3         # lambda_p = 33 um; needs omega_p < omega sin(theta) (here 0.024 < 0.05)
+  z_points      = 0, 100 um          # short entrance ramp
+  z_values      = 0, 1
+  ppc_r         = 2
+  ppc_phi       = 8
+  smooth_length = 2 k0^-1            # regularization of the bubble closure (code paper, Sec. III)
+}
+output {
+  dir        = ff_plasma_out
+  every      = 100                   # axis files and maps every 0.25 mm
+  maps       = true
+  map_stride = 8
+  particles  = false
+  format     = both                  # text + HDF5 (full modes for later analysis)
+}
+numerics { iterations = 2 }

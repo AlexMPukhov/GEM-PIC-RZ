@@ -1,5 +1,8 @@
 # Flying focus (luminal Bessel pulse fed through the radial boundary): first tests
 
+Handover, open tasks and lessons: `docs/flying_focus_handoff.md`. Production decks: `production/` (start with
+`ff_plasma.deck`; every line is commented).
+
 Block `flying_focus` (docs/input_deck.md). The driver is a converging conical wave whose on-axis peak moves at c.
 It is fed in through the radial absorber layer: R relaxes there to the incident field, and only what the plasma
 adds is absorbed. This is the total-field / scattered-field method.
@@ -33,3 +36,16 @@ Figures: `gas_out.png`, `plasma_out.png` (`python3 plot_gas.py <dir>`); numbers:
 - **Other drivers:** the incident field is the ideal luminal focus-wave mode (infinite energy). An axiparabola /
   echelon flying focus of finite length needs a different R_inc (e.g. a Hankel propagation of the field after
   the optic); the boundary method stays the same.
+
+**ADK estimate used for the 200 eV test gas** (probability of ionization by a 50 fs, 0.8 um pulse of peak a; hydrogen-like,
+static ADK averaged over the carrier):
+```
+import numpy as np; from scipy.special import gamma as G
+def w(F, Ip):  # atomic units, Z = 1, l = m = 0
+    k = np.sqrt(2 * Ip); n = 1 / k; C2 = 2**(2 * n) / (n * G(n + 1) * G(n))
+    return C2 * Ip * (2 * k**3 / F)**(2 * n - 1) * np.exp(-2 * k**3 / (3 * F))
+t = np.linspace(-150e-15, 150e-15, 200001); om = 2 * np.pi * 3e8 / 0.8e-6; Lt = 50e-15 / np.sqrt(2 * np.log(2))
+P = lambda a, IpeV: 1 - np.exp(-np.sum(w(np.maximum(a * 7.8 * np.exp(-(t / Lt)**2) * abs(np.cos(om * t)), 1e-9),
+                                          IpeV / 27.211)) * (t[1] - t[0]) / 2.4189e-17)
+```
+(a = 1 at 0.8 um is 7.8 atomic units of field.) Then the radius where the incident wave reaches a: r ~ 2 a0^2 / (pi k_perp a^2).

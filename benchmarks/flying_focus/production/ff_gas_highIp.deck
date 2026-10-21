@@ -1,0 +1,46 @@
+# =====================================================================================================================
+#  Flying focus in a neutral gas with field ionization (test model with a high ionization potential)
+# ---------------------------------------------------------------------------------------------------------------------
+#  The gas is ionized by the flying focus itself, near the axis only, and the feeding layer stays in neutral gas
+#  (the configuration first asked for). With the physical hydrogen potential this is impossible at a0 = 2 (see
+#  ff_plasma.deck), so the potential is raised to 200 eV: ADK for 50 fs at 0.8 um gives full ionization for a >= 0.8,
+#  4 % at a = 0.5, 0.25 % at a = 0.4, 1e-4 at a = 0.33 -> plasma within r ~ 10-20 um.
+#  Caveat: electrons born near the peak of a 200 eV potential are hot (ionization heating); the wake behind the
+#  first period is then irregular. For a realistic neutral-gas case, use a real species with a high potential
+#  (e.g. a pre-ionized He/N mixture where only the inner shells are ionized near the axis) and check where it ionizes.
+#  Larger and finer version of ../gas.deck (that one: 1 mm on 2 cores in 15 min).
+# =====================================================================================================================
+grid {
+  lambda0           = 0.8 um
+  m_max             = 1
+  radial_grid       = uniform
+  dr                = 0.5 um
+  r_max             = 100 um
+  r_absorber        = 75 um          # layer in neutral gas: no ionization beyond ~40 um
+  absorber_strength = 1
+  dzeta             = 0.025 um
+  window_length     = 140 um
+  dz                = 2.5 um
+  z_end             = 5 mm
+}
+flying_focus { a0 = 2; cone_angle = 50 mrad; tau_fwhm = 50 fs; zeta_center = 95 um }   # vacuum incident wave
+plasma {
+  density        = 1e18 cm^-3        # reference density of the gas profile
+  free_electrons = false             # neutral gas: all electrons come from ionization
+  z_points       = 0, 100 um
+  z_values       = 0, 1
+  r_max          = 70 um             # gas column ends before the layer (the layer must be plasma-free)
+  ppc_r          = 2
+  ppc_phi        = 8
+  smooth_length  = 2 k0^-1
+}
+ion {
+  element               = H
+  charge_state          = 0
+  ionization            = adk
+  ionization_potentials = 200 eV     # ARTIFICIAL (real: 13.6 eV)
+  density               = 1e18 cm^-3 # atoms
+  mobile                = false
+}
+output { dir = ff_gas_out; every = 100; maps = true; map_stride = 8; particles = false; format = both }
+numerics { iterations = 2 }
