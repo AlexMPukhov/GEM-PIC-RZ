@@ -77,8 +77,8 @@ gempic_rz gem_x.deck numerics.backend=openmp   # 34 min
 python3 compare.py 10nm gem_out_nocorr gem_out gem_out_v res_dzeta_v
 python3 compare.py 0.8nm gemx_out_nocorr gemx_out   # gemx_out_nocorr: with correction 7 only
 ```
-GENESIS 4 was built from github.com/svenreiche/Genesis-1.3-Version4 (v1.10.10) against serial HDF5. That needed a
-small shim header defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; it was run on one MPI rank.
+GENESIS 4 was built from github.com/svenreiche/Genesis-1.3-Version4 (release 4.6.15, commit 35f2e14) against serial HDF5. That needed a
+small shim header (`genesis_shim.h`, force-included with `-include`) defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; it was run on one MPI rank.
 
 ## Harmonics of a planar undulator (radiation integral, GENESIS 1.3 v4)
 

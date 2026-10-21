@@ -1,5 +1,7 @@
 # FEL manuscript: status and open items (started 2026-10-18)
 
+See also `docs/fel_handoff.md` (full handoff: results, code locations, lessons, open items).
+
 Working title: *First-principles simulation of free-electron lasers with the Galilean electromagnetic PIC method:
 even harmonics of planar undulators*. Target: PRAB (like the code paper). Source: `gempic_fel.tex`, open
 points marked `\todo{}` in red.
