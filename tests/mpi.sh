@@ -41,7 +41,9 @@ F="numerics.backend=serial output.map_stride=8"
 "$EXE" "$SRC/tests/flexgrid.deck" $F output.dir=fser > fser.log
 run 3 "$SRC/tests/flexgrid.deck" $F output.dir=fmp3 > fmp3.log
 for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" fser/$f fmp3/$f 1e-6 1e-9; done
-# hybrid MPI + OpenMP threads
+# hybrid MPI + OpenMP threads (not in a CUDA build: there the parallel backend is cuda, which is not combined
+# with MPI; the pure-MPI parts above cover the pipeline)
+if "$EXE" "$DECK" numerics.backend=openmp --check > hycheck.log 2>&1; then
 H="numerics.backend=openmp output.every=1 output.map_stride=8 grid.z_end=160k0^-1"
 OMP_NUM_THREADS=2 run 2 "$DECK" $H output.dir=hy > hy.log
 grep -q "openmp on 2 MPI ranks, 2 threads per rank" hy.log
@@ -54,6 +56,9 @@ U="grid.z_end=10mm bunch.macroparticles=20000"
 "$EXE" "$SRC/tests/undulator.deck" $U numerics.backend=serial output.dir=user output.format=text > user.log
 OMP_NUM_THREADS=2 run 2 "$SRC/tests/undulator.deck" $U numerics.backend=openmp output.dir=uhy output.format=text > uhy.log
 for f in bunches.txt fel.txt; do "$CMP" user/$f uhy/$f 1e-6 1e-12; done
+else
+  echo "  hybrid MPI + OpenMP part skipped: no openmp backend in this build (CUDA build)"
+fi
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi
