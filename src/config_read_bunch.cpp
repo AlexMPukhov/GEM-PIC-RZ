@@ -6,6 +6,7 @@
 namespace gem {
 namespace cfgdetail {
 
+// shot-noise model (all bunch kinds)
 void readShotNoise(const BlockReader& r, BunchConfig& B) {
   B.fawley = r.word("shot_noise", "random", {"random", "fawley"}) == "fawley";
   if (B.fawley) {
