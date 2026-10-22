@@ -6,7 +6,7 @@
 | `lwfa_fbpic/` | FBPIC 0.27 (full PIC, spectral, quasi-cylindrical) | LWFA, a0 = 2, n0 = 3.5·10¹⁸ cm⁻³ | on-axis wake E_z of the first period to 1.6 % rms; laser field to 1 %; behind the bubble with `plasma.smooth_length` |
 | `ionization_fbpic/` | FBPIC 0.27 (with ADK ionization) | ionization injection from a N5+ dopant, a0 = 2.3, 3.5·10¹⁸ cm⁻³, 200 µm | injected charge above 5 MeV to 10 %, its mean energy and spectrum to 2–5 % at the same position of the bunch |
 | `downramp_fbpic/` | FBPIC 0.27 | density down-ramp injection (2 → 1 n0 over 10 µm), a0 = 1.8 | **open:** GEM-PIC-RZ traps 9–28 pC above 2 MeV depending on the step, FBPIC 51 pC (paper Sec. "Density down-ramp injection: an open problem") |
-| `harmonics/` | radiation integral; GENESIS 1.3 v4 (steady state) | harmonics of a planar undulator: coherent emission of a short bunch, and a seeded FEL at 10.6 nm (K = 1.5, 4 kA) | emission per azimuthal mode m = 0…3 within 0.3–1.8 % of the radiation integral; FEL: saturation power within 6 %, 3rd harmonic 2.1 % vs 2.8 % of P₁; **2nd harmonic 9.6 MW (P₂/P₁ = 0.9·10⁻³), which GENESIS does not compute** |
+| `harmonics/` | radiation integral | coherent emission of a short bunch in a planar undulator, per azimuthal mode; deck of a seeded planar FEL (10.6 nm, K = 1.5, 4 kA) | emission per azimuthal mode m = 0…3 within 0.3–1.8 % of the radiation integral |
 | `laser_evolution/` | FBPIC 0.27 and the envelope code Wake-T 0.9.1 | 6.8 fs pulse, a0 = 1.5, n0 = 1.7·10¹⁹ cm⁻³, 300 µm: diffraction, depletion, red-shift | laser energy to 1.3 %, red-shift to 0.002 k0, peak field to 5 % (FBPIC); Wake-T underestimates the depletion fivefold |
 
 The runs were made on 2 CPU cores. The decks, input files and scripts are here; the GEM-PIC-RZ output
@@ -80,14 +80,11 @@ python3 compare.py 0.8nm gemx_out_nocorr gemx_out   # gemx_out_nocorr: with corr
 GENESIS 4 was built from github.com/svenreiche/Genesis-1.3-Version4 (release 4.6.15, commit 35f2e14) against serial HDF5. That needed a
 small shim header (`genesis_shim.h`, force-included with `-include`) defining `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio` as no-ops; it was run on one MPI rank.
 
-## Harmonics of a planar undulator (radiation integral, GENESIS 1.3 v4)
+## Harmonics of a planar undulator (radiation integral)
 
-**Why.** Codes that average over the undulator period (GENESIS, …) put the harmonics in by hand: they use
-Bessel-factor couplings on the axis. In a planar undulator this gives the odd harmonics. The even harmonics are
-zero on the axis and come from the transverse structure of the beam. GENESIS 4 has no source term for them
-(`FieldSolver.cpp`: "do not need to calculate for even harmonics"). GEM-PIC-RZ keeps the electron orbit and the
-full fields, so all harmonics come out. The 2nd harmonic radiates in the even azimuthal modes m = 0, 2. A field
-E_x ∝ x has equal power in m = 0 and m = 2.
+**Why.** In a planar undulator the odd harmonics radiate on the axis (azimuthal mode m = 1), the even ones are
+zero on the axis and radiate in the even modes m = 0, 2 (a field E_x ∝ x has equal power in m = 0 and m = 2).
+The test checks the coherent emission in every mode against an independent calculation.
 
 **1. Coherent emission of a short bunch** (`emission.deck`; reference `radint.py`). The reference is the
 far-field radiation integral of the same trajectory, split into azimuthal modes.
@@ -111,47 +108,15 @@ far-field radiation integral of the same trajectory, split into azimuthal modes.
   only 1.3 µm ahead of the bunch, the large-angle part left the window and m = 2, 3 came out 12–14 % low.
 - The radiation integral also has 9·10⁻⁸ in the modes m ≥ 4 (here `m_max = 3`).
 
-**2. Seeded FEL amplifier** (`fel.deck`; `genesis/fel.in` with fields at harmonics 1, 2, 3).
-- Undulator: planar, λ_u = 1 cm, K = 1.5, 100 periods, no natural focusing.
-- Beam: γ = 1000, 4 kA, σ_r = 10 µm, cold. λ_r = 10.625 nm, ρ = 8.5·10⁻³.
-- Seed: 10 MW, w0 = 30 µm, along x.
-- GEM-PIC-RZ: `m_max = 2`, Δζ = λ_r/32, Δz = λ_u/32, `output.fel_harmonics = 3`. The power is averaged over
-  the slices 2.76–3.40 µm, which have met only the flat top. The run took 1.8 h on 2 cores. The tables, thinned
-  to every 8th step, are in `fel_tables/`.
-
-![harmonics](harmonics/compare_fel.png)
-
-| | GENESIS | GEM-PIC-RZ |
-|---|---|---|
-| saturation | 9.8 GW at 0.84 m | 10.4 GW at 0.94 m |
-| power gain length (P₁ = 0.1–1 GW) | 7.0 cm | 7.9 cm |
-| 2nd harmonic at saturation | **0** (not modelled) | **9.6 MW** (2 P_{m=2}; P₂/P₁ = 0.9·10⁻³) |
-| 3rd harmonic at saturation | 0.27 GW (2.8 %) | 0.22 GW (2.1 %) |
-| bunching b₁, b₂, b₃ at saturation | 0.66, 0.25, 0.13 | 0.63, 0.18, 0.14 |
-
-- **Fundamental.** The gain length is 13 % longer than in plain GENESIS. The helical 10 nm case above shows the
-  same 12 %, which came from transverse and longitudinal space charge and the widening of the beam. GENESIS
-  with the same physics agreed there to 4 %. The saturation power agrees to 6 %.
-- **2nd harmonic.**
-  - Both codes have the same 2nd-harmonic bunching, of about 0.2–0.25 at saturation and up to 0.5 before it.
-    Only GEM-PIC-RZ radiates it.
-  - It grows as nonlinear harmonic generation driven by the fundamental, with a gain length of 5.3 cm, about
-    λ_g/1.5.
-  - It reaches ~10⁻³ of the fundamental. An independent code that radiates even harmonics (e.g. Puffin) is still
-    needed for a quantitative check.
-  - P(m = 0) follows 2 P(m = 2) within a factor 1.2 from z = 0.4 m on. This is the E_x ∝ x mode; m = 0 also
-    holds the co-moving field of the bunching.
-- **3rd harmonic.** It agrees with GENESIS to 20 % at saturation. Two things bias GEM-PIC-RZ low here: Δζ = λ_r/32
-  is only 11 points per λ_r/3 (in the emission test, 21 points per wavelength already lost 4 %), and the m = 3
-  part is cut off by `m_max = 2`. After saturation the two codes differ (0.29 vs 0.68 GW at the end).
+**2. Seeded planar FEL deck** (`fel.deck`; GENESIS input `genesis/fel.in`). Planar undulator λ_u = 1 cm,
+K = 1.5, 100 periods; beam γ = 1000, 4 kA, σ_r = 10 µm, cold; λ_r = 10.625 nm; seed 10 MW. `m_max = 2`,
+Δζ = λ_r/32, Δz = λ_u/32, `output.fel_harmonics = 3` (1.8 h on 2 cores). Also the beam-dominated GPU speed
+test (`gpu/`).
 - **Step size, planar undulators.** At Δz = λ_u/16, which is enough in the helical cases, the 4 kA beam blew up
-  transversely from the tail forward: ε_n went from 0 to 2.8 µm in 25 periods, and the gain length came out
-  1.8× that of GENESIS.
-  - Finer steps cured it: ε_n = 0.13, 0.04 and 0.02 µm at λ_u/24, /32 and /64. P(0.25 m) is the same at /32
-    and /64.
-  - More beam sub-steps (`beam_dz_max`) or a second iteration did not help, so the cause is the field step.
-    Not yet understood.
-  - The code now warns when a planar undulator is used with Δz > λ_u/32 and a bunch of ≥ 1 pC.
+  transversely from the tail forward (ε_n from 0 to 2.8 µm in 25 periods). Finer steps cured it: ε_n = 0.13,
+  0.04 and 0.02 µm at λ_u/24, /32 and /64. More beam sub-steps (`beam_dz_max`) or a second iteration did not
+  help, so the cause is the field step; not yet understood. The code warns when a planar undulator is used with
+  Δz > λ_u/32 and a bunch of ≥ 1 pC.
 
 Reproduce:
 ```
@@ -159,9 +124,7 @@ cd harmonics
 python3 radint.py 100 1 10.6667e-3 10 0.02e-6 5e-6 1e-15 0.8e-6 em      # 3 min
 gempic_rz emission.deck numerics.backend=openmp grid.dzeta=12.5nm grid.window_length=30um bunch.zeta_center=28.7um output.dir=em_long
 python3 compare_emission.py em_long
-genesis4 genesis/fel.in                         # in genesis/, 30 s
 gempic_rz fel.deck numerics.backend=openmp      # 1.8 h on 2 cores, 5.6 GB
-python3 compare_fel.py fel_out                  # or fel_tables
 ```
 
 ## Ionization injection against FBPIC

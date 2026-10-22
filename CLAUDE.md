@@ -12,7 +12,7 @@ Read this first. README.md is the user documentation; docs/ holds the details.
 - Ongoing work:
   - **FEL** (separate paper): draft, notes and handoff are in the PRIVATE repository AlexMPukhov/CLAUDE-notes
     (`gem-pic-rz/`); read them there if that repository is in the session. Benchmarks here:
-    `benchmarks/harmonics/`, `benchmarks/high_rho/`, `benchmarks/genesis_seeded/`.
+    `benchmarks/harmonics/` (emission test, FEL deck), `benchmarks/genesis_seeded/`; the FEL result data are private too.
   - Code paper: `paper/gempic_rz.tex`.
   - GPU check: `benchmarks/gpu/` (not yet run on a GPU).
   - **Flying focus** (luminal Bessel pulse fed through the radial boundary, `flying_focus` block): handover in
