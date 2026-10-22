@@ -2,14 +2,14 @@
 # GPU build:  make CUDA=1 [NVCC=/path/to/nvcc] [CUDA_ARCH="-arch=sm_80"]
 # HDF5 output is enabled if pkg-config finds hdf5 (make HDF5=0 disables it)
 CXX      ?= g++
-# CXX=nvcc (e.g. from a Kokkos setup): nvcc is for engine.cpp only, use g++ for C++
+# CXX=nvcc (e.g. from a Kokkos setup): nvcc is for engine.cpp and engine_step.cpp only, use g++ for C++
 ifeq ($(notdir $(CXX)),nvcc)
   NVCC := $(CXX)
   CXX  := g++
 endif
 CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra
 BUILD    := build-make
-CORE     := units deck config mapping atomic_data ionization grid solver smoothing simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import
+CORE     := units deck config config_read_grid config_read_plasma config_read_bunch config_read_misc config_summary mapping atomic_data ionization grid solver smoothing simulation simulation_fields simulation_push simulation_step diagnostics output_hdf5 output_openpmd output_checkpoint engine engine_step comm pipeline pipeline_step eigen expr beam_import
 OBJ      := $(CORE:%=$(BUILD)/%.o)
 # MPI (domain decomposition along zeta): enabled if mpicxx is found (make MPI=0 disables it)
 MPI ?= $(shell command -v mpicxx > /dev/null 2>&1 && echo 1)
@@ -40,13 +40,16 @@ $(BUILD)/%.o: src/%.cpp src/*.hpp | $(BUILD)
 ifeq ($(CUDA),1)
 $(BUILD)/engine.o: src/engine.cpp src/*.hpp | $(BUILD)
 	$(NVCC) -x cu -O3 -std=c++17 $(CUDA_ARCH) --extended-lambda --expt-relaxed-constexpr -DGEMPIC_HAVE_CUDA -Isrc -c $< -o $@
+$(BUILD)/engine_step.o: src/engine_step.cpp src/*.hpp | $(BUILD)
+	$(NVCC) -x cu -O3 -std=c++17 $(CUDA_ARCH) --extended-lambda --expt-relaxed-constexpr -DGEMPIC_HAVE_CUDA -Isrc -c $< -o $@
 endif
 
 $(BUILD)/gempic_rz: $(OBJ) src/main.cpp
 	$(CXX) $(CXXFLAGS) -Isrc src/main.cpp $(OBJ) -o $@ $(LDLIBS)
 
-$(BUILD)/test_deck: $(OBJ) tests/test_deck.cpp
-	$(CXX) $(CXXFLAGS) -Isrc -DGEM_SOURCE_DIR=\"$(CURDIR)\" tests/test_deck.cpp $(OBJ) -o $@ $(LDLIBS)
+TEST_DECK := tests/test_deck.cpp tests/test_deck_basic.cpp tests/test_deck_grids.cpp tests/test_deck_physics.cpp tests/test_deck_beams.cpp
+$(BUILD)/test_deck: $(OBJ) $(TEST_DECK) tests/test_deck_common.hpp
+	$(CXX) $(CXXFLAGS) -Isrc -DGEM_SOURCE_DIR=\"$(CURDIR)\" $(TEST_DECK) $(OBJ) -o $@ $(LDLIBS)
 
 $(BUILD)/compare_columns: tools/compare_columns.cpp
 	$(CXX) $(CXXFLAGS) $< -o $@

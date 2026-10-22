@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 # The plain .cpp files are compiled by the host C++ compiler (g++, clang++);
-# only src/engine.cpp goes to nvcc (CMAKE_CUDA_COMPILER). If CXX (environment
+# only src/engine.cpp and src/engine_step.cpp go to nvcc (CMAKE_CUDA_COMPILER). If CXX (environment
 # or -DCMAKE_CXX_COMPILER) points to nvcc, as in some Kokkos setups, use that
 # nvcc as the CUDA compiler and the host compiler g++ for C++.
 if(DEFINED CMAKE_CXX_COMPILER)
@@ -59,13 +59,15 @@ if(GEMPIC_CUDA)
   endif()
   set(CMAKE_CUDA_STANDARD 17)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-  set_source_files_properties(src/engine.cpp PROPERTIES LANGUAGE CUDA)
+  set_source_files_properties(src/engine.cpp src/engine_step.cpp PROPERTIES LANGUAGE CUDA)
 endif()
 
 # library with everything except main()
 add_library(gemcore STATIC
-  src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
+  src/units.cpp src/deck.cpp src/config.cpp src/config_read_grid.cpp src/config_read_plasma.cpp
+  src/config_read_bunch.cpp src/config_read_misc.cpp src/config_summary.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
+  src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/simulation_fields.cpp src/simulation_push.cpp src/simulation_step.cpp src/diagnostics.cpp
+  src/output_hdf5.cpp src/output_openpmd.cpp src/output_checkpoint.cpp src/engine.cpp src/engine_step.cpp src/comm.cpp src/pipeline.cpp src/pipeline_step.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -114,9 +116,11 @@ elseif(GEMPIC_OPENMP)
   if(OpenMP_CXX_FOUND)
     target_link_libraries(gemcore PUBLIC OpenMP::OpenMP_CXX)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
-    add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
-      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
-      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
+    add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/config_read_grid.cpp
+      src/config_read_plasma.cpp src/config_read_bunch.cpp src/config_read_misc.cpp src/config_summary.cpp src/atomic_data.cpp
+      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp
+      src/simulation_fields.cpp src/simulation_push.cpp src/simulation_step.cpp src/diagnostics.cpp
+      src/output_hdf5.cpp src/output_openpmd.cpp src/output_checkpoint.cpp src/engine.cpp src/engine_step.cpp src/comm.cpp src/pipeline.cpp src/pipeline_step.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
     target_include_directories(gempic_rz_gpuemu PRIVATE src)
@@ -132,7 +136,8 @@ target_link_libraries(gempic_rz gemcore)
 
 # tests
 enable_testing()
-add_executable(test_deck tests/test_deck.cpp)
+add_executable(test_deck tests/test_deck.cpp tests/test_deck_basic.cpp tests/test_deck_grids.cpp
+  tests/test_deck_physics.cpp tests/test_deck_beams.cpp)
 target_link_libraries(test_deck gemcore)
 target_compile_definitions(test_deck PRIVATE GEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME deck_parser COMMAND test_deck)
