@@ -7,15 +7,22 @@
 # 3. speed: lwfa_heavy.deck (200 steps, ~4e4 plasma particles per slice) with GEMPIC_PROFILE=1
 # 4. speed, beam-dominated: the seeded planar FEL (../harmonics/fel.deck: 640 000 beam particles, 3 modes,
 #    18 372 slices; 5.6 GB), first 96 steps only
-set -e
-B=$(cd "${1:-../../build-gpu}" && pwd)
+# Portable: no /usr/bin/time (missing on some clusters), python3 only for the comparison plots.
+B=$(cd "${1:-../../build-gpu}" && pwd) || exit 1
 X=$B/gempic_rz
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
 echo "== 1. ctest"
-(cd "$B" && ctest 2>&1 | tail -3)
+(cd "$B" && ctest 2>&1 | tail -15)   # summary with the names of failed tests
 echo "== 2. LWFA benchmark vs FBPIC"
-(cd ../lwfa_fbpic && /usr/bin/time -f "wall %e s" "$X" gem.deck numerics.backend=cuda output.dir=gem_out_gpu > gem_out_gpu.log 2>&1 \
-  && grep "^done" gem_out_gpu.log && python3 compare.py gem_out_gpu | tail -6 && python3 compare.py gem_out | tail -6)
+(cd ../lwfa_fbpic
+ t0=$(date +%s)
+ "$X" gem.deck numerics.backend=cuda output.dir=gem_out_gpu > gem_out_gpu.log 2>&1
+ echo "exit code $?, wall $(( $(date +%s) - t0 )) s"; grep "^done" gem_out_gpu.log
+ if python3 -c "import numpy, matplotlib" 2>/dev/null; then
+   python3 compare.py gem_out_gpu | tail -6; echo "-- CPU run for comparison:"; python3 compare.py gem_out | tail -6
+ else
+   echo "python3 with numpy + matplotlib not found: copy benchmarks/lwfa_fbpic/gem_out_gpu back and run compare.py there"
+ fi)
 echo "== 3. speed, plasma-dominated (lwfa_heavy.deck, 200 steps)"
 GEMPIC_PROFILE=1 "$X" lwfa_heavy.deck numerics.backend=cuda > heavy.log 2>&1; grep "^done" heavy.log; tail -25 heavy.log | grep -iv "^step\|^ *b " || true
 echo "== 4. speed, beam-dominated (planar FEL, 96 steps)"

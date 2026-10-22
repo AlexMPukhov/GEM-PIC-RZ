@@ -15,6 +15,8 @@ SRC=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 cd "$WORK"
 O="numerics.backend=$BACKEND"
+# serial / openmp: identical; cuda (atomic deposition in a nondeterministic order): equal to rounding
+if [ "$BACKEND" = cuda ]; then T0="1e-6 1e-9"; T1="1e-6 1e-9"; else T0="0 0"; T1="1e-9 1e-12"; fi
 # 1
 H="$SRC/tests/ionization_H.deck"
 sed 's/^ion    { element = H;  ionization = adk;  density = 1e-8 n_c;  mobile = false }/ion    { element = H;  ionization = adk;  profile = own;  density = 1e-8 n_c;  r_max = 50 k0^-1;  mobile = false }/' \
@@ -22,7 +24,7 @@ sed 's/^ion    { element = H;  ionization = adk;  density = 1e-8 n_c;  mobile = 
 grep -q "profile = own" h.deck
 "$EXE" "$H" $O output.dir=h0 > h0.log
 "$EXE" h.deck $O output.dir=h1 > h1.log
-for f in ionization.txt axis_00001.txt; do "$CMP" h0/$f h1/$f 0 0; done
+for f in ionization.txt axis_00001.txt; do "$CMP" h0/$f h1/$f $T0; done
 # 2
 R="$SRC/tests/regression.deck"
 sed -e 's/^  density       = 0.002 n_c/  density       = 0.002 n_c\n  free_electrons = false/' \
@@ -31,7 +33,7 @@ sed -e 's/^  density       = 0.002 n_c/  density       = 0.002 n_c\n  free_elect
 grep -q "profile = own" pre.deck
 "$EXE" "$R" $O grid.z_end=80k0^-1 output.every=2 output.dir=p0 > p0.log
 "$EXE" pre.deck $O grid.z_end=80k0^-1 output.every=2 output.dir=p1 > p1.log
-for f in axis_00002.txt map_00002.txt bunches.txt; do "$CMP" p0/$f p1/$f 1e-9 1e-12; done
+for f in axis_00002.txt map_00002.txt bunches.txt; do "$CMP" p0/$f p1/$f $T1; done
 # 3
 N="$SRC/tests/ionization_N.deck"
 sed 's/^ion    { element = N;  charge_state = 5;  ionization = adk }/ion    { element = N;  charge_state = 5;  ionization = adk;  profile = own;  density = 0.2e-8 n_c\n         z_points = 3, 3.01, 5.99, 6 k0^-1;  z_values = 0, 1, 1, 0;  r_max = 50 k0^-1 }/' \

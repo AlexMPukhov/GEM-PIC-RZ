@@ -16,7 +16,7 @@ if [ "$(id -u)" = 0 ]; then  # Open MPI refuses to run as root without these (ot
 fi
 # Open MPI: allow more ranks than cores (the test uses up to 4 ranks)
 if $MPIEXEC --version 2>&1 | grep -qiE "open mpi|openrte|open-mpi"; then FLAGS="$FLAGS --oversubscribe"; fi
-run() { np=$1; shift; $MPIEXEC $FLAGS -np $np "$EXE" "$@"; }
+run() { np=$1; shift; $MPIEXEC $FLAGS -n $np "$EXE" "$@"; }  # -n: mpirun and srun (srun reads -np as "-n p")
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 cd "$WORK"

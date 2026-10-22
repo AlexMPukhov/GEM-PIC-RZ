@@ -14,8 +14,16 @@ WORK=$(mktemp -d)
 cd "$WORK"
 DECK="$SRC/tests/regression.deck"
 RUN="numerics.backend=$BACKEND output.every=1 output.map_stride=8 grid.z_end=160k0^-1"
+# the GPU appends particles in a nondeterministic order: compare the beam files sorted (zeta, x, y)
+sorted() { grep -v '^#' "$1" | sort -g -k3,3 -k1,1 -k2,2 > "$1.sorted"; }
 compare() {
-  for f in axis_00003.txt axis_00004.txt map_00004.txt beam_00004.txt bunches.txt; do "$CMP" full/$f $1/$f $TOL; done
+  for f in axis_00003.txt axis_00004.txt map_00004.txt bunches.txt; do "$CMP" full/$f $1/$f $TOL; done
+  if [ "$BACKEND" = cuda ]; then
+    sorted full/beam_00004.txt; sorted $1/beam_00004.txt
+    "$CMP" full/beam_00004.txt.sorted $1/beam_00004.txt.sorted $TOL
+  else
+    "$CMP" full/beam_00004.txt $1/beam_00004.txt $TOL
+  fi
 }
 "$EXE" "$DECK" $RUN output.dir=full > full.log
 # 1. checkpoint at step 2 (the first run ends there), restart from the file
