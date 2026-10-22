@@ -1,5 +1,5 @@
 """Fig. laser evolution benchmark (benchmarks/laser_evolution): laser energy, peak field on the axis and spectral
-centroid vs propagation distance; GEM-PIC-RZ, FBPIC and Wake-T (envelope); on-axis E_z at the end.
+centroid vs propagation distance; GEM-PIC-RZ, FBPIC and Wake-T (envelope); on-axis E_z and laser E_x at the end.
 usage (from paper/): python3 scripts/fig_laser.py  ->  figs/fig_laser.pdf"""
 import glob
 import matplotlib
@@ -14,7 +14,7 @@ wt = np.loadtxt(B + "waket_out/laser_waket.txt")
 runs = [("laser_gem_out_a1m3.txt", "#1f4e9c", "-", r"GEM-PIC-RZ, $\Delta = 2\,\mu$m"),
         ("laser_gem_out_a1m3_dz1.txt", "#6fa8dc", ":", r"GEM-PIC-RZ, $\Delta = 1\,\mu$m")]
 plt.rcParams.update({"font.size": 9, "font.family": "serif", "mathtext.fontset": "cm"})
-fig, axs = plt.subplots(4, 1, figsize=(3.4, 7.0), gridspec_kw={"height_ratios": [1, 1, 1, 1.1]})
+fig, axs = plt.subplots(5, 1, figsize=(3.4, 8.6), gridspec_kw={"height_ratios": [1, 1, 1, 1.1, 1.1]})
 for j, (col, lab) in enumerate([(1, r"$W/W_0$"), (2, r"max $|E_x(r=0)|$ $[mc\omega_0/e]$"),
                                  (3, r"$\langle |k| \rangle / k_0$")]):
     a = axs[j]
@@ -44,12 +44,24 @@ axs[3].plot(g[:, 0], g[:, 2], "-", color="#1f4e9c", lw=1.0, label="GEM-PIC-RZ")
 if w.shape[1] > 2:
     axs[3].plot(w[:, 0], w[:, 2], "--", color="#d1495b", lw=1.0, label="Wake-T")
 axs[3].set_xlabel(r"$\zeta$ [$\mu$m]")
+# (e) the laser field on the axis at the end: carrier and phase (Wake-T: +- its envelope)
+m = (f[:, 0] >= 13) & (f[:, 0] <= 21.5)
+axs[4].plot(f[m, 0], f[m, 2], "-", color="k", lw=2.2, alpha=0.35, label="FBPIC")
+mg = (g[:, 0] >= 13) & (g[:, 0] <= 21.5)
+axs[4].plot(g[mg, 0], g[mg, 1], "-", color="#1f4e9c", lw=0.9, label="GEM-PIC-RZ")
+mw = (w[:, 0] >= 13) & (w[:, 0] <= 21.5)
+axs[4].plot(w[mw, 0], w[mw, 1], "--", color="#d1495b", lw=1.0, label="Wake-T envelope")
+axs[4].plot(w[mw, 0], -w[mw, 1], "--", color="#d1495b", lw=1.0)
+axs[4].set_xlim(13, 21.5)
+axs[4].set_xlabel(r"$\zeta$ [$\mu$m]")
+axs[4].set_ylabel(r"$E_x(r=0)$ at 300 $\mu$m")
+axs[4].legend(fontsize=6, frameon=False, loc="upper left")
 axs[3].set_ylabel(r"$E_z(r=0)$ at 300 $\mu$m")
 axs[3].set_xlim(0, 24.95)
 axs[2].set_xlabel(r"propagation distance [$\mu$m]")
 axs[2].set_xticks([0, 100, 200, 300])
 axs[2].set_xticklabels(["0", "100", "200", "300"])
-for a, t in zip(axs, ["(a)", "(b)", "(c)", "(d)"]):
+for a, t in zip(axs, ["(a)", "(b)", "(c)", "(d)", "(e)"]):
     a.text(0.97, 0.85, t, transform=a.transAxes, ha="right")
 fig.tight_layout(h_pad=0.3)
 fig.savefig("figs/fig_laser.pdf")
