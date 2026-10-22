@@ -164,7 +164,5 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
   if (I.mass < 100.0) warn.push_back(b.label() + " (" + I.name + "): mass below 100 m_e - is the unit right?");
 }
 
-// shot-noise model (all bunch kinds)
-
 }  // namespace cfgdetail
 }  // namespace gem
