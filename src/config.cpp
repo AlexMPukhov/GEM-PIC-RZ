@@ -1111,6 +1111,9 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   if (N.backend == NumericsConfig::Backend::Cuda)
     r.failKey("backend", "this build has no GPU support: configure with cmake -DGEMPIC_CUDA=ON (or use 'openmp')");
 #endif
+  const std::string td = r.word("tridiag", "auto", {"auto", "thomas", "partition"});
+  N.tridiag = td == "thomas" ? NumericsConfig::Tridiag::Thomas
+              : td == "partition" ? NumericsConfig::Tridiag::Partition : NumericsConfig::Tridiag::Auto;
   N.iterations = int(r.integer("iterations", N.iterations));
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");

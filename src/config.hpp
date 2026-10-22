@@ -293,6 +293,10 @@ struct NumericsConfig {
   double beam_dz_max = 10.0; // max sub-step of the beam push along s
   double vz_min = 0.8;       // beam particles slower than this return to streaming
   double vz_beam = 0.9;      // particles reaching the next s-level join the beam list if v_z >= vz_beam
+  // tridiagonal solves of the field update in the parallel engine: Thomas (one thread per mode) or the
+  // Thomas/PCR partition method (all threads of the team); auto: partition on the GPU, Thomas on CPU threads
+  enum class Tridiag { Auto, Thomas, Partition };
+  Tridiag tridiag = Tridiag::Auto;
 };
 
 // ---------------------------------------------------------------- all

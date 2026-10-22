@@ -117,6 +117,14 @@ struct IonV {
 struct TriV {
   int i0, n;
   const double *a, *cp, *den;
+  // partition method (P > 0; Laszlo, Giles & Appleyard, ACM TOMS 42, 31 (2016), as in QUARZ): P chunks
+  // [s_k, e_k) of the rows; everything that depends on the matrix only is precomputed on the host:
+  //   r, fc: forward elimination inside a chunk (reciprocal pivot, forward super-diagonal), per row
+  //   qa, qc: final coefficients, x_i = qd_i - qa_i x_s - qc_i x_{e-1} for s < i < e-1, per row
+  //   cs: super-diagonal of the first row of every chunk
+  //   al, ga: PCR coefficients of the reduced system of 2P rows, per level; fbi: 1 / final diagonal
+  int P, L;
+  const double *r, *fc, *qa, *qc, *cs, *al, *ga, *fbi;
 };
 
 struct Params {
@@ -449,7 +457,48 @@ GEM_HD inline void thomas(const TriV& T, const cplx* rhs, cplx* x, cplx* dp) {
   for (int i = T.n - 2; i >= 0; --i) x[T.i0 + i] = dp[i] - T.cp[i] * x[T.i0 + i + 1];
 }
 
-constexpr int SOLVE_SCRATCH = 13;  // arrays of N+1 per mode
+// Tridiagonal solve by the whole team: Thomas by the leader (P = 0) or the partition method (rows of a
+// chunk eliminated by one thread each, the reduced system of 2P chunk-end unknowns by PCR over the team).
+// The result does not depend on the team size. qd: n entries, u, v: 2P entries (scratch). Ends with a barrier.
+GEM_HD inline void triSolveTeam(const Team& t, const TriV& T, const cplx* rhs, cplx* x, cplx* qd, cplx* u, cplx* v) {
+  if (T.P == 0) {
+    if (t.leader()) thomas(T, rhs, x, qd);
+    t.barrier();
+    return;
+  }
+  const int P = T.P, R = 2 * T.P, n = T.n, i0 = T.i0;
+  par::teamFor(t, P, [&](int k) {
+    const int s = int((long)k * n / P), e = int((long)(k + 1) * n / P);
+    qd[s + 1] = rhs[i0 + s + 1] * T.r[s + 1];
+    for (int i = s + 2; i < e; ++i) qd[i] = (rhs[i0 + i] - T.a[i] * qd[i - 1]) * T.r[i];
+    for (int i = e - 3; i > s; --i) qd[i] = qd[i] - T.fc[i] * qd[i + 1];
+    u[2 * k] = rhs[i0 + s] - T.cs[k] * qd[s + 1];
+    u[2 * k + 1] = qd[e - 1];
+  });
+  t.barrier();
+  int l = 0;
+  for (int st = 1; st < R; st *= 2, ++l) {
+    const double *al = T.al + size_t(l) * R, *ga = T.ga + size_t(l) * R;
+    par::teamFor(t, R, [&](int i) {
+      cplx w = u[i];
+      if (i - st >= 0) w = w + al[i] * u[i - st];
+      if (i + st < R) w = w + ga[i] * u[i + st];
+      v[i] = w;
+    });
+    t.barrier();
+    cplx* tmp = u; u = v; v = tmp;
+  }
+  par::teamFor(t, P, [&](int k) {
+    const int s = int((long)k * n / P), e = int((long)(k + 1) * n / P);
+    const cplx xs = u[2 * k] * T.fbi[2 * k], xe = u[2 * k + 1] * T.fbi[2 * k + 1];
+    x[i0 + s] = xs;
+    x[i0 + e - 1] = xe;
+    for (int i = s + 1; i < e - 1; ++i) x[i0 + i] = qd[i] - T.qa[i] * xs - T.qc[i] * xe;
+  });
+  t.barrier();
+}
+
+constexpr int SOLVE_SCRATCH = 15;  // arrays of N+1 per mode
 
 // plasma.smooth_length (SourceFilter, smoothing.cpp): factorized filters per mode
 struct FiltV {
@@ -522,6 +571,7 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   cplx *Pr = scratch + 4 * L, *Qr = scratch + 5 * L, *Pp = scratch + 6 * L, *Qp = scratch + 7 * L;
   cplx *tf1 = scratch + 8 * L, *tc1 = scratch + 9 * L, *rf = scratch + 10 * L, *rc = scratch + 11 * L;
   cplx* dp = scratch + 12 * L;
+  cplx *pu = scratch + 13 * L, *pv = scratch + 14 * L;  // partition: reduced system (2P <= L/4 entries)
 
   // four-point current sums and j^1 (Simulation::step), weighted by the
   // interpolation to slice n (last slice n = 0: half-cell -1 := half-cell 0)
@@ -584,11 +634,9 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   t.barrier();
   par::teamFor(t, N + 1, [&](int i) { rf[i] = 16.0 * b1[i] - 8.0 * h * (opCE(Er1, Ep1, i) + opCE(tf1, tc1, i)); });
   t.barrier();
-  if (t.leader()) {
-    for (int i = 0; i <= N; ++i) b[i] = cplx();
-    thomas(Tf[T], rf, b, dp);
-  }
+  par::teamFor(t, N + 1, [&](int i) { b[i] = cplx(); });
   t.barrier();
+  triSolveTeam(t, Tf[T], rf, b, dp, pu, pv);
   // E_z
   par::teamFor(t, N + 1, [&](int i) { tf1[i] = 0.5 * (Pr[i] - Qr[i]); });
   par::teamFor(t, N, [&](int i) { tc1[i] = 0.5 * (Qp[i] - Pp[i]); });
@@ -597,8 +645,7 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     rc[i] = 16.0 * e1[i] + 8.0 * h * (opCB(Bp1, Br1, i) + opCB(tf1, tc1, i)) - 16.0 * h * jz1(i);
   });
   t.barrier();
-  if (t.leader()) thomas(Tc[T], rc, e, dp);
-  t.barrier();
+  triSolveTeam(t, Tc[T], rc, e, dp, pu, pv);
   // explicit transverse update
   par::teamFor(t, N + 1, [&](int i) {
     if (i == 0) { Rr[0] = cplx(); Lr[0] = cplx(); return; }
@@ -679,7 +726,7 @@ struct EngineState {
   par::Array<dev::IonV> ions;
   par::Array<dev::AdkV> adk;
   par::Array<dev::LevelV> levels;
-  par::Array<double> triData;
+  par::Array<double> triData, partData;
   par::Array<dev::TriV> Tf, Tc;
   int triVersion = -1;  // FieldSolver::version() of the uploaded matrices
   par::Array<double> zz, zhs, zzc, zwlo, zwhi;  // longitudinal grid
@@ -688,30 +735,103 @@ struct EngineState {
   par::Array<double> undK;                      // taper tables
   par::Array<MagnetV> mag;                      // transport elements
   // factorized matrices of the solver -> triData (same layout for every step)
+  bool usePartition = false;  // numerics.tridiag (auto: on the GPU and in the GPU emulation)
+  // number of chunks of the partition method for n rows (0: Thomas); depends on n only, so the result does
+  // not depend on the team size; chunks of >= 8 rows
+  static int partChunks(int n) { return n < 16 ? 0 : std::min(128, n / 8); }
+  // partition data of one matrix (layout: r, fc, qa, qc [n each], cs [P], al, ga [L * 2P each], fbi [2P])
+  static void partitionData(const Tridiag& T, int P, std::vector<double>& out, int& L) {
+    const int n = T.n, R = 2 * P;
+    const std::vector<double>&a = T.a, &b = T.b, &c = T.cc;
+    std::vector<double> r(n, 0.0), fc(n, 0.0), qa(n, 0.0), qc(n, 0.0), cs(P, 0.0);
+    std::vector<double> ra(R), rb(R), rc(R);
+    for (int k = 0; k < P; ++k) {
+      const int s = int((long)k * n / P), e = int((long)(k + 1) * n / P);
+      double rr = 1.0 / b[s + 1];
+      r[s + 1] = rr; qa[s + 1] = a[s + 1] * rr; fc[s + 1] = c[s + 1] * rr;
+      for (int i = s + 2; i < e; ++i) {
+        rr = 1.0 / (b[i] - a[i] * fc[i - 1]);
+        r[i] = rr;
+        qa[i] = -rr * a[i] * qa[i - 1];
+        fc[i] = rr * (i == n - 1 ? 0.0 : c[i]);
+      }
+      for (int i = s + 1; i < e; ++i) qc[i] = fc[i];
+      for (int i = e - 3; i > s; --i) {
+        const double cn = qc[i];
+        qa[i] -= cn * qa[i + 1];
+        qc[i] = -cn * qc[i + 1];
+      }
+      cs[k] = c[s];
+      ra[2 * k] = (s == 0) ? 0.0 : a[s];
+      rb[2 * k] = b[s] - c[s] * qa[s + 1];
+      rc[2 * k] = -c[s] * qc[s + 1];
+      ra[2 * k + 1] = qa[e - 1];
+      rb[2 * k + 1] = 1.0;
+      rc[2 * k + 1] = qc[e - 1];
+    }
+    std::vector<double> al, ga;
+    L = 0;
+    for (int st = 1; st < R; st *= 2, ++L) {
+      std::vector<double> na(R), nb(R), nc(R);
+      for (int i = 0; i < R; ++i) {
+        const bool lo = i - st >= 0, hi = i + st < R;
+        const double alpha = lo ? -ra[i] / rb[i - st] : 0.0, gamma = hi ? -rc[i] / rb[i + st] : 0.0;
+        al.push_back(alpha);
+        ga.push_back(gamma);
+        na[i] = lo ? alpha * ra[i - st] : 0.0;
+        nc[i] = hi ? gamma * rc[i + st] : 0.0;
+        nb[i] = rb[i] + (lo ? alpha * rc[i - st] : 0.0) + (hi ? gamma * ra[i + st] : 0.0);
+      }
+      ra.swap(na); rb.swap(nb); rc.swap(nc);
+    }
+    for (auto* v : {&r, &fc, &qa, &qc, &cs}) out.insert(out.end(), v->begin(), v->end());
+    out.insert(out.end(), al.begin(), al.end());
+    out.insert(out.end(), ga.begin(), ga.end());
+    for (int i = 0; i < R; ++i) out.push_back(1.0 / rb[i]);
+  }
   void uploadMatrices(const FieldSolver& fs, int M) {
-    std::vector<double> td;
+    std::vector<double> td, pd;
     const int nT = fs.classes() * (M + 1);
+    std::vector<int> Ls;
     for (int t = 0; t < nT; ++t)
       for (const Tridiag* T : {&fs.Tf[t], &fs.Tc[t]}) {
         td.insert(td.end(), T->a.begin(), T->a.end());
         td.insert(td.end(), T->cp.begin(), T->cp.end());
         td.insert(td.end(), T->den.begin(), T->den.end());
+        const int P = usePartition ? partChunks(T->n) : 0;
+        int L = 0;
+        if (P > 0) partitionData(*T, P, pd, L);
+        Ls.push_back(L);
       }
     if (triVersion < 0) {  // first call: allocate and build the views
       triData.assign(td.data(), td.size());
+      if (!pd.empty()) partData.assign(pd.data(), pd.size());
       std::vector<dev::TriV> tf, tc;
-      size_t off = 0;
+      size_t off = 0, poff = 0;
+      int j = 0;
       for (int t = 0; t < nT; ++t)
-        for (int which = 0; which < 2; ++which) {
+        for (int which = 0; which < 2; ++which, ++j) {
           const Tridiag& T = which ? fs.Tc[t] : fs.Tf[t];
           const double* base = triData.data() + off;
-          (which ? tc : tf).push_back(dev::TriV{T.i0, T.n, base, base + T.n, base + 2 * size_t(T.n)});
+          dev::TriV v{T.i0, T.n, base, base + T.n, base + 2 * size_t(T.n), 0, 0,
+                      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+          const int P = usePartition ? partChunks(T.n) : 0;
+          if (P > 0) {
+            const int n = T.n, R = 2 * P, L = Ls[j];
+            const double* p = partData.data() + poff;
+            v.P = P; v.L = L;
+            v.r = p; v.fc = p + n; v.qa = p + 2 * size_t(n); v.qc = p + 3 * size_t(n); v.cs = p + 4 * size_t(n);
+            v.al = v.cs + P; v.ga = v.al + size_t(L) * R; v.fbi = v.ga + size_t(L) * R;
+            poff += 4 * size_t(n) + P + 2 * size_t(L) * R + R;
+          }
+          (which ? tc : tf).push_back(v);
           off += 3 * size_t(T.n);
         }
       Tf.assign(tf.data(), tf.size());
       Tc.assign(tc.data(), tc.size());
     } else {
       par::upload(triData.data(), td.data(), td.size());
+      if (!pd.empty()) par::upload(partData.data(), pd.data(), pd.size());
     }
     triVersion = fs.version();
   }
@@ -799,6 +919,15 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   E.ions.assign(iv.data(), iv.size());
   E.adk.assign(av.data(), av.size());
   // tridiagonal matrices (factorized on the host, per matrix class and mode)
+  {
+    const auto td = sim.cfg.numerics.tridiag;
+#if defined(GEM_BACKEND_CUDA) || defined(GEM_EMULATE_GPU)
+    const bool gpuPaths = true;
+#else
+    const bool gpuPaths = false;
+#endif
+    E.usePartition = td == NumericsConfig::Tridiag::Partition || (td == NumericsConfig::Tridiag::Auto && gpuPaths);
+  }
   E.uploadMatrices(sim.solver, M);
   {
     const ZetaGrid& zg = sim.zg;

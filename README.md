@@ -229,7 +229,7 @@ device memory for the whole run. Per step:
 - the ζ-march runs slice by slice, each slice with the predictor-corrector passes;
 - per pass there are three kernels:
   - streaming push, deposition and ionization, with one thread per particle, atomic current deposition, and freed electrons appended through an atomic counter;
-  - field solve, with one thread block per azimuthal mode: the radial operators are applied in parallel, the tridiagonal solves run in one thread;
+  - field solve, with one thread block per azimuthal mode: the radial operators are applied in parallel, and the tridiagonal solves use the Thomas/PCR partition method on all threads of the block (`numerics.tridiag`; Thomas in one thread on CPU threads);
   - slice preparation: the predictor and the |E| bound for ionization.
 
 There are no host-device transfers inside the march. After each step, the fields,
