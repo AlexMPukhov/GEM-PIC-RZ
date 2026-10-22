@@ -274,6 +274,8 @@ struct OutputConfig {
   double walltime_hours = 0.0;  // stop with a checkpoint after this wall-clock time (0: no limit)
 };
 
+enum { BEAM_FIELD_LEVEL = 0, BEAM_FIELD_MEAN = 1 };
+
 struct NumericsConfig {
   // serial: reference implementation (simulation.cpp); openmp / cuda: parallel
   // engine (engine.cpp) on CPU threads / an NVIDIA GPU. Default: cuda in a
@@ -288,6 +290,8 @@ struct NumericsConfig {
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
   double trap_advance = 1.0;     // a streaming particle leaves its level after advancing this many steps in z
   double theta = 0.5;            // implicitness of the R update in s (0.5: trapezoid)
+  int beam_field = -1;       // fields of the beam push: BEAM_FIELD_LEVEL (s^0), BEAM_FIELD_MEAN; -1 = auto
+  bool beam_field_auto = true;  // beam_field chosen by the code (mean with undulators, else level)
   bool beam_vay = true;      // beam list pushed with the Vay pusher (false: Boris)
   unsigned long seed = 12345;
   double beam_dz_max = 10.0; // max sub-step of the beam push along s

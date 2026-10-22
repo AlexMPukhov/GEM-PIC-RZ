@@ -373,7 +373,8 @@ s, so a forward wave stays at fixed ζ, and an electron slips back by λ_r = λ_
 transverse current j_⊥ = −e n v_⊥ drives R, and the radiation acts back on the particles through the gather. So
 spontaneous and coherent emission, and the FEL interaction, are contained in the existing equations. The ζ grid
 resolves the radiation (λ_r/20 or finer). The steps along z resolve the wiggling (λ_u/16 or finer); the summary
-warns otherwise.
+warns otherwise. With undulators the beam is pushed in the mean of the fields of the two levels of a step
+(`numerics.beam_field = mean`, "Corrections", item 9); this keeps intense beams in planar undulators stable at λ_u/16.
 
 **Test: coherent spontaneous emission** (`examples/undulator_emission.deck`). The setup:
 - planar undulator, 50 periods of 14.22 mm, K = 0.5;
@@ -650,6 +651,17 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
    completed with the external field, `velocityAtPosition` in `src/external.hpp`).
    In the 10 nm benchmark the power gain length went from 9.5 cm (before 7 and 8) to 8.7 cm (7) and 8.3 cm (7 and
    8); halving Δz or Δζ then changes it by less than 1 %.
+9. **Beam push in the fields of one level** (found with the planar harmonics benchmark, `benchmarks/harmonics`).
+   The beam list was pushed from s⁰ to s¹ in the fields of s⁰, first order in the step. In an undulator the
+   large self-field of the beam turns with the wiggle angle, so the push used the field of a beam tilted by the
+   angle of s⁰, and E + v × B no longer cancelled. A planar undulator with 4 kA (γ = 1000, K = 1.5, σ_r = 10 µm,
+   zero emittance) at Δz = λ_u/16 blew the beam up from the tail forward: ε_n 0 → 2.8 µm and σ_x 10 → 21 µm in
+   25 periods (λ_u/32: 0.04 µm), and the gain length came out 1.8 times too long. Now, with undulators, the beam
+   is pushed again after the march of s¹, from s⁰ in the mean (F⁰ + F¹)/2, and its current of s¹ is deposited
+   anew (`numerics.beam_field = mean`). At λ_u/16: ε_n 0.04 µm, σ_x 10.41 µm in 25 periods, the same as a full
+   predictor–corrector with a second solve of s¹ (10.413 µm) and as the converged λ_u/64 run. Stable at λ_u/8.
+   Extrapolating the field from s⁻¹ and s⁰ instead made it worse. Without undulators nothing changes
+   (`auto` = `level`), bit for bit. Test: `tests/planar_step.sh`.
 
 ## What is new compared with the prototype
 

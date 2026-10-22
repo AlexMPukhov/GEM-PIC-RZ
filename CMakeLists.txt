@@ -224,6 +224,10 @@ if(GEMPIC_HAVE_HDF5)
   set_tests_properties(openpmd PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
+  # beam push in a planar undulator at dz = lambda_u / 16: numerics.beam_field = mean against level
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME planar_step_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/planar_step.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)

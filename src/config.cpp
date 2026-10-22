@@ -1117,6 +1117,10 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.iterations = int(r.integer("iterations", N.iterations));
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
+  {
+    const std::string bf = r.word("beam_field", "auto", {"auto", "level", "mean"});
+    N.beam_field = bf == "level" ? BEAM_FIELD_LEVEL : bf == "mean" ? BEAM_FIELD_MEAN : -1;
+  }
   N.beam_vay = r.word("beam_pusher", "vay", {"vay", "boris"}) == "vay";
   N.seed = static_cast<unsigned long>(r.integer("seed", long(N.seed)));
   N.beam_dz_max = r.num("beam_dz_max", Dim::Length, N.beam_dz_max);
@@ -1255,19 +1259,22 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     readBunch(*b, deck, c.units, c.grid, B, warn);
     c.bunches.push_back(B);
   }
+  std::vector<std::string> planarStepWarnings;
   for (const Block* b : deck.all("undulator")) {
     UndulatorConfig U;
     readUndulator(*b, deck, c.units, U);
-    // planar undulator, high current (benchmarks/harmonics: 4 kA, gamma 1000, K = 1.5): with the field step
-    // lambda_u / 16 the beam blew up transversely (eps_n 0 -> 2.8 um in 25 periods; lambda_u / 24: 0.13 um,
-    // / 32: 0.04 um, / 64: 0.02 um), and the gain dropped; the helical case is far less sensitive
+    // planar undulator, high current (benchmarks/harmonics: 4 kA, gamma 1000, K = 1.5), beam pushed in the
+    // fields of s^0 (numerics.beam_field = level): with the field step lambda_u / 16 the beam blew up
+    // transversely (eps_n 0 -> 2.8 um in 25 periods; lambda_u / 24: 0.13 um, / 32: 0.04 um, / 64: 0.02 um);
+    // the helical case is far less sensitive. With beam_field = mean (default with undulators): 0.04 um at / 16.
     const double dzMax = c.grid.zTable ? c.grid.dz_max : c.grid.dz;
     double qmax = 0.0;
     for (const auto& B : c.bunches) qmax = std::max(qmax, B.charge_pC);
     if (U.type == UndulatorConfig::Type::Planar && qmax >= 1.0 && dzMax > U.period / 32.0 * 1.0001)
-      warn.push_back(b->label() + ": planar undulator with dz = period / " +
-                     std::to_string(int(std::lround(U.period / dzMax))) +
-                     ": use dz <= period / 32 with intense beams (at period / 16 a 4 kA beam blew up transversely)");
+      planarStepWarnings.push_back(b->label() + ": planar undulator with dz = period / " +
+                                   std::to_string(int(std::lround(U.period / dzMax))) +
+                                   " and numerics.beam_field = level: use dz <= period / 32 with intense beams (at "
+                                   "period / 16 a 4 kA beam blew up transversely), or beam_field = mean");
     c.undulators.push_back(U);
   }
   for (const char* kind : {"quadrupole", "plasma_lens", "solenoid"})
@@ -1339,6 +1346,11 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     }
   }
 
+  // beam push in the mean field of s^0 and s^1: default with undulators (the beam's self-field turns with
+  // the wiggle; pushed in the fields of s^0 only, the beam blows up for dz > lambda_u/32)
+  c.numerics.beam_field_auto = c.numerics.beam_field < 0;
+  if (c.numerics.beam_field < 0) c.numerics.beam_field = c.undulators.empty() ? BEAM_FIELD_LEVEL : BEAM_FIELD_MEAN;
+  if (c.numerics.beam_field == BEAM_FIELD_LEVEL) warn.insert(warn.end(), planarStepWarnings.begin(), planarStepWarnings.end());
   if (c.lasers.empty() && c.bunches.empty() && !c.flying_focus.present)
     warn.push_back("the deck defines neither a laser nor a bunch");
   if (!c.plasma.present) warn.push_back("no plasma block: vacuum propagation");
@@ -1584,9 +1596,10 @@ std::string Config::summary() const {
          output.walltime_hours > 0 ? (", stop at " + std::to_string(output.walltime_hours) + " h wall time").c_str()
                                    : "");
   line("output: dir '%s', every %d steps; numerics: %d iterations/slice, theta %.3g, trap advance %.3g dz, beam "
-       "filter %d, beam pusher %s, seed %lu, backend %s",
+       "filter %d, beam pusher %s, beam field %s, seed %lu, backend %s",
        output.dir.c_str(), output.every, numerics.iterations, numerics.theta, numerics.trap_advance, numerics.beam_filter,
-       numerics.beam_vay ? "vay" : "boris", numerics.seed,
+       numerics.beam_vay ? "vay" : "boris", numerics.beam_field == BEAM_FIELD_MEAN ? "mean of s^0, s^1" : "s^0",
+       numerics.seed,
        numerics.backend == NumericsConfig::Backend::Cuda     ? "cuda"
        : numerics.backend == NumericsConfig::Backend::OpenMP ? "openmp"
                                                              : "serial");

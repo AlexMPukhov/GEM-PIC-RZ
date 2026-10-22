@@ -156,6 +156,13 @@ class Simulation {
   void filterBeamCurrent(Currents& C) const;
 
   void pushBeam();
+  void march(double s1);
+  void remeanBeam();
+  void pushBeamParticle(Particle& p);
+  // numerics.beam_field = mean: weight of F^1 in the second push, the beam at s^0, index map of the first push
+  double wNew = 0.0;
+  std::vector<Particle> beamSave;
+  std::vector<int> beamMap;
   void loadFresh();
   void pushStreamParticle(Particle& p, int n, double s1);
   // plasma.smooth_length: radial smoothing of the streaming-plasma sources of half-cell n

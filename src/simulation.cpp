@@ -629,19 +629,67 @@ void Simulation::depositBeamParticle(Currents& C, const Particle& p) {
 // that becomes slower than vz_min stops at its current (z, zeta) and joins the
 // streaming particles of the current march at its zeta.
 void Simulation::pushBeam() {
+  if (cfg.numerics.beam_field == BEAM_FIELD_MEAN) beamSave = beam;
+  for (auto& p : beam) pushBeamParticle(p);
+  for (auto& p : beam)
+    if (p.status == 3) {
+      Particle q = p;
+      q.status = 0;
+      pending.push_back(q);
+    }
+  // compaction in order; beamMap[i]: index of the particle i of s^0 in the new list, or -1
+  beamMap.assign(beam.size(), -1);
+  size_t k = 0;
+  for (size_t i = 0; i < beam.size(); ++i)
+    if (beam[i].status == 0) {
+      beamMap[i] = int(k);
+      beam[k++] = beam[i];
+    }
+  beam.resize(k);
+}
+
+// numerics.beam_field = mean: after the march of s^1 the beam list is pushed again from s^0, in the mean
+// (F^0 + F^1)/2 of the fields of the two levels, and its current of s^1 is deposited anew. The fields of s^1
+// are not solved again: the change of the current is of second order in the step. Particles that the first
+// push lost or returned to streaming keep that outcome; a particle that only the second push would lose
+// keeps its first-push state. Particles trapped during the march are deposited unfiltered, as in the march.
+void Simulation::remeanBeam() {
+  size_t n = 0;
+  for (int k : beamMap) if (k >= 0) ++n;
+  wNew = 0.5;
+  for (size_t i = 0; i < beamSave.size(); ++i) {
+    if (beamMap[i] < 0) continue;
+    Particle q = beamSave[i];
+    pushBeamParticle(q);
+    if (q.status == 0) beam[size_t(beamMap[i])] = q;
+  }
+  wNew = 0.0;
+  c1b.zero();
+  for (size_t i = 0; i < n; ++i) depositBeamParticle(c1b, beam[i]);
+  filterBeamCurrent(c1b);
+  for (size_t i = n; i < beam.size(); ++i) depositBeamParticle(c1b, beam[i]);
+}
+
+void Simulation::pushBeamParticle(Particle& p) {
   const int nsub = std::max(1, int(std::ceil(Delta / cfg.numerics.beam_dz_max)));
   const double dz = Delta / nsub;
   const double rmax = g.rho[g.N];
-  for (auto& p : beam) {
+  {
     for (int sub = 0; sub < nsub && p.status == 0; ++sub) {
       double gm = gammaOf(p);
       double vz = p.uz / gm;
-      if (vz < cfg.numerics.vz_min) { p.status = 3; ++n_restreamed; break; }
+      if (vz < cfg.numerics.vz_min) { p.status = 3; if (wNew == 0.0) ++n_restreamed; break; }
       double dt = dz / vz;
       double w;
       const int na = zv.cell(p.zeta, w);
       if (na < 0 || na >= Nz) { p.status = 2; break; }
       EB f = gather(fold, na, 1.0 - w, na + 1, w, p.x, p.y);
+      if (wNew != 0.0) {  // numerics.beam_field = mean, second push: (F^0 + F^1)/2
+        const EB f1 = gather(fnew, na, 1.0 - w, na + 1, w, p.x, p.y);
+        const double b = 1.0 - wNew;
+        f = {b * f.Ex + wNew * f1.Ex, b * f.Ey + wNew * f1.Ey, b * f.Ez + wNew * f1.Ez,
+             b * f.Bx + wNew * f1.Bx, b * f.By + wNew * f1.By, b * f.Bz + wNew * f1.Bz};
+      }
       addExternal(ext, p.x, p.y, p.z, f, dz);
       if (cfg.numerics.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
       else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
@@ -652,13 +700,6 @@ void Simulation::pushBeam() {
       if (p.zeta < 0.0 || std::hypot(p.x, p.y) >= rmax) p.status = 2;
     }
   }
-  for (auto& p : beam)
-    if (p.status == 3) {
-      Particle q = p;
-      q.status = 0;
-      pending.push_back(q);
-    }
-  beam.erase(std::remove_if(beam.begin(), beam.end(), [](const Particle& p) { return p.status != 0; }), beam.end());
 }
 
 // fresh plasma: rings at the front of the window, quiet start in r^2.
@@ -967,8 +1008,25 @@ void Simulation::step() {
     if (!cfg.chicanes.empty()) applyChicanes(za, s0);
     return;
   }
-  const int N = g.N;
   const double s1 = s0 + Delta;
+  march(s1);
+  if (cfg.numerics.beam_field == BEAM_FIELD_MEAN) remeanBeam();
+  // charge states of the ions leaving the rear of the window
+  for (auto& v : exitStates) std::fill(v.begin(), v.end(), 0.0);
+  for (const auto& p : stream)
+    if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) exitStates[ionIndex(p.sp)][p.Zi] += p.w;
+  absorber(s1);
+  std::swap(fold, fnew);
+  std::swap(c0b, c1b);
+  std::swap(c0s, c1s);
+  s0 = s1;
+  ++step_no;
+  if (!cfg.chicanes.empty()) applyChicanes(za, s0);
+}
+
+// one march of the level s^1: beam push and deposit, fresh plasma, slices from the front to the rear
+void Simulation::march(double s1) {
+  const int N = g.N;
   c1b.zero(); c1s.zero();
   std::fill(freedCharge.begin(), freedCharge.end(), 0.0);
   pending.swap(pendingNext);  // particles that reached s^0 in the last step with v_z < vz_beam
@@ -1092,17 +1150,6 @@ void Simulation::step() {
     predRprev.swap(predR);
     predPprev.swap(predP);
   }
-  // charge states of the ions leaving the rear of the window
-  for (auto& v : exitStates) std::fill(v.begin(), v.end(), 0.0);
-  for (const auto& p : stream)
-    if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) exitStates[ionIndex(p.sp)][p.Zi] += p.w;
-  absorber(s1);
-  std::swap(fold, fnew);
-  std::swap(c0b, c1b);
-  std::swap(c0s, c1s);
-  s0 = s1;
-  ++step_no;
-  if (!cfg.chicanes.empty()) applyChicanes(za, s0);
 }
 
 // damp R near the outer radial boundary; with a flying focus only the difference to the incident field

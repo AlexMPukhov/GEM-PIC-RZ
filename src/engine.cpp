@@ -425,9 +425,9 @@ GEM_HD inline void streamParticle(const Params& P, const FieldsV& F, const CurrV
   pushStream<Atomic>(P, F, C, kdep, p, n, s1, bound, Z);
 }
 
-// (Simulation::pushBeam, one particle); F = fold
+// (Simulation::pushBeam, one particle); F = fold, or (1 - a2) F + a2 F2 (numerics.beam_field = mean)
 GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle& p, int nsub, double dz,
-                                    unsigned long long* lcnt) {
+                                    unsigned long long* lcnt, const FieldsV& F2, double a2) {
   const double rmax = P.g.rho[P.g.N];
   for (int sub = 0; sub < nsub && p.status == 0; ++sub) {
     double gm = gammaOf(p);
@@ -438,6 +438,12 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
     const int na = P.zv.cell(p.zeta, w);
     if (na < 0 || na >= P.Nz) { p.status = 2; break; }
     EB f = gather(P, F, na, 1.0 - w, na + 1, w, p.x, p.y);
+    if (a2 != 0.0) {
+      const EB f2 = gather(P, F2, na, 1.0 - w, na + 1, w, p.x, p.y);
+      const double b = 1.0 - a2;
+      f = {b * f.Ex + a2 * f2.Ex, b * f.Ey + a2 * f2.Ey, b * f.Ez + a2 * f2.Ez,
+           b * f.Bx + a2 * f2.Bx, b * f.By + a2 * f2.By, b * f.Bz + a2 * f2.Bz};
+    }
     addExternal(P.ext, p.x, p.y, p.z, f, dz);
     if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
@@ -850,6 +856,9 @@ struct EngineState {
   std::vector<dev::CurrStore> local;  // CPU: per-thread currents of one half-cell
   // particles
   par::Array<Particle> stream, backup, born, beam, beamTmp, pnext, pprev;
+  par::Array<Particle> beamSave;  // beam_field = mean: the beam list at s^0
+  par::Array<int> beamMap;        // beam_field = mean: index of beamSave[i] in the beam list after the push, or -1
+  par::Array<unsigned long long> lcntScratch;
   par::Array<int> cnt;
   par::Array<unsigned long long> lcnt;
   par::Array<double> bound, freed, exitSt;
@@ -1061,12 +1070,19 @@ void Engine::step() {
   prof.start();
 
   // ---- 1. beam push (fields of s^0)
+  const bool repush = sim.cfg.numerics.beam_field == BEAM_FIELD_MEAN;
+  const int nBeam0 = E.nBeam;
+  const int nsubB = std::max(1, int(std::ceil(Delta / sim.cfg.numerics.beam_dz_max)));
+  const double dzB = Delta / nsubB;
+  if (repush) {
+    E.beamSave.reserve(std::max(1, nBeam0));
+    E.beamMap.reserve(std::max(1, nBeam0));
+    par::copy(E.beamSave.data(), E.beam.data(), size_t(nBeam0));
+  }
   {
-    const int nsub = std::max(1, int(std::ceil(Delta / sim.cfg.numerics.beam_dz_max)));
-    const double dz = Delta / nsub;
     Particle* beam = E.beam.data();
     par::forDyn(&cnt[C_BEAM], nullptr, E.nBeam,
-                GEM_LAMBDA(long i) { pushBeamParticle(P, fo, beam[i], nsub, dz, lcnt); });
+                GEM_LAMBDA(long i) { pushBeamParticle(P, fo, beam[i], nsubB, dzB, lcnt, fo, 0.0); });
   }
   // compaction: alive -> beamTmp, slower than vz_min -> waiting list (pprev)
   E.beamTmp.reserve(std::max(1, E.nBeam));
@@ -1076,10 +1092,15 @@ void Engine::step() {
     E.hcnt[C_PPREV] = E.nPprev;
     E.pushCounters();
     Particle *beam = E.beam.data(), *tmp = E.beamTmp.data(), *pprev = E.pprev.data();
+    int* bmap = repush ? E.beamMap.data() : nullptr;
     par::forDyn(&cnt[C_BEAM], nullptr, E.nBeam, GEM_LAMBDA(long i) {
       const Particle& p = beam[i];
-      if (p.status == 0) tmp[par::atomicFetchAdd(&cnt[C_TMP], 1)] = p;
-      else if (p.status == 3) {
+      if (bmap) bmap[i] = -1;
+      if (p.status == 0) {
+        const int k = par::atomicFetchAdd(&cnt[C_TMP], 1);
+        tmp[k] = p;
+        if (bmap) bmap[i] = k;
+      } else if (p.status == 3) {
         Particle q = p;
         q.status = WAITING;
         pprev[par::atomicFetchAdd(&cnt[C_PPREV], 1)] = q;
@@ -1365,6 +1386,50 @@ void Engine::step() {
     });
     prof.stop(Profile::CORR);
     E.ip = 1 - E.ip;
+  }
+
+  // ---- 4b. beam_field = mean (Simulation::step): the beam is pushed again from s^0 in (F^0 + F^1)/2 and
+  // its current of s^1 is deposited anew; particles lost or returned to streaming in the first push keep
+  // that outcome, and a particle that the second push would lose keeps its first-push state
+  if (repush) {
+    E.pullCounters();
+    const int nSurv = E.nBeam, nAll = E.hcnt[C_BEAM];
+    E.lcntScratch.clear(dev::L_COUNT);
+    Particle *save = E.beamSave.data(), *beam = E.beam.data();
+    const int* bmap = E.beamMap.data();
+    unsigned long long* lsc = E.lcntScratch.data();
+    par::forN(nBeam0, GEM_LAMBDA(long i) {
+      const int k = bmap[i];
+      if (k < 0) return;
+      Particle q = save[i];
+      pushBeamParticle(P, fo, q, nsubB, dzB, lsc, fn, 0.5);
+      if (q.status == 0) beam[k] = q;
+    });
+    E.Cb[inew].zero();
+    par::forN(nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[i]); });
+    if (const int passes = sim.cfg.numerics.beam_filter) {
+      const struct { cplx* v; int L; } cols[3] = {{c1b.jr, N + 1}, {c1b.jp, N}, {c1b.jz, N}};
+      for (const auto& cl : cols) {
+        cplx* v = cl.v;
+        const int L = cl.L;
+        par::forN(long(M + 1) * L, GEM_LAMBDA(long col) {
+          const int m = int(col / L), i = int(col % L);
+          for (int p = 0; p < passes; ++p) {
+            cplx prev;
+            for (int k = 0; k < Nz; ++k) {
+              cplx& x = v[(size_t(m) * Nz + k) * L + i];
+              const cplx cur = x;
+              const cplx next = (k + 1 < Nz) ? v[(size_t(m) * Nz + k + 1) * L + i] : cplx();
+              x = 0.25 * prev + 0.5 * cur + 0.25 * next;
+              prev = cur;
+            }
+          }
+        });
+      }
+    }
+    // particles trapped during the march: deposited unfiltered, as in the march
+    par::forN(nAll - nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[nSurv + i]); });
+    par::fence();
   }
 
   // ---- 5. charge states of the ions leaving the window, absorber
