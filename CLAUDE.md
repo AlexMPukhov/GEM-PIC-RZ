@@ -7,9 +7,11 @@ Read this first. README.md is the user documentation; docs/ holds the details.
   forward field (quasi-static = dropping ALL slow-time derivatives).
 - Build/test: `cmake -B build && cmake --build build -j && (cd build && ctest)`; for many threads use
   `numerics.backend=openmp` and `OMP_PROC_BIND=false` in containers.
+- Unsubmitted papers that are not directly about the code go to the private repository CLAUDE-notes, never here.
 - Commit at milestones with descriptive messages; push to origin main.
 - Ongoing work:
-  - **FEL** (separate paper): `docs/fel_handoff.md` (state, lessons, open items), `paper_fel/` (draft + NOTES.md),
+  - **FEL** (separate paper): draft, notes and handoff are in the PRIVATE repository AlexMPukhov/CLAUDE-notes
+    (`gem-pic-rz/`); read them there if that repository is in the session. Benchmarks here:
     `benchmarks/harmonics/`, `benchmarks/high_rho/`, `benchmarks/genesis_seeded/`.
   - Code paper: `paper/gempic_rz.tex`.
   - GPU check: `benchmarks/gpu/` (not yet run on a GPU).
