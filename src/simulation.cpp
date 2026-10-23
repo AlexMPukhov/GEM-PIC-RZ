@@ -280,13 +280,17 @@ void Simulation::initBunches() {
       };
       auto sample = [&]() {
         Particle p{};
-        p.zeta = (B.shape == BunchConfig::Shape::Gaussian) ? B.zeta_center + B.sigma_z * nd(rng)
+        auto drawZeta = [&]() {
+          return (B.shape == BunchConfig::Shape::Gaussian) ? B.zeta_center + B.sigma_z * nd(rng)
                  : (B.shape == BunchConfig::Shape::Flattop) ? B.zeta_center + B.length * (ud(rng) - 0.5)
                                                             : sampleZeta(ud(rng));
-        if (B.profile_r.empty()) {
+        };
+        if (B.profile_r.empty()) {  // same order of the random numbers as before profile_r existed
           p.x = B.sigma_x * nd(rng);
           p.y = B.sigma_y * nd(rng);
-        } else {  // rejection sampling of profile_r(x, y, r, zeta) in the disk r < r_extent
+          p.zeta = drawZeta();
+        } else {
+          p.zeta = drawZeta();  // rejection sampling of profile_r(x, y, r, zeta) in the disk r < r_extent
           const double R = B.r_extent;
           for (long t = 0;; ++t) {
             if (t > 100000000L)
