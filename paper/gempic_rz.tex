@@ -1,10 +1,13 @@
 % GEM-PIC-RZ: manuscript draft
 % Compile: pdflatex gempic_rz && pdflatex gempic_rz
-\documentclass[aps,prab,reprint,floatfix,superscriptaddress,amsmath,amssymb]{revtex4-2}
+\documentclass[preprint,12pt]{elsarticle}
 
+\usepackage{amsmath,amssymb}
 \usepackage{graphicx}
 \usepackage{bm}
 \usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{lineno}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,decorations.pathmorphing}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
@@ -12,20 +15,39 @@
 \newcommand{\dd}{\mathrm{d}}
 \newcommand{\todo}[1]{\textcolor{red}{[#1]}}
 
+\journal{Journal of Computational Physics}
+
 \begin{document}
 
-\title{GEM-PIC-RZ: a Galilean electromagnetic particle-in-cell code\\ in quasi-cylindrical geometry with nonuniform grids}
+\begin{frontmatter}
 
-\author{Alexander Pukhov}
-\affiliation{Institut f\"ur Theoretische Physik I, Heinrich-Heine-Universit\"at D\"usseldorf, 40225 D\"usseldorf, Germany}
+\title{GEM-PIC-RZ: a Galilean electromagnetic particle-in-cell code in quasi-cylindrical geometry with nonuniform grids}
 
-\date{\today}
+\author{Alexander Pukhov\corref{cor1}}
+\ead{\todo{e-mail}}
+\cortext[cor1]{Corresponding author}
+\affiliation{organization={Institut für Theoretische Physik I, Heinrich-Heine-Universität Düsseldorf},
+             postcode={40225}, city={Düsseldorf}, country={Germany}}
 
 \begin{abstract}
 Laser-plasma accelerators span scales from the micrometre wavelength of the driving laser to acceleration lengths of millimetres or metres. Full particle-in-cell (PIC) simulations resolve the laser carrier but are constrained by the Courant condition, whereas quasi-static models are computationally efficient but do not resolve it. We present GEM-PIC-RZ, a quasi-cylindrical implementation of the Galilean electromagnetic PIC scheme. The method retains the slow evolution of the forward field and therefore resolves the laser carrier while allowing a propagation step governed by the evolution of the laser and plasma rather than by the cell size. User-defined nonuniform grids and a charge-conserving regularization of the bubble closure support efficient simulations across these scales. Comparisons with the full PIC code FBPIC show agreement for the laser wake, the depletion and redshift of a few-cycle pulse, and ionization injection; the measured CPU time is about 2\,\% of that for FBPIC in the reported runs;  the injected charge carries a model uncertainty of about 15\,\% from the regularization. An envelope model, in contrast, underestimates the depletion of the few-cycle pulse fivefold. Self-injection in a sharp density down-ramp is not yet reproduced and remains an open problem.
 \end{abstract}
 
-\maketitle
+\begin{highlights}
+\item Galilean electromagnetic PIC in azimuthal modes on nonuniform $r$, $\zeta$, $z$ grids
+\item The laser carrier is resolved without a Courant limit on the propagation step
+\item Finite-volume radial operators keep the discrete Gauss law on stretched grids
+\item Wake, laser depletion and ionization injection match FBPIC at 2\,\% of the CPU time
+\item Open-source code with GPU, MPI and openPMD output; all test decks included
+\end{highlights}
+
+\begin{keyword}
+particle-in-cell \sep laser wakefield acceleration \sep Galilean transformation \sep quasi-cylindrical geometry \sep nonuniform grids \sep numerical Cherenkov radiation
+\end{keyword}
+
+\end{frontmatter}
+
+\linenumbers
 
 %---------------------------------------------------------------------------
 \section{Introduction}\label{sec:intro}
@@ -194,11 +216,11 @@ Like QUARZ~\cite{QUARZ}, GEM-PIC-RZ was developed using a \emph{zero-touch} work
 
 Before comparing with other codes, the building blocks have to be shown to be correct against references that do not depend on any simulation code. Table~\ref{tab:tests} lists these tests: the self-field of a relativistic bunch against Gauss's law on uniform and stretched grids, laser diffraction in vacuum, the collapse of ions in a dense bunch, and field ionization against rate equations.
 
-\begin{table}[htb]
+\begin{table}[!htbp]
 \caption{Verification tests (all in the test suite).}\label{tab:tests}
-\begin{ruledtabular}
 \begin{tabular}{p{0.52\columnwidth}p{0.4\columnwidth}}
-test & result \\ \hline
+\toprule
+test & result \\ \midrule
 Field of an ultra-relativistic bunch in vacuum vs Gauss's law (uniform, stretched and user-defined nonuniform radial grids) & $E_r$ to $5\times10^{-4}$; noise $E_z < 2\times10^{-3}E_r$ \\
 Same on a user-defined nonuniform $\zeta$ grid (2.5--8\,$k_0^{-1}$ across the bunch) & $2\times10^{-3}$ (shot-noise level) \\
 $\gamma = 100$ bunch in its own field, 8\,cm & energy kept to $2\times10^{-5}$ \\
@@ -208,25 +230,25 @@ Field ionization of H vs $1 - \exp(-\int w\,\dd t)$ & 0.02294 vs 0.02288 \\
 N$^{5+}\to$N$^{6+}\to$N$^{7+}$ ($a_0 = 2.2$) vs rate equations & 0.9357/0.0600/0.0044 vs 0.9367/0.0593/0.0041 \\
 ADK rate vs Landau rate (H-like ions) & $10^{-12}$ \\
 Immobile limit of ions ($M = 10^{15}$\,u) & identical fields \\
+\bottomrule
 \end{tabular}
-\end{ruledtabular}
 \end{table}
 
 \subsection{User-defined nonuniform $\zeta$ and $s$ grids}
 
 The user-defined nonuniform grids are meant to save computing time without loss of accuracy. The test is a beam-driven wake with two short bunches far apart, the configuration of a plasma wakefield accelerator with a driver and a witness: a plasma of $0.002\,n_c$, a driver of $\sigma_z = 1.5\,k_0^{-1}$ and a witness $130\,k_0^{-1}$ behind (Table~\ref{tab:zgrid}). A uniform coarse grid ($h = 2$) is 16\,\% off at the driver; a user-defined nonuniform grid that is fine ($h = 0.25$) only at the two bunches reproduces the fine uniform grid to $10^{-3}$ with a quarter of the slices and 3.6 times faster. In the laser wakefield case of Sec.~\ref{sec:fbpic}, a step in $s$ that is small only in the density up-ramp gives the witness energy within 0.4\,\% of a run with uniformly small steps, with 44 instead of 80 steps; uniform large steps are 1.4\,\% off.
 
-\begin{table}[htb]
+\begin{table}[!htbp]
 \caption{Beam-driven wake on uniform and user-defined nonuniform $\zeta$ grids. $E_z$ errors relative to $\max|E_z|$, witness energy change over 50 steps.}\label{tab:zgrid}
-\begin{ruledtabular}
 \begin{tabular}{lccc}
-$\zeta$ grid & slices & $E_z$ error\footnotemark[1] & $\Delta E$ error \\ \hline
+\toprule
+$\zeta$ grid & slices & $E_z$ error$^{a}$ & $\Delta E$ error \\ \midrule
 uniform $h = 0.25$ (ref.) & 2800 & -- & -- \\
 uniform $h = 2$ & 350 & 16\,\% / 6.6\,\% & 1.3\,\% \\
 nonuniform 0.25 / 2 & 734 & 0.11\,\% / 0.84\,\% & 0.06\,\% \\
+\bottomrule
 \end{tabular}
-\footnotetext[1]{At the driver / at the witness.}
-\end{ruledtabular}
+\par\smallskip{\footnotesize $^{a}$At the driver / at the witness.}
 \end{table}
 
 \subsection{Numerical Cherenkov radiation}\label{sec:cherenkov}
@@ -240,8 +262,9 @@ We compare GEM-PIC-RZ with the quasi-cylindrical spectral full PIC code FBPIC~\c
 
 \subsection{The wake in the bubble regime}\label{sec:fbpic}
 
-\begin{figure}[htb]
-\includegraphics[width=\columnwidth]{figs/fig_lwfa.pdf}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.75\textwidth,height=0.75\textheight,keepaspectratio]{figs/fig_lwfa.pdf}
 \caption{Laser wakefield in the bubble regime ($a_0 = 2$, $0.002\,n_c$): (a) on-axis $E_z$ after 50 and 100\,$\mu$m of propagation, GEM-PIC-RZ (solid) and FBPIC (dashed); (b) the laser field $E_x$ on the axis at 100\,$\mu$m. The laser moves to the right.}\label{fig:lwfa}
 \end{figure}
 
@@ -251,8 +274,9 @@ Figure~\ref{fig:lwfa} shows the on-axis fields. After 100\,$\mu$m the first wake
 
 \subsection{Bubble closure}\label{sec:closure}
 
-\begin{figure}[htb]
-\includegraphics[width=\columnwidth]{figs/fig_closure.pdf}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.75\textwidth,height=0.75\textheight,keepaspectratio]{figs/fig_closure.pdf}
 \caption{Back of the first bubble in the case of Fig.~\ref{fig:lwfa} at 100\,$\mu$m: (a) on-axis electron density, (b) on-axis $E_z$, cold plasma (grey, orange) and with source smoothing $a = 0.25\,\mu$m (blue), for $\Delta = 2.5$ and $1.25\,\mu$m, and FBPIC (dashed); (c) peak on-axis density at the closure against the propagation distance for $\Delta = 5\,\mu$m, cold (red) and smoothed (blue).}\label{fig:closure}
 \end{figure}
 
@@ -264,8 +288,9 @@ The spike is unphysical: real plasmas are warm, real drivers are not perfectly c
 
 \subsection{Laser evolution: diffraction, depletion and redshift}\label{sec:laser}
 
-\begin{figure}[htb]
-\includegraphics[width=\columnwidth]{figs/fig_laser.pdf}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.75\textwidth,height=0.75\textheight,keepaspectratio]{figs/fig_laser.pdf}
 \caption{Evolution of a 6.8\,fs laser pulse ($a_0 = 1.5$) in a plasma of $0.01\,n_c$ over 300\,$\mu$m (six Rayleigh lengths): (a) laser energy, (b) peak of $|E_x|$ on the axis, (c) spectral centroid of the laser fields; (d) on-axis $E_z$ and (e) on-axis laser field $E_x$ at 300\,$\mu$m (for Wake-T $\pm$ the envelope). FBPIC (grey), GEM-PIC-RZ with $\Delta = 2$ and $1\,\mu$m (blue) and the envelope code Wake-T (red, dashed).}\label{fig:laser}
 \end{figure}
 
@@ -277,8 +302,9 @@ At this density the closure of Sec.~\ref{sec:closure} is strong enough to make t
 
 \subsection{Ionization injection}\label{sec:ioninj}
 
-\begin{figure}[htb]
-\includegraphics[width=\columnwidth]{figs/fig_injection.pdf}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.75\textwidth,height=0.75\textheight,keepaspectratio]{figs/fig_injection.pdf}
 \caption{Ionization injection from a nitrogen dopant ($a_0 = 2.3$, $0.002\,n_c$, 1\,\% N$^{5+}$): (a) charge and (b) mean energy of the injected electrons above 5\,MeV against the lab position of the bunch, (c) their spectrum at $z = 183\,\mu$m. FBPIC (grey) and GEM-PIC-RZ with $\Delta = 2.5$ and $1.25\,\mu$m (blue).}\label{fig:ioninj}
 \end{figure}
 
@@ -289,21 +315,21 @@ The ionized fraction of the dopant agrees (3.1\,\% N$^{6+}$ and 0.3\,\% N$^{7+}$
 
 \subsection{Density down-ramp injection: an open problem}\label{sec:downramp}
 
-\begin{table}[htb]
+\begin{table}[!htbp]
 \caption{Density down-ramp injection: charge (pC) of the trapped electrons above 2 and 5\,MeV. FBPIC at $ct = 150$ and $200\,\mu$m (bunch at $z = 136$ and $179\,\mu$m); GEM-PIC-RZ at the levels $s = 150$ and $200\,\mu$m. The last row uses $\Delta = 0.125\,\mu$m in the ramp and $1.25\,\mu$m elsewhere.}\label{tab:downramp}
-\begin{ruledtabular}
 \begin{tabular}{lcccc}
+\toprule
  & \multicolumn{2}{c}{$ct$ or $s = 150\,\mu$m} & \multicolumn{2}{c}{$ct$ or $s = 200\,\mu$m} \\
  & $>2$\,MeV & $>5$\,MeV & $>2$\,MeV & $>5$\,MeV \\
-\hline
+\midrule
 FBPIC & 51.0 & 14.6 & 51.1 & 30.7 \\
 $\Delta = 2.5\,\mu$m & 9.9 & 8.9 & 8.5 & 8.4 \\
 $\Delta = 1.25\,\mu$m & 20.9 & 17.1 & 19.6 & 18.8 \\
 $\Delta = 0.5\,\mu$m & 12.2 & 9.9 & -- & -- \\
 $\Delta = 0.25\,\mu$m & 14.2 & 13.7 & -- & -- \\
 ramp refined & -- & -- & 27.6 & 12.6 \\
+\bottomrule
 \end{tabular}
-\end{ruledtabular}
 \end{table}
 
 In a density down-ramp the plasma wavelength grows, the back of the bubble slows down, and background electrons that it overtakes are trapped~\cite{Bulanov1998,Geddes2008,Buck2013}. Sharp ramps, made with shocks or blades in a gas jet, give bunches with small energy spread and are used in many experiments. We report this benchmark as a caution, because GEM-PIC-RZ does not yet pass it. The laser of Sec.~\ref{sec:fbpic}, now with $a_0 = 1.8$, crosses a plateau of $2n_0$ ($n_0 = 0.002\,n_c$) that drops linearly to $n_0$ between $z = 60$ and $70\,\mu$m. Behind the ramp the bubble lengthens by about 30\,\% within 10\,$\mu$m, and its back moves forward through the window at about $0.5\,c$.
@@ -314,12 +340,12 @@ We hypothesize that the discrepancy is related to the use of GT2 for the particl
 
 \subsection{Robustness to the smoothing length and the step}\label{sec:sens}
 
-\begin{table*}[htb]
+\begin{table}[!htbp]
 \caption{Sensitivity of the benchmark results to the source-smoothing length $a$ (in $k_0^{-1}$) and the step $\Delta$. Pairs give the result for the step of the benchmark and for half of it ($\Delta = 2.5/1.25\,\mu$m; laser: $2/1\,\mu$m). Laser evolution: $a$ is the length for $m \ge 1$, with $3\,k_0^{-1}$ for $m = 0$ (cold: both zero); with $a = 3$ for $m \ge 1$, $W/W_0 = 0.773$. Ionization injection: bunch at $z = 175\,\mu$m, FBPIC interpolated to it. Fields in $m_ec\omega_0/e$, deviations from FBPIC rms, in \% of the peak or in $10^{-3}\,m_ec\omega_0/e$. Bold: the settings of the benchmark figures.}\label{tab:sens}
-\begin{ruledtabular}
 \footnotesize
 \begin{tabular}{llccccc}
-benchmark & quantity & FBPIC & $a = 0$ & $a = 1$ & $a = 2$ & $a = 4$ \\ \hline
+\toprule
+benchmark & quantity & FBPIC & $a = 0$ & $a = 1$ & $a = 2$ & $a = 4$ \\ \midrule
 wake, 100\,$\mu$m & rms dev., first period [\%] & -- & 1.6 / 2.0 & 1.8 / 2.0 & \textbf{1.9} / 2.1 & 3.4 / 3.6 \\
  & rms dev., behind bubble [$10^{-3}$] & -- & 1.8 / 9.7 & 1.1 / 1.8 & \textbf{0.70} / 0.72 & 1.5 / 1.9 \\
  & $E_z$ at bubble back & 0.042 & 0.047 / 0.069 & 0.042 / 0.042 & \textbf{0.040} / 0.041 & 0.036 / 0.035 \\
@@ -329,9 +355,9 @@ laser, 300\,$\mu$m & $W/W_0$ & 0.731 & 0.740 & \textbf{0.731} / 0.761 & 0.747 & 
 ionization inj. & $Q(E > 5\,\mathrm{MeV})$ [pC] & 1.70 & 1.99 & 1.84 / 1.95 & \textbf{1.54} / 1.68 & 0.96 \\
  & $\langle E\rangle$ [MeV] & 12.1 & 12.3 & 12.1 / 12.0 & \textbf{11.9} / 11.7 & 11.0 \\
 down-ramp inj. & $Q(E > 2\,\mathrm{MeV})$, 150\,$\mu$m [pC] & 51.0 & 18.8 / 21.9 & 14.4 & \textbf{9.9} / 20.9 & 10.1 / 17.0 \\
+\bottomrule
 \end{tabular}
-\end{ruledtabular}
-\end{table*}
+\end{table}
 
 The source smoothing is a numerical model parameter, and a result is only as good as its independence of it. We therefore repeated every benchmark with smoothing lengths from 0 to $4\,k_0^{-1}$ and with half the step (Table~\ref{tab:sens}; scripts and runs in the repository). The conclusions fall into three classes.
 
@@ -356,9 +382,20 @@ Against the full PIC code FBPIC, GEM-PIC-RZ reproduces the bubble-regime wake, t
 
 GEM-PIC-RZ is open source~\cite{GEMPICRZ}, with the decks and scripts of all tests in this paper. Its development, like that of QUARZ, shows that a production-grade simulation code can be built by an AI agent under the direction of a physicist, when every feature is held to an independent test.
 
-\begin{acknowledgments}
+\section*{Acknowledgments}
 This work was supported by DFG and BMBF. The author gratefully acknowledges the Gauss Centre for Supercomputing e.V. (gauss-centre.eu) for funding this project (lpqed) by providing computing time through the John von Neumann Institute for Computing (NIC) on the GCS Supercomputer JUPITER at J\"ulich Supercomputing Centre (JSC).
-\end{acknowledgments}
+
+\section*{CRediT authorship contribution statement}
+\textbf{Alexander Pukhov:} Conceptualization, Methodology, Software, Validation, Formal analysis, Writing -- original draft, Writing -- review \& editing.
+
+\section*{Declaration of competing interest}
+The author declares that he has no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+\section*{Data availability}
+The code, the input decks and the analysis scripts of all tests in this paper are openly available at \url{https://github.com/AlexMPukhov/GEM-PIC-RZ}; the version described here is archived as \href{https://doi.org/10.5281/zenodo.23600179}{doi:10.5281/zenodo.23600179}.
+
+\section*{Declaration of generative AI and AI-assisted technologies in the writing process}
+During the preparation of this work the author used Claude (Anthropic) in order to implement and test the code, run and analyse the simulations, and draft the manuscript. After using this tool, the author reviewed and edited the content as needed and takes full responsibility for the content of the published article.
 
 \begin{thebibliography}{99}
 \bibitem{Tajima1979} T. Tajima and J. M. Dawson, Laser electron accelerator, Phys. Rev. Lett. \textbf{43}, 267 (1979).
