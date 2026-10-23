@@ -1,5 +1,7 @@
 # GEM-PIC-RZ
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23600179.svg)](https://doi.org/10.5281/zenodo.23600179)
+
 Galilean electromagnetic particle-in-cell code in quasi-cylindrical geometry
 (azimuthal modes), with free-hand non-uniform grids along r, ζ and z: the
 step is given at reference points and interpolated linearly in between. The
@@ -18,6 +20,8 @@ If you use GEM-PIC-RZ, please cite the paper
 
 and the method paper: A. Pukhov, N. Elkina, and T. Wilson, *Galilean electromagnetic particle-in-cell code*,
 [J. Comput. Phys. **567**, 115331 (2026)](https://doi.org/10.1016/j.jcp.2026.115331).
+For the code itself: A. Pukhov, *GEM-PIC-RZ* (version 1.0.0), Zenodo,
+[doi:10.5281/zenodo.23600179](https://doi.org/10.5281/zenodo.23600179).
 `CITATION.cff` has the machine-readable form (GitHub: "Cite this repository").
 
 The code is released under the BSD 3-Clause License (`LICENSE`). Version: `gempic_rz --version`.

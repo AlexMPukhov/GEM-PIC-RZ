@@ -6,6 +6,7 @@ authors:
     given-names: Alexander
     affiliation: "Heinrich-Heine-Universität Düsseldorf"
 version: "1.0.0"
+doi: "10.5281/zenodo.23600179"
 repository-code: "https://github.com/AlexMPukhov/GEM-PIC-RZ"
 license: BSD-3-Clause
 keywords:
