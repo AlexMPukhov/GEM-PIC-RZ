@@ -25,7 +25,7 @@ if(GEMPIC_REQUESTED_CXX)
   endif()
 endif()
 
-project(gempic_rz LANGUAGES CXX)
+project(gempic_rz VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

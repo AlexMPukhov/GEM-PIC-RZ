@@ -3,10 +3,24 @@
 Galilean electromagnetic particle-in-cell code in quasi-cylindrical geometry
 (azimuthal modes), with free-hand non-uniform grids along r, ζ and z: the
 step is given at reference points and interpolated linearly in between. The
-scheme is described in a manuscript in preparation. This project grew out of
+scheme is described in A. Pukhov, [arXiv:2610.31622](https://arxiv.org/abs/2610.31622)
+(see "Citing GEM-PIC-RZ" below). This project grew out of
 a single-file prototype (not included). Two discretization errors of the
 prototype have been corrected (see "Corrections"), so results with particle
 bunches differ from the prototype.
+
+## Citing GEM-PIC-RZ
+
+If you use GEM-PIC-RZ, please cite the paper
+
+> A. Pukhov, *GEM-PIC-RZ: a Galilean electromagnetic particle-in-cell code in quasi-cylindrical geometry with
+> nonuniform grids*, [arXiv:2610.31622](https://arxiv.org/abs/2610.31622) (2026),
+
+and the method paper: A. Pukhov, N. Elkina, and T. Wilson, *Galilean electromagnetic particle-in-cell code*,
+[J. Comput. Phys. **567**, 115331 (2026)](https://doi.org/10.1016/j.jcp.2026.115331).
+`CITATION.cff` has the machine-readable form (GitHub: "Cite this repository").
+
+The code is released under the BSD 3-Clause License (`LICENSE`). Version: `gempic_rz --version`.
 
 ## Build
 

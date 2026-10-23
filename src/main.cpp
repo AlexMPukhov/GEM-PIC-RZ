@@ -8,7 +8,9 @@
 //                        laser[1].a0=1.5   "bunch.name=witness 2"
 //    --check             read and check the deck, print the summary, exit
 //    --template          print an annotated example deck and exit
+//    --version           print the version and exit
 // ============================================================================
+#include "version.hpp"
 #include <chrono>
 #if defined(_OPENMP)
 #include <omp.h>
@@ -85,7 +87,8 @@ output {
 void usage() {
   std::fprintf(stderr,
                "usage: gempic_rz <deck> [block.key=value ...] [--check] [--restart <checkpoint.h5> | latest]\n"
-               "       gempic_rz --template        (print an example deck)\n");
+               "       gempic_rz --template        (print an example deck)\n"
+               "       gempic_rz --version\n");
 }
 
 }  // namespace
@@ -101,6 +104,7 @@ int run(int argc, char** argv) {
     else if (s == "--restart" && a + 1 < argc) restart = argv[++a];
     else if (s.rfind("--restart=", 0) == 0) restart = s.substr(10);
     else if (s == "--template") { std::fputs(TEMPLATE, stdout); return 0; }
+    else if (s == "--version") { std::printf("GEM-PIC-RZ %s\n", GEMPIC_VERSION); return 0; }
     else if (s == "-h" || s == "--help") { usage(); return 0; }
     else if (s.find('=') != std::string::npos) overrides.push_back(s);
     else if (deckPath.empty()) deckPath = s;
@@ -115,7 +119,7 @@ int run(int argc, char** argv) {
     for (const auto& o : overrides) deck.applyOverride(o);
     std::vector<std::string> warnings;
     cfg = gem::Config::fromDeck(deck, &warnings);
-    std::printf("GEM-PIC-RZ   deck: %s\n%s", deckPath.c_str(), cfg.summary().c_str());
+    std::printf("GEM-PIC-RZ %s   deck: %s\n%s", GEMPIC_VERSION, deckPath.c_str(), cfg.summary().c_str());
     for (const auto& w : warnings) std::printf("WARNING: %s\n", w.c_str());
   } catch (const gem::DeckError& e) {
     std::fprintf(stderr, "error in input deck: %s\n", e.what());

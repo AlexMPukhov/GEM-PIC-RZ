@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use GEM-PIC-RZ, please cite the paper below."
+title: "GEM-PIC-RZ: Galilean electromagnetic particle-in-cell code in quasi-cylindrical geometry"
+authors:
+  - family-names: Pukhov
+    given-names: Alexander
+    affiliation: "Heinrich-Heine-Universität Düsseldorf"
+version: "1.0.0"
+repository-code: "https://github.com/AlexMPukhov/GEM-PIC-RZ"
+license: BSD-3-Clause
+keywords:
+  - particle-in-cell
+  - plasma wakefield acceleration
+  - free-electron laser
+  - Galilean electromagnetic PIC
+preferred-citation:
+  type: article
+  title: "GEM-PIC-RZ: a Galilean electromagnetic particle-in-cell code in quasi-cylindrical geometry with nonuniform grids"
+  authors:
+    - family-names: Pukhov
+      given-names: Alexander
+  year: 2026
+  identifiers:
+    - type: other
+      value: "arXiv:2610.31622"
+  url: "https://arxiv.org/abs/2610.31622"

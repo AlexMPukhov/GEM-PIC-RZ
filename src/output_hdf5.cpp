@@ -28,6 +28,7 @@
 //  Axis values: face 0 of E_r, B_phi holds 0; the fields on the axis follow
 //  from regularity as in the particle gather (see tools/h5_extract.cpp).
 // ============================================================================
+#include "version.hpp"
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -547,7 +548,7 @@ void Simulation::writeOpenPMD() {
   Writer::attr(root, "iterationEncoding", std::string("fileBased"));
   Writer::attr(root, "iterationFormat", std::string("openpmd_%T.h5"));
   Writer::attr(root, "software", std::string("GEM-PIC-RZ"));
-  Writer::attr(root, "softwareVersion", std::string("1"));
+  Writer::attr(root, "softwareVersion", std::string(GEMPIC_VERSION));
   Writer::attr(root, "author", std::string("GEM-PIC-RZ user"));
   {
     char buf[64];
