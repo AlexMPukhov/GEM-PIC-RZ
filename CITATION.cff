@@ -7,6 +7,13 @@ authors:
     affiliation: "Heinrich-Heine-Universität Düsseldorf"
 version: "1.0.0"
 doi: "10.5281/zenodo.23600179"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23600178"
+    description: "Concept DOI: all versions of GEM-PIC-RZ"
+  - type: doi
+    value: "10.5281/zenodo.23600179"
+    description: "GEM-PIC-RZ 1.0.0"
 repository-code: "https://github.com/AlexMPukhov/GEM-PIC-RZ"
 license: BSD-3-Clause
 keywords:
