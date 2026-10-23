@@ -899,11 +899,22 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   if (eg >= 0 && B.gamma < 10.0)
     warn.push_back(b.label() + ": gamma < 10 - the beam push along s assumes v_z close to c");
   B.energy_spread = r.num("energy_spread", Dim::None, 0.0);
-  B.sigma_x = r.num("sigma_x", Dim::Length);
-  B.sigma_y = r.num("sigma_y", Dim::Length, B.sigma_x);
+  const std::string shape_r = r.word("distribution_r", "gaussian", {"gaussian", "function"});
+  if (shape_r == "gaussian") {
+    B.sigma_x = r.num("sigma_x", Dim::Length);
+    B.sigma_y = r.num("sigma_y", Dim::Length, B.sigma_x);
+    if (!(B.sigma_x > 0) || !(B.sigma_y > 0)) r.failKey("sigma_x", "must be positive");
+  } else {
+    if (r.has("sigma_x") || r.has("sigma_y"))
+      r.failKey("sigma_x", "is not used with distribution_r = function (the profile_r gives the size)");
+    B.profile_r = r.expr("profile_r", {"x", "y", "r", "zeta"});
+    B.r_extent = r.num("r_extent", Dim::Length);
+    if (!(B.r_extent > 0)) r.failKey("r_extent", "must be positive");
+  }
   B.emittance_x = r.num("emittance_x", Dim::Length, 0.0);
   B.emittance_y = r.num("emittance_y", Dim::Length, B.emittance_x);
-  if (!(B.sigma_x > 0) || !(B.sigma_y > 0)) r.failKey("sigma_x", "must be positive");
+  if (r.has("ux_function")) B.ux_fn = r.expr("ux_function", {"x", "y", "r", "zeta"});
+  if (r.has("uy_function")) B.uy_fn = r.expr("uy_function", {"x", "y", "r", "zeta"});
   const std::string shape = r.word("distribution_z", "gaussian", {"gaussian", "flattop", "function"});
   if (shape == "gaussian") {
     B.shape = BunchConfig::Shape::Gaussian;
@@ -950,6 +961,33 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
       warn.push_back(b.label() + ": gamma < 10 - the beam push along s assumes v_z close to c");
   }
   if (shape != "function") B.zeta_center = r.num("zeta_center", Dim::Length);
+  if (!B.profile_r.empty()) {
+    // bound of f for the rejection sampling and the rms sizes (sigma_x, sigma_y: messages, checks, box advice),
+    // from a polar table over the disk at 21 positions along the bunch
+    const double zc = B.zeta_center;
+    const double hz = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
+    const int nrr = 2000, nph = 64, nzz = 21;
+    double fmax = 0.0, w = 0.0, wx = 0.0, wy = 0.0;
+    for (int kz = 0; kz < nzz; ++kz) {
+      const double z = zc - hz + 2.0 * hz * kz / (nzz - 1);
+      for (int i = 0; i < nrr; ++i) {
+        const double rr = B.r_extent * (i + 0.5) / nrr;
+        for (int j = 0; j < nph; ++j) {
+          const double ph = 2.0 * PI * j / nph, x = rr * std::cos(ph), y = rr * std::sin(ph);
+          const double f = B.profile_r({x, y, rr, z});
+          if (!(f >= 0) || !std::isfinite(f)) r.failKey("profile_r", "must be finite and >= 0 in the disk r < r_extent");
+          fmax = std::max(fmax, f);
+          w += f * rr;
+          wx += f * rr * x * x;
+          wy += f * rr * y * y;
+        }
+      }
+    }
+    if (!(fmax > 0)) r.failKey("profile_r", "is zero everywhere in the disk r < r_extent");
+    B.profile_r_max = 1.1 * fmax;  // margin for peaks between the table points; checked while sampling
+    B.sigma_x = std::max(1e-12, std::sqrt(wx / w));
+    B.sigma_y = std::max(1e-12, std::sqrt(wy / w));
+  }
   B.x0 = r.num("x0", Dim::Length, 0.0);
   B.y0 = r.num("y0", Dim::Length, 0.0);
   B.z_waist = r.num("z_waist", Dim::Length, 0.0);
@@ -1136,6 +1174,8 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.vz_beam = r.num("vz_beam", Dim::None, N.vz_beam);
   N.trap_advance = r.num("trap_advance", Dim::None, N.trap_advance);
   if (!(N.trap_advance >= 1.0)) r.failKey("trap_advance", "must be >= 1 (in steps dz)");
+  N.trap_gamma = r.num("trap_gamma", Dim::None, N.trap_gamma);
+  if (!(N.trap_gamma >= 0.0)) r.failKey("trap_gamma", "must be >= 0");
   N.theta = r.num("theta", Dim::None, N.theta);
   if (!(N.theta >= 0.5 && N.theta <= 1.0)) r.failKey("theta", "must be in [0.5, 1]");
   if (!(N.vz_min > 0) || !(N.vz_beam < 1) || !(N.vz_min < N.vz_beam))
@@ -1557,6 +1597,12 @@ std::string Config::summary() const {
            B.zeta_max * um);
     if (!B.gamma_fn.empty())
       line("        gamma_function(zeta) = %s (gamma above: mean over the profile)", B.gamma_fn.text().c_str());
+    if (!B.profile_r.empty())
+      line("        profile_r(x, y, r, zeta) = %s in r < %.4g um (sigma_x,y above: rms of the profile)",
+           B.profile_r.text().c_str(), B.r_extent * um);
+    if (!B.ux_fn.empty() || !B.uy_fn.empty())
+      line("        mean momenta: u_x = %s, u_y = %s (energy kept)", B.ux_fn.empty() ? "0" : B.ux_fn.text().c_str(),
+           B.uy_fn.empty() ? "0" : B.uy_fn.text().c_str());
   }
   if (!constants.empty()) {
     std::string s;
@@ -1607,6 +1653,9 @@ std::string Config::summary() const {
     line("checkpoints: every %d steps (keep %d)%s", output.checkpoint_every, output.checkpoint_keep,
          output.walltime_hours > 0 ? (", stop at " + std::to_string(output.walltime_hours) + " h wall time").c_str()
                                    : "");
+  if (numerics.trap_gamma > 0)
+    line("trapping: a streaming particle goes to the beam list only with gamma >= %.4g (numerics.trap_gamma)",
+         numerics.trap_gamma);
   line("output: dir '%s', every %d steps; numerics: %d iterations/slice, theta %.3g, trap advance %.3g dz, beam "
        "filter %d, beam pusher %s, beam field %s, seed %lu, backend %s",
        output.dir.c_str(), output.every, numerics.iterations, numerics.theta, numerics.trap_advance, numerics.beam_filter,

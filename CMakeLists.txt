@@ -230,6 +230,8 @@ if(GEMPIC_HAVE_HDF5)
   endforeach()
   # bunch.axis_refine: more macroparticles near the axis at the same charge density
   add_test(NAME axis_refine COMMAND sh ${CMAKE_SOURCE_DIR}/tests/axis_refine.sh $<TARGET_FILE:gempic_rz>)
+  # bunch.distribution_r = function, ux_function, uy_function: a helical ring on its matched orbits
+  add_test(NAME bunch_functions COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_functions.sh $<TARGET_FILE:gempic_rz>)
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)

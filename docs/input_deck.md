@@ -121,6 +121,7 @@ undulator { period = 2 cm; periods = 100; K_function = "1.2 * (1 - 0.05 * max(z 
 | `laser` | `profile_function` | r | transverse field profile at z = 0, replaces `waist` and the Gaussian beam (no `z_focus`: the field is given where the simulation starts) |
 | `laser` | `envelope_function` | zeta | longitudinal envelope of the field, replaces `tau_fwhm` / `length_1e`. `zeta_center` is then optional: the reference of the carrier phase (default: the centre of the intensity) |
 | `bunch` | `profile_z` (with `distribution_z = function`) | zeta | current profile on [`zeta_min`, `zeta_max`], any normalization, ≥ 0. Sampled by the inverse of its cumulative distribution |
+| `bunch` | `profile_r` (with `distribution_r = function`), `ux_function`, `uy_function` | x, y, r, zeta | transverse density, sampled by rejection in r < `r_extent`; mean transverse momenta [m c] (the energy is kept) |
 | `bunch` | `gamma_function` | zeta | γ(ζ) (energy chirp), replaces `energy` / `gamma`; `energy_spread` is relative to the local value. The bunch's γ (self-field, messages) is the mean over the profile |
 | `undulator` | `K_function` | z | K(z) (taper), replaces `K`; z is the lab position. The ramps multiply it. Tabulated with 32 points per period |
 
@@ -328,7 +329,11 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | `charge` | charge | — | total charge. Only the magnitude is used; the sign comes from `species` |
 | `energy` *or* `gamma` | energy / number | — | kinetic energy, or the Lorentz factor |
 | `energy_spread` | number | 0 | relative rms spread of p_z (e.g. `0.1 %`) |
-| `sigma_x`, `sigma_y` | length | —, `sigma_x` | rms transverse size at the waist |
+| `sigma_x`, `sigma_y` | length | —, `sigma_x` | rms transverse size at the waist (Gaussian) |
+| `distribution_r` | `gaussian` \| `function` | `gaussian` | transverse shape. `function`: `profile_r` and `r_extent` replace `sigma_x`, `sigma_y` |
+| `profile_r` | function of x, y, r, zeta | — | transverse density (any normalization, ≥ 0; x, y relative to the bunch axis before `x0`, `y0`), sampled by rejection in the disk r < `r_extent` at the ζ of each particle. Rings, hollow or flat-top beams, profiles that change along the bunch. The summary prints the resulting rms sizes |
+| `r_extent` | length | — | radius of the sampling disk of `profile_r` |
+| `ux_function`, `uy_function` | function of x, y, r, zeta | 0 | mean transverse momenta [m c], added to the random part of the emittance; the energy of each particle is kept (u_z is reduced). E.g. a helical orbit u_φ = K: `ux_function = "-K*y/r"`, `uy_function = "K*x/r"` |
 | `emittance_x`, `emittance_y` | length | 0, `emittance_x` | normalized rms emittance (`0.3 um` = 0.3 mm mrad) |
 | `distribution_z` | `gaussian` \| `flattop` \| `function` | `gaussian` | longitudinal shape. `function`: `profile_z`, `zeta_min`, `zeta_max` (and optionally `gamma_function`), see [Functions](#functions-and-expressions); `zeta_center` is not used |
 | `sigma_z` | length | — | gaussian: rms length |
@@ -337,6 +342,20 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | `x0`, `y0` | length | 0 | transverse offset. It excites modes m ≥ 1, which need m_max ≥ 1 |
 | `z_waist` | length | 0 | position of the beta waist. The bunch is drifted ballistically back to z = 0 |
 | `macroparticles` | integer | 10000 | number of macroparticles |
+
+**Helical ring** (`tests/bunch_functions.sh`): every electron on a circular orbit of radius R0 in a linear focusing
+channel (ion column, plasma lens), as for an ion-channel laser with a single betatron amplitude:
+```
+constants { R0 = 1.06 um; K = 0.71 }
+bunch {
+  gamma = 50; charge = 3 pC; distribution_z = flattop; length = 1 um; zeta_center = 30 um
+  distribution_r = function; profile_r = "gauss(r - R0, 20 nm)"; r_extent = 1.5 um
+  ux_function = "-K * y / R0"; uy_function = "K * x / R0"     # rigid rotation: each radius on its own orbit
+}
+```
+u_φ = K r/R0 puts every radius on its matched circle (k_β r = u_φ/γ); u_φ = K at all radii (`-K*y/r`) gives the
+off-centre electrons a radial oscillation. In the test (R0 = 100 µm, γ = 50, matched plasma lens) the ring keeps its
+radius to 0.03 % and its width to 0.1 % over 1/6 of a betatron period.
 
 **Shot noise.** By default the macroparticles are placed at random, so the bunching noise at any wavelength is that
 of N_macro independent particles, much larger than that of the real electrons. For FEL start-up from noise use
@@ -591,6 +610,7 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 | `beam_field` | `auto` \| `level` \| `mean` | `auto` | fields of the beam push. `level`: the fields of s⁰ over the whole step (first order in the step). `mean`: after the march of s¹ the beam is pushed again from s⁰ in (F⁰ + F¹)/2 and its current of s¹ is deposited anew (the fields of s¹ are not solved again). `auto`: `mean` if the deck has an undulator, else `level`. Needed for planar undulators with intense beams (see the undulator section); not yet in MPI runs (there `auto` falls back to `level`) |
 | `vz_beam` | number | 0.9 | a streaming particle that reaches the next s-level joins the beam list (pushed along s) if v_z ≥ vz_beam; slower particles continue streaming in the next step, entering the ζ-march at their ζ |
 | `trap_advance` | number ≥ 1 | 1 | a streaming particle leaves its s-level (and becomes trapped) when its lab position has advanced this many steps beyond the level. Values > 1 keep electrons that move forward by more than Δ without being trapped (laser, sheath) in their level and so avoid the switch of such particles between levels, a source of noise behind the bubble at small Δ (README, "Bubble closure") |
+| `trap_gamma` | number ≥ 0 | 0 | a streaming particle that advances beyond its level becomes trapped only if its γ is at least this; slower ones stay in the streaming list and finish their path through the window in the fields of the level (as in a quasi-static code). Electrons quivering in a laser of amplitude a0 reach γ ≈ 1 + a0²/2 (v_z ≈ 0.9 c at a0 = 3) and advance far beyond Δ while crossing the pulse, but are not trapped; with 0 (default, as before) they are moved to the beam list and counted as trapped. A value somewhat above 1 + a0²/2 counts only electrons that are really accelerated by the wake |
 | `theta` | 0.5 … 1 | 0.5 | implicitness of the R update in s, R¹ = R⁰ + Δ[(1 − θ)F⁰ + θF¹]: 0.5 is the trapezoid (second order); θ > 0.5 damps the spurious fast modes of the reduced equations by (1 − θ)/θ per step, at the cost of a damping (2θ − 1)(ωΔ)²/2 per step of the physical ones. Do not use with undulators (the phase of the FEL coupling becomes first order in Δz) |
 | `vz_min` | number | 0.8 | beam particles slower than this return to streaming in the same way. No particle is removed because it is slow |
 | `beam_filter` | integer 0–8 | 1 | passes of a (1,2,1)/4 filter along ζ applied to the beam current (beam-list particles) before the field solve. It removes the source of numerical Cherenkov radiation at the ζ-Nyquist wavenumber (see README, "Numerical Cherenkov radiation"). Response cos^(2p)(kh/2): one pass attenuates kh = 0.2 by 1%. 0 = off |

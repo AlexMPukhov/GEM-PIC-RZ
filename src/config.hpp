@@ -191,6 +191,13 @@ struct BunchConfig {
   Expr profile_z;           // Function: current profile f(zeta) on [zeta_min, zeta_max]
   double zeta_min = 0, zeta_max = 0;
   Expr gamma_fn;            // optional gamma(zeta) (energy chirp); empty: gamma
+  // optional transverse profile f(x, y, r, zeta) >= 0, sampled by rejection in the disk r < r_extent
+  // (replaces the Gaussian of sigma_x, sigma_y; those then hold the rms of the profile, for messages)
+  Expr profile_r;
+  double r_extent = 0.0, profile_r_max = 0.0;  // sampling disk; bound of f used for the rejection
+  // optional mean transverse momenta u_x, u_y (x, y, r, zeta) [m c], added to the emittance spread; the energy
+  // is kept: u_z = sqrt(u_z,sampled^2 - u_x^2 - u_y^2)
+  Expr ux_fn, uy_fn;
   double x0 = 0, y0 = 0;    // transverse offset
   double z_waist = 0;       // position of the beta waist (z = 0: at start)
   int macroparticles = 10000;
@@ -292,6 +299,7 @@ struct NumericsConfig {
 #endif
   int iterations = 2;        // passes per slice (1 = predictor only)
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
+  double trap_gamma = 0.0;       // ... and only if its gamma is at least this (0: any gamma)
   double trap_advance = 1.0;     // a streaming particle leaves its level after advancing this many steps in z
   double theta = 0.5;            // implicitness of the R update in s (0.5: trapezoid)
   int beam_field = -1;       // fields of the beam push: BEAM_FIELD_LEVEL (s^0), BEAM_FIELD_MEAN; -1 = auto

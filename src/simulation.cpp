@@ -280,11 +280,27 @@ void Simulation::initBunches() {
       };
       auto sample = [&]() {
         Particle p{};
-        p.x = B.sigma_x * nd(rng);
-        p.y = B.sigma_y * nd(rng);
         p.zeta = (B.shape == BunchConfig::Shape::Gaussian) ? B.zeta_center + B.sigma_z * nd(rng)
                  : (B.shape == BunchConfig::Shape::Flattop) ? B.zeta_center + B.length * (ud(rng) - 0.5)
                                                             : sampleZeta(ud(rng));
+        if (B.profile_r.empty()) {
+          p.x = B.sigma_x * nd(rng);
+          p.y = B.sigma_y * nd(rng);
+        } else {  // rejection sampling of profile_r(x, y, r, zeta) in the disk r < r_extent
+          const double R = B.r_extent;
+          for (long t = 0;; ++t) {
+            if (t > 100000000L)
+              throw std::runtime_error("bunch '" + B.name + "': profile_r: no position accepted in 1e8 tries");
+            const double x = R * (2.0 * ud(rng) - 1.0), y = R * (2.0 * ud(rng) - 1.0), rr = std::hypot(x, y);
+            if (rr >= R) continue;
+            const double f = B.profile_r({x, y, rr, p.zeta});
+            if (f > B.profile_r_max)
+              throw std::runtime_error("bunch '" + B.name + "': profile_r exceeds the bound of its table (" +
+                                       std::to_string(f) + " > " + std::to_string(B.profile_r_max) +
+                                       "); the profile has a peak narrower than r_extent/2000");
+            if (ud(rng) * B.profile_r_max < f) { p.x = x; p.y = y; break; }
+          }
+        }
         p.ux = sux * nd(rng);
         p.uy = suy * nd(rng);
         if (B.gamma_fn.empty()) {
@@ -292,6 +308,17 @@ void Simulation::initBunches() {
         } else {  // gamma(zeta): energy chirp; energy_spread is relative to the local value
           const double gz = B.gamma_fn({p.zeta});
           p.uz = std::sqrt(gz * gz - 1.0) * (1.0 + B.energy_spread * nd(rng));
+        }
+        if (!B.ux_fn.empty() || !B.uy_fn.empty()) {  // mean transverse momenta; the energy is kept
+          const double rr = std::hypot(p.x, p.y);
+          const double fx = B.ux_fn.empty() ? 0.0 : B.ux_fn({p.x, p.y, rr, p.zeta});
+          const double fy = B.uy_fn.empty() ? 0.0 : B.uy_fn({p.x, p.y, rr, p.zeta});
+          const double u2 = p.uz * p.uz - fx * fx - fy * fy - 2.0 * (fx * p.ux + fy * p.uy);
+          if (!(u2 > 0))
+            throw std::runtime_error("bunch '" + B.name + "': ux_function, uy_function exceed the momentum of the bunch");
+          p.ux += fx;
+          p.uy += fy;
+          p.uz = std::sqrt(u2);
         }
         if (B.z_waist != 0.0) {  // drift back from the waist
           p.x -= p.ux / p.uz * B.z_waist;
@@ -923,7 +950,8 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1, Currents& C, 
   double vx = 0.5 * (p.ux / g0 + ux / g1), vy = 0.5 * (p.uy / g0 + uy / g1), vz = 0.5 * (p.uz / g0 + uz / g1);
   double zeta_end = zn;
   const double sTrap = s1 + (cfg.numerics.trap_advance - 1.0) * Delta;
-  if (p.z + vz * dt >= sTrap) {  // advanced trap_advance steps inside this half-cell -> trapped
+  // advanced trap_advance steps inside this half-cell, and fast enough (trap_gamma) -> trapped
+  if (p.z + vz * dt >= sTrap && g1 >= cfg.numerics.trap_gamma) {
     double dtp = std::max(0.0, (sTrap - p.z) / std::max(vz, 1e-3));
     ux = p.ux; uy = p.uy; uz = p.uz;
     boris(ux, uy, uz, f, p.qm, dtp);

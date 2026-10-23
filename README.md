@@ -115,7 +115,8 @@ numerics { ... }    algorithm parameters               (optional)
 - **Error messages:** unknown keys, a unit of the wrong kind, and missing or conflicting keys are reported with file and line number.
 - **Functions:** profiles can be given as expressions, as in HiPACE++ and QUARZ: the plasma density
   `density_function(x, y, z, r)`, the laser `profile_function(r)` and `envelope_function(zeta)`, the bunch current
-  `profile_z(zeta)` and energy chirp `gamma_function(zeta)`, and an undulator taper `K_function(z)`. Expressions accept
+  `profile_z(zeta)` and energy chirp `gamma_function(zeta)`, its transverse profile `profile_r(x, y, r, zeta)` and mean
+  momenta `ux_function`, `uy_function` (rings, helical orbits), and an undulator taper `K_function(z)`. Expressions accept
   numbers with units (`r / (20 um)`), the usual functions and operators, and the named values of the block
   `constants`; any single value of the deck may be an expression of them (`waist = "2 * w0"`). See
   [Functions and expressions](docs/input_deck.md#functions-and-expressions).
@@ -579,6 +580,9 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 **Other switches** (both off by default, kept for studies):
 - `numerics.trap_advance = k`: an electron leaves its level only after advancing k steps. With k = 4 to 8
   (5 … 10 µm) the noise from switching levels disappears at Δ = 2.5 and 1.25 µm (rms 0.0015 … 0.0017).
+- `numerics.trap_gamma = g`: a particle that advances beyond its level is moved to the beam list (trapped) only if
+  its γ ≥ g. Electrons in a laser of a0 = 3 quiver with γ ≈ 1 + a0²/2 and v_z ≈ 0.9 c; they advance far beyond Δ
+  while crossing the pulse without being trapped, and with g = 0 (default) are counted as trapped.
 - `numerics.theta > 0.5`: an off-centred update of R in s that damps the fast spurious modes by (1 − θ)/θ per
   step. θ = 0.6 gives rms 0.0003 for Δ = 1.25, 2.5 and 5 µm. It is first order in Δ for any oscillating source,
   so it must not be used with undulators.

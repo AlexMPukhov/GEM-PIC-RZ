@@ -132,6 +132,7 @@ struct Params {
   double Delta;  // step of the current s^0 -> s^1
   double theta;      // implicitness of the R update (numerics.theta)
   double trapExtra;  // (trap_advance - 1) * Delta: advance in z beyond s^1 before a particle leaves the level
+  double trapGamma;  // and only if its gamma is at least this (numerics.trap_gamma; 0: any)
   ZetaView zv;   // longitudinal grid
   const int* cls;  // matrix class of slice n (FieldSolver::classOf)
   ExternalV ext;   // external fields (undulators)
@@ -392,7 +393,7 @@ GEM_HD inline void pushStream(const Params& P, const FieldsV& F, const CurrV& C,
   double vx = 0.5 * (p.ux / g0 + ux / g1), vy = 0.5 * (p.uy / g0 + uy / g1), vz = 0.5 * (p.uz / g0 + uz / g1);
   double zeta_end = zn;
   const double sTrap = s1 + P.trapExtra;
-  if (p.z + vz * dt >= sTrap) {
+  if (p.z + vz * dt >= sTrap && g1 >= P.trapGamma) {
     const double dtp = fmax(0.0, (sTrap - p.z) / fmax(vz, 1e-3));
     ux = p.ux; uy = p.uy; uz = p.uz;
     boris(ux, uy, uz, f, p.qm, dtp);
@@ -953,6 +954,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   dev::Params& P = E.P;
   P.M = M; P.Nz = Nz; P.N = N; P.Delta = sim.Delta;
   P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  P.trapGamma = sim.cfg.numerics.trap_gamma;
   P.theta = sim.cfg.numerics.theta;
   P.zv = ZetaView{Nz, sim.zg.uniform ? 1 : 0, sim.zg.h, E.zz.data(), E.zhs.data(), E.zzc.data(), E.zwlo.data(),
                   E.zwhi.data()};
@@ -1050,6 +1052,7 @@ void Engine::step() {
   // step of this s-level and its matrices (Simulation::beginStep)
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  E.P.trapGamma = sim.cfg.numerics.trap_gamma;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, E.P.M);
   const Params P = E.P;
