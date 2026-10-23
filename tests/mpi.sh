@@ -52,7 +52,7 @@ N="output.every=1 grid.z_end=6k0^-1"
 "$EXE" "$SRC/tests/ionization_N.deck" $N numerics.backend=serial output.dir=nser > nser.log
 OMP_NUM_THREADS=2 run 2 "$SRC/tests/ionization_N.deck" $N numerics.backend=openmp output.dir=nhy > nhy.log
 for f in ionization.txt axis_00006.txt; do "$CMP" nser/$f nhy/$f 1e-6 1e-12; done
-U="grid.z_end=10mm bunch.macroparticles=20000"
+U="grid.z_end=10mm bunch.macroparticles=20000 numerics.beam_field=level"  # MPI: no mean-field beam push yet
 "$EXE" "$SRC/tests/undulator.deck" $U numerics.backend=serial output.dir=user output.format=text > user.log
 OMP_NUM_THREADS=2 run 2 "$SRC/tests/undulator.deck" $U numerics.backend=openmp output.dir=uhy output.format=text > uhy.log
 for f in bunches.txt fel.txt; do "$CMP" user/$f uhy/$f 1e-6 1e-12; done
