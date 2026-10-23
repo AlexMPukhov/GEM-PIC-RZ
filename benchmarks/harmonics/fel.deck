@@ -15,7 +15,7 @@ grid {
   r_max         = 1 mm            # shields the Coulomb field beyond 1 mm like a pipe (negligible here)
   dzeta         = 0.33203 nm      # lambda_r / 32: 16 points per lambda_r / 2
   window_length = 6.1 um
-  dz            = 0.3125 mm       # lambda_u / 32: at lambda_u / 16 the beam blows up transversely (planar only, see README)
+  dz            = 0.625 mm        # lambda_u / 16 with the mean-field beam push (numerics.beam_field = mean, the default here)
   z_end         = 1.0 m
   r_absorber    = 2 mm            # off
 }
@@ -34,6 +34,7 @@ bunch {
   shot_noise     = fawley
   beamlet        = 8                   # quiet up to the 7th harmonic
   noise_wavelength = 10.625 nm
+  axis_refine    = 16                  # 16x the beamlets at r < 4 um (1/16 charge): halves the noise of m >= 1 at the axis
 }
 laser {
   a0                = 7.6375e-6         # seed power 10 MW (linear: P = 21.5 GW (a0 w0 / lambda)^2)
@@ -43,4 +44,4 @@ laser {
   polarization      = linear
 }
 output { dir = fel_out; format = hdf5; particles = false; fel_slice = 0.2125 um; fel_harmonics = 3; every = 400 }
-numerics { iterations = 1; beam_dz_max = 0.3125 mm; beam_filter = 0 }
+numerics { iterations = 1; beam_dz_max = 0.625 mm; beam_filter = 0 }

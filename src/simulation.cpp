@@ -1,6 +1,7 @@
 // ============================================================================
 //  simulation.cpp -- initialization, particle push, deposition, time step
 // ============================================================================
+#include <functional>
 #include "simulation.hpp"
 
 #include "eigen.hpp"
@@ -159,6 +160,34 @@ void Simulation::initBunches() {
     const int ncent = B.macroparticles / M;
     std::vector<Particle> cent;
     cent.reserve(size_t(ncent));
+    // axis refinement: the centres at r < r_a (around the axis, where the modes m >= 1 must vanish but the
+    // macroparticle noise of the small cells is largest) are sampled axis_refine times as often, each with
+    // 1/axis_refine of the charge: (axis_refine - 1) x (their number) more independent centres from the same
+    // distribution, accepted only at r < r_a. The density is unchanged; only its noise near the axis drops.
+    auto refineAxis = [&](const std::function<Particle()>& drawExtra) {
+      if (B.axis_refine <= 1) return;
+      const double ra = B.axis_radius > 0 ? B.axis_radius : g.rho[std::min(4, g.N)];
+      const double ra2 = ra * ra;
+      size_t nin = 0;
+      for (auto& c : cent)
+        if (c.x * c.x + c.y * c.y < ra2) { c.q /= B.axis_refine; ++nin; }
+      const size_t need = nin * size_t(B.axis_refine - 1);
+      const size_t maxTries = std::max<size_t>(1000000, 1000 * need);
+      size_t got = 0, tries = 0;
+      while (got < need && tries < maxTries) {
+        Particle p = drawExtra();
+        ++tries;
+        if (p.x * p.x + p.y * p.y >= ra2) continue;
+        p.q /= B.axis_refine;
+        cent.push_back(p);
+        ++got;
+      }
+      if (got < need)
+        throw std::runtime_error("bunch '" + B.name + "': axis refinement found only " + std::to_string(got) + " of " +
+                                 std::to_string(need) + " centres at r < axis_radius (is the bunch on the axis?)");
+      std::printf("bunch '%s': axis refinement x%d at r < %.4g um: %zu centres there, %zu added (%zu in all)\n",
+                  B.name.c_str(), B.axis_refine, ra * cfg.units.k0inv_um(), nin, got, cent.size());
+    };
     auto finish = [&](Particle& p) {
       p.z = s0;
       p.qm = B.qm;
@@ -188,6 +217,23 @@ void Simulation::initBunches() {
           }
           for (int a = 0; a < 6; ++a) sd[a] = B.resample_smoothing * std::sqrt(std::max(0.0, m2[a] - m1[a] * m1[a]));
         }
+        // one particle of the file, chosen with probability ~ charge (axis refinement, below)
+        std::vector<double> cumq(F.size());
+        { double c = 0.0; for (size_t i = 0; i < F.size(); ++i) { c += F[i].q; cumq[i] = c; } }
+        auto drawFile = [&]() {
+          const double t = ud(rng) * Q;
+          const size_t i = std::min(size_t(std::upper_bound(cumq.begin(), cumq.end(), t) - cumq.begin()), F.size() - 1);
+          const auto& f = F[i];
+          Particle p{};
+          p.x = f.x; p.y = f.y; p.zeta = f.zeta; p.ux = f.ux; p.uy = f.uy; p.uz = f.uz;
+          if (B.resample_smoothing > 0) {
+            p.x += sd[0] * nd(rng); p.y += sd[1] * nd(rng); p.zeta += sd[2] * nd(rng);
+            p.ux += sd[3] * nd(rng); p.uy += sd[4] * nd(rng); p.uz += sd[5] * nd(rng);
+          }
+          p.q = (B.qm < 0 ? -Q : Q) / ncent;
+          finish(p);
+          return p;
+        };
         const double u0 = ud(rng);
         double cum = 0.0;
         size_t j = 0;
@@ -205,6 +251,7 @@ void Simulation::initBunches() {
           finish(p);
           cent.push_back(p);
         }
+        refineAxis(drawFile);
       }
     } else {
       const double sux = B.emittance_x / B.sigma_x, suy = B.emittance_y / B.sigma_y;
@@ -231,7 +278,7 @@ void Simulation::initBunches() {
         const double dc = cdf[i + 1] - cdf[i];
         return zt[i] + (dc > 0 ? (u - cdf[i]) / dc : 0.5) * (zt[i + 1] - zt[i]);
       };
-      for (int k = 0; k < ncent; ++k) {
+      auto sample = [&]() {
         Particle p{};
         p.x = B.sigma_x * nd(rng);
         p.y = B.sigma_y * nd(rng);
@@ -254,8 +301,10 @@ void Simulation::initBunches() {
         if (B.y0 != 0.0) p.y += B.y0;
         p.q = B.charge / B.macroparticles * M;
         finish(p);
-        cent.push_back(p);
-      }
+        return p;
+      };
+      for (int k = 0; k < ncent; ++k) cent.push_back(sample());
+      refineAxis(sample);
     }
     if (M == 1) {
       beam.insert(beam.end(), cent.begin(), cent.end());

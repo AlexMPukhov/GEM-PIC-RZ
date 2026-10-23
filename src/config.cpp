@@ -759,6 +759,11 @@ void readShotNoise(const BlockReader& r, BunchConfig& B) {
     if (r.has("noise_wavelength")) r.failKey("noise_wavelength", "is used with shot_noise = fawley");
     if (r.has("beamlet")) r.failKey("beamlet", "is used with shot_noise = fawley");
   }
+  B.axis_refine = int(r.integer("axis_refine", 1));
+  if (B.axis_refine < 1 || B.axis_refine > 1000) r.failKey("axis_refine", "must be 1 ... 1000");
+  B.axis_radius = r.num("axis_radius", Dim::Length, 0.0);
+  if (B.axis_radius < 0) r.failKey("axis_radius", "must be >= 0 (0: the first four radial cells)");
+  if (B.axis_refine == 1 && r.has("axis_radius")) r.failKey("axis_radius", "is used with axis_refine > 1");
 }
 
 // bunch read from a file (bunch.file): select, place at zeta_center, rescale charge
@@ -849,6 +854,9 @@ void readBunchFile(const Block& b, const Deck& d, const Units& u, const GridConf
   B.resample_smoothing = r.num("resample_smoothing", Dim::None, 0.0);
   if (B.resample_smoothing < 0) r.failKey("resample_smoothing", "must be >= 0");
   readShotNoise(r, B);
+  if (B.axis_refine > 1 && !B.fawley && B.macroparticles == int(v.size()))
+    r.failKey("axis_refine", "needs resampling: set bunch.macroparticles different from the number of particles in "
+                             "the file (the file particles as they are cannot be refined)");
   B.file_particles.swap(v);
   char buf[512];
   std::snprintf(buf, sizeof buf, "%s, %s '%s'%s: %zu of %zu particles%s", path.c_str(), imp.format.c_str(),
@@ -1540,6 +1548,10 @@ std::string Config::summary() const {
            B.zeta_min * um, B.zeta_max * um);
     if (B.fawley)
       line("        shot noise: Fawley beamlets of %d macroparticles at %.4g um", B.beamlet, B.noise_wavelength * um);
+    if (B.axis_refine > 1)
+      line("        axis refinement: %d times the macroparticles at r < %s, with 1/%d of the charge", B.axis_refine,
+           B.axis_radius > 0 ? (std::to_string(B.axis_radius * um) + " um").c_str() : "4 radial cells",
+           B.axis_refine);
     if (B.shape == BunchConfig::Shape::Function)
       line("        profile_z(zeta) = %s on %.4g ... %.4g um", B.profile_z.text().c_str(), B.zeta_min * um,
            B.zeta_max * um);

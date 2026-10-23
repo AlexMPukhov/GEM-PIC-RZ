@@ -206,6 +206,10 @@ struct BunchConfig {
   bool fawley = false;
   double noise_wavelength = 0.0;
   int beamlet = 4;
+  // more macroparticles near the axis (lower noise of the modes m >= 1 there): centres with r < axis_radius are
+  // sampled axis_refine times as often, each with 1 / axis_refine of the charge (same density)
+  int axis_refine = 1;
+  double axis_radius = 0.0;  // 0: the first four radial cells
 };
 
 // ---------------------------------------------------------------- undulator

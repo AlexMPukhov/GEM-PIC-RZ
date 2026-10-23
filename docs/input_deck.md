@@ -346,6 +346,12 @@ of N_macro independent particles, much larger than that of the real electrons. F
 | `shot_noise` | `random` \| `fawley` | `random` | `fawley`: beamlets of `beamlet` macroparticles spread evenly over one `noise_wavelength` (no bunching), displaced by random amounts such that the bunching at the wavelength and its harmonics h < beamlet/2 equals that of the real number of electrons, ⟨\|b_h\|²⟩ = 1/N_e (W. Fawley, PRST-AB 5, 070701 (2002)) |
 | `noise_wavelength` | length | — | the wavelength of the noise model, usually the resonant wavelength λ_r |
 | `beamlet` | integer ≥ 3 | 4 | macroparticles per beamlet; `macroparticles` must be a multiple of it |
+| `axis_refine` | integer 1 … 1000 | 1 | more macroparticles near the axis: the centres (particles, or beamlets with `fawley`) at r < `axis_radius` are sampled `axis_refine` times as often, each with 1/`axis_refine` of the charge. The charge density is unchanged, only its macroparticle noise there drops. Useful for the modes m ≥ 1, which vanish on the axis while the noise of the small cells there is largest (FEL harmonics). Bunches from files need resampling (`macroparticles` ≠ the number in the file) |
+| `axis_radius` | length | 4 radial cells | radius of the refined region (with `axis_refine` > 1) |
+
+With `axis_refine = 16` inside 4 µm (the 4 kA, σ_r = 10 µm beam of `benchmarks/harmonics/fel.deck`, 2.2 times the
+macroparticles) the noise of E_z and E_φ in m = 2 in the first radial cell halves, as with 4 times the
+macroparticles everywhere; the outer cells, the charge and the beam size are unchanged (`tests/axis_refine.sh`).
 
 The beamlet members share x, y and the momentum. Checked in `tests/beam_import.sh`: N_e⟨\|b\|²⟩ = 1.08 (Fawley) and
 N_macro⟨\|b\|²⟩ = 0.93 (random), against 1 ± 0.1.
