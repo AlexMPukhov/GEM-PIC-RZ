@@ -20,3 +20,4 @@ benchmarks/flying_focus/*_out/
 benchmarks/flying_focus/vac_*/
 benchmarks/flying_focus/*.log
 build-gpu/
+*.spl
