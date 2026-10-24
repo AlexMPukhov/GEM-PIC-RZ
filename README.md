@@ -141,6 +141,8 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/deck.*` | generic parser: blocks, `key = value`, lists, strings, comments, line numbers, command-line overrides |
 | `src/units.*` | unit table and conversion to code units |
 | `src/beam_import.*` | reading particle beams from openPMD and native HDF5 files |
+| `src/laser_file.*` | lasers from LASY / openPMD envelope files: reader, azimuthal modes, exact propagation (Hankel + FFT), envelope → R |
+| `src/h5read.hpp` | small read-only HDF5 helper shared by the importers |
 | `src/expr.*` | function parser: expressions of the deck (profiles, constants) compiled to a stack program |
 | `src/config.*` | typed structures `GridConfig`, `LaserConfig`, `PlasmaConfig`, `BunchConfig`, `OutputConfig`, `NumericsConfig`; reading, validation, summary |
 | `src/atomic_data.*` | NIST ionization energies of all charge states of 21 elements, standard atomic masses |
@@ -160,7 +162,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/comm.*` | thin MPI layer (packed messages; a single-rank stub without MPI) |
 | `src/portable.hpp`, `src/hd.hpp` | portability layer: memory, kernel launchers, teams, atomics, counter-based RNG, complex numbers |
 | `src/diagnostics.cpp` | console output, `bunches.txt`, axis/map/particle files |
-| `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), openPMD output, checkpoints (`checkpoint_NNNNN.h5`) and restart |
+| `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), openPMD output, LASY envelope files, checkpoints (`checkpoint_NNNNN.h5`) and restart |
 | `src/main.cpp` | command-line driver |
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
@@ -172,12 +174,41 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
 | `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
+| `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial; restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
 | `tools/compare_columns.cpp` | numeric comparison of ASCII tables (used by the regression test) |
 | `tools/plot_maps.gp` | gnuplot → PDF: E_z and density maps, on-axis lineout |
+
+## Lasers from and to LASY files
+
+GEM-PIC-RZ reads and writes laser pulses as [LASY](https://github.com/LASY-org/lasy) envelope files (openPMD,
+mesh `laserEnvelope`), so a pulse can be prepared in LASY (measured data, axiparabola or flying-focus optics,
+chirps, aberrations), passed between codes, and handed from one stage to the next. Details and all keys:
+[`docs/input_deck.md`](docs/input_deck.md#lasers-from-lasy--openpmd-envelope-files-file).
+
+```
+laser  { file = axiparabola_00000.h5; zeta_center = 60 um; file_z = 2 mm; inject = boundary }
+output { lasy = true }                    # diag/lasy/laser_NNNNN.h5 at z_end, readable by LASY
+```
+
+- **No conversion needed:** in GT2 a level s is the plane z = s and its slices are the times t = s − ζ at which the
+  fields pass it. That is exactly LASY's representation (the envelope at a plane versus time), so a file is a level
+  of the code, with all its spatio-temporal structure and its absolute carrier phase.
+- **Import:** at the file's plane the envelope is interpolated; at another plane (`file_z`) it is propagated
+  exactly, per azimuthal mode (Hankel transform, exact for the interpolant) and frequency (FFT), in vacuum or a
+  uniform plasma. Thetamode (any number of modes) and cartesian files.
+- **Boundary injection** (`inject = boundary`): the field is also fed through the radial absorber layer at every
+  step (total field / scattered field, as the `flying_focus` block), so converging waves of real optics come in from
+  the side over the whole length. This is open task 6 of the flying-focus handover.
+- **Export** (`output.lasy`): the forward field at the plane z = s, demodulated at ω_L and projected on its
+  dominant polarization, in LASY's layout.
+- **Checks** (ctest `lasy`): built-in Gaussian vs the same pulse from a file (1.2·10⁻⁴ of the peak), exact
+  propagation vs the paraxial Gaussian (0.1 % in the peak), export → re-import (7·10⁻⁴), and the luminal Bessel
+  pulse of the `flying_focus` block given as a file with `inject = boundary` vs the built-in flying focus after
+  0.3 mm (peak 0.25 %, rms 1.3·10⁻³). LASY reads the exported files. All backends give the same fields.
 
 ## MPI: domain decomposition along ζ
 
@@ -693,6 +724,7 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 - **Several bunches:** electrons or positrons (the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
+- **Lasers from and to LASY files:** import (exact propagation, boundary injection) and export of envelope files.
 - **Beams from files:** a bunch can be read from an openPMD file of any code or from a native data file (selection, placement, resampling), and **Fawley shot noise** gives the bunching noise of the real electrons for FEL start-up.
 - **Dopant profiles:** an ion block can have its own density profile (`profile = own`), e.g. a nitrogen-doped section for localized ionization injection.
 - **FEL diagnostics:** `fel.txt` gives the radiation energy, peak power and bunching factor at every step, so gain curves and saturation are read directly.
@@ -738,7 +770,7 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 
 - **Performance:** the ζ-march is sequential within a step. Parallelism comes from the particles and the radial grid within a slice (OpenMP/GPU), or from the pipeline over steps (MPI, serial step per rank). MPI combines with OpenMP threads (`backend = openmp`), not yet with the GPU engine.
 - **Missing physics:** the energy that ionization takes from the laser (ionization current) and collisional ionization are not modelled. Ion species follow the plasma profile or their own (`profile = own`).
-- **Laser envelope:** the laser is initialized as a paraxial Gaussian beam (or, with `profile_function`, as the given field at z = 0 with flat phase fronts). The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle.
+- **Laser envelope:** the built-in laser is initialized as a paraxial Gaussian beam (or, with `profile_function`, as the given field at z = 0 with flat phase fronts). The temporal envelope is not corrected for focusing (spatio-temporal coupling), which is fine for pulses much longer than a cycle. A pulse from a LASY file (`laser.file`) has no such limitation: it is propagated exactly.
 - **Radial absorber:** it is a simple damping of R and has not been tested for reflection.
 - **Density down-ramp injection (open, future work):** not reproduced (2–5x less trapped charge than FBPIC, step
   dependent; `benchmarks/downramp_fbpic`). Attributed to the GT2 frame of the particles; GT1 should describe it but

@@ -864,6 +864,7 @@ struct EngineState {
   par::Array<unsigned long long> lcnt;
   par::Array<double> bound, freed, exitSt;
   par::Array<cplx> ffGf, ffGc;  // flying focus: incident field G(r, zeta) (Simulation::ffGf, ffGc)
+  par::Array<cplx> incF, incC;  // file lasers with inject = boundary: layer field of the level (Simulation::incF, incC)
   size_t nf = 0, nc = 0, nd = 0;
   int zStride = 1, maxSpan = 0;
   // host copies of the counters
@@ -1454,6 +1455,16 @@ void Engine::step() {
       const cplx* Gc = ff ? E.ffGc.data() : nullptr;
       const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
       const double cph = cos(kph), sph = sin(kph);
+      // file lasers fed through the layer: incident field of the level s1, computed on the host
+      const bool hinc = sim.hasIncident;
+      const int iaF = sim.iaF, iaC = sim.iaC, nLF = sim.nLF, nLC = sim.nLC;
+      if (hinc) {
+        sim.prepareIncident(s1, 0, Nz);
+        E.incF.assign(reinterpret_cast<const cplx*>(sim.incF.data()), sim.incF.size());
+        E.incC.assign(reinterpret_cast<const cplx*>(sim.incC.data()), sim.incC.size());
+      }
+      const cplx* iF = hinc ? E.incF.data() : nullptr;
+      const cplx* iC = hinc ? E.incC.data() : nullptr;
       par::forN(long(M + 1) * Nz * (N + 1), GEM_LAMBDA(long idx) {
         const int i = int(idx % (N + 1));
         const long mn = idx / (N + 1);
@@ -1468,7 +1479,12 @@ void Engine::step() {
           double inc = 0.0;
           if (ff && m == 1) { const cplx G = Gf[size_t(nn) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
           const cplx R = fn.Rr[fn.f(m, nn, i)];
-          fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
+          if (hinc && i >= iaF) {
+            const cplx c = cplx(inc, 0.0) + iF[(size_t(m) * Nz + nn) * nLF + i - iaF];
+            fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
+          } else {
+            fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
+          }
         }
         if (i < N) {
           const double dc = dmp(g.c[i]);
@@ -1476,7 +1492,12 @@ void Engine::step() {
             double inc = 0.0;  // incident R_phi,1 = i inc
             if (ff && m == 1) { const cplx G = Gc[size_t(nn) * N + i]; inc = G.re * cph - G.im * sph; }
             const cplx R = fn.Rp[fn.c(m, nn, i)];
-            fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
+            if (hinc && i >= iaC) {
+              const cplx c = cplx(0.0, inc) + iC[(size_t(m) * Nz + nn) * nLC + i - iaC];
+              fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
+            } else {
+              fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
+            }
           }
         }
       });

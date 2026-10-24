@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 #if defined(GEMPIC_HAVE_HDF5)
-#include <hdf5.h>
+#include "h5read.hpp"
 
 #include <algorithm>
 #include <map>
@@ -19,98 +19,12 @@ namespace {
 
 constexpr double QE = 1.602176634e-19, ME = 9.1093837015e-31, CL = 299792458.0;
 
-struct H {  // owning handle
-  hid_t id;
-  herr_t (*close)(hid_t);
-  H(hid_t i, herr_t (*c)(hid_t)) : id(i), close(c) {}
-  H(const H&) = delete;
-  ~H() { if (id >= 0) close(id); }
-  operator hid_t() const { return id; }
-};
+using h5r::H;
 
-class File {
+// openPMD record helpers on top of the shared reader
+class File : public h5r::File {
  public:
-  explicit File(const std::string& p) : path(p), f(H5Fopen(p.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT), H5Fclose) {
-    if (f.id < 0) fail("cannot open the file (not HDF5?)");
-  }
-  std::string path;
-  H f;
-
-  [[noreturn]] void fail(const std::string& m) const { throw std::runtime_error(path + ": " + m); }
-  bool exists(const std::string& p) const {
-    // check every level (H5Lexists fails on a missing parent)
-    size_t q = 1;
-    for (;;) {
-      q = p.find('/', q);
-      const std::string sub = p.substr(0, q);
-      if (H5Lexists(f, sub.c_str(), H5P_DEFAULT) <= 0) return false;
-      if (q == std::string::npos) return true;
-      ++q;
-    }
-  }
-  bool isGroup(const std::string& p) const {
-    H5O_info_t info;
-#if H5_VERSION_GE(1, 12, 0)
-    if (H5Oget_info_by_name3(f, p.c_str(), &info, H5O_INFO_BASIC, H5P_DEFAULT) < 0) return false;
-#else
-    if (H5Oget_info_by_name(f, p.c_str(), &info, H5P_DEFAULT) < 0) return false;
-#endif
-    return info.type == H5O_TYPE_GROUP;
-  }
-  bool hasAttr(const std::string& obj, const char* name) const {
-    return H5Aexists_by_name(f, obj.c_str(), name, H5P_DEFAULT) > 0;
-  }
-  std::vector<double> attrD(const std::string& obj, const char* name) const {
-    H a(H5Aopen_by_name(f, obj.c_str(), name, H5P_DEFAULT, H5P_DEFAULT), H5Aclose);
-    if (a.id < 0) fail("missing attribute " + obj + "@" + name);
-    H sp(H5Aget_space(a), H5Sclose);
-    std::vector<double> v(size_t(std::max<hssize_t>(1, H5Sget_simple_extent_npoints(sp))));
-    if (H5Aread(a, H5T_NATIVE_DOUBLE, v.data()) < 0) fail("cannot read attribute " + obj + "@" + name);
-    return v;
-  }
-  double attr1(const std::string& obj, const char* name, double def) const {
-    return hasAttr(obj, name) ? attrD(obj, name)[0] : def;
-  }
-  std::string attrS(const std::string& obj, const char* name) const {
-    H a(H5Aopen_by_name(f, obj.c_str(), name, H5P_DEFAULT, H5P_DEFAULT), H5Aclose);
-    if (a.id < 0) return "";
-    H t(H5Aget_type(a), H5Tclose);
-    if (H5Tget_class(t) != H5T_STRING) return "";
-    if (H5Tis_variable_str(t) > 0) {
-      char* s = nullptr;
-      H mt(H5Tcopy(H5T_C_S1), H5Tclose);
-      H5Tset_size(mt, H5T_VARIABLE);
-      if (H5Aread(a, mt, &s) < 0 || !s) return "";
-      std::string r(s);
-      H5free_memory(s);
-      return r;
-    }
-    std::string s(H5Tget_size(t), '\0');
-    H5Aread(a, t, &s[0]);
-    return s.c_str();
-  }
-  std::vector<double> data(const std::string& p) const {
-    H d(H5Dopen2(f, p.c_str(), H5P_DEFAULT), H5Dclose);
-    if (d.id < 0) fail("no dataset " + p);
-    H sp(H5Dget_space(d), H5Sclose);
-    std::vector<double> v(size_t(H5Sget_simple_extent_npoints(sp)));
-    if (!v.empty() && H5Dread(d, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, v.data()) < 0)
-      fail("cannot read " + p);
-    return v;
-  }
-  std::vector<std::string> children(const std::string& p) const {
-    std::vector<std::string> out;
-    H g(H5Gopen2(f, p.c_str(), H5P_DEFAULT), H5Gclose);
-    if (g.id < 0) return out;
-    H5G_info_t gi;
-    H5Gget_info(g, &gi);
-    for (hsize_t k = 0; k < gi.nlinks; ++k) {
-      char buf[512];
-      if (H5Lget_name_by_idx(g, ".", H5_INDEX_NAME, H5_ITER_INC, k, buf, sizeof buf, H5P_DEFAULT) > 0)
-        out.push_back(buf);
-    }
-    return out;
-  }
+  using h5r::File::File;
   // openPMD record component: dataset or constant (group with "value"), times unitSI
   std::vector<double> component(const std::string& p, size_t n, bool required = true) const {
     if (!exists(p)) {

@@ -93,6 +93,7 @@ class PipelineRun {
     const int e = S.cfg.output.every;
     return (e > 0 && k % e == 0) || k == lastStep;
   }
+  bool lasyAt(int k) const { return S.lasyDue(k, k == lastStep); }
   bool checkpointAt(int k) const {
     const int c = S.cfg.output.checkpoint_every;
     return (c > 0 && (k % c == 0 || k == lastStep)) || (wallStop && k == lastStep);
@@ -283,14 +284,14 @@ void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
     for (int i = 0; i <= S.g.N; ++i) {
       const double d = damp(S.g.rho[i]);
       if (d == 1.0) continue;
-      const cd inc = (ff && m == 1) ? cd(S.ffInc(true, n, i, s)) : cd(0.0);
+      const cd inc = ((ff && m == 1) ? cd(S.ffInc(true, n, i, s)) : cd(0.0)) + S.incidentF(m, n, i);
       cd& R = F.Rr[F.f(m, n, i)];
       R = inc + d * (R - inc);
     }
     for (int i = 0; i < S.g.N; ++i) {
       const double d = damp(S.g.c[i]);
       if (d == 1.0) continue;
-      const cd inc = (ff && m == 1) ? cd(0.0, 1.0) * S.ffInc(false, n, i, s) : cd(0.0);
+      const cd inc = ((ff && m == 1) ? cd(0.0, 1.0) * S.ffInc(false, n, i, s) : cd(0.0)) + S.incidentC(m, n, i);
       cd& R = F.Rp[F.c(m, n, i)];
       R = inc + d * (R - inc);
     }
@@ -323,6 +324,7 @@ void PipelineRun::step() {
   const double s1 = S.s0 + Delta;
   const int k = S.step_no + 1;
   const auto& num = S.cfg.numerics;
+  S.prepareIncident(s1, a - 1, b + 1);  // inject = boundary: the layer field of the own slices
   S.c1b.zero();
   S.c1s.zero();
   std::fill(S.freedCharge.begin(), S.freedCharge.end(), 0.0);
@@ -720,7 +722,7 @@ void PipelineRun::sendDiag(int k) {
   putDiag(B, S.diagSums(a, b));
   B.put(myRestreamed);
   B.put(myTrapped);
-  if (filesAt(k) || checkpointAt(k)) {
+  if (filesAt(k) || checkpointAt(k) || lasyAt(k)) {
     putRange(B, S.fold, a, b);
     putDens(B, S.c0b, a, b);
     putDens(B, S.c0s, a, b);
@@ -744,7 +746,7 @@ void PipelineRun::sendDiag(int k) {
 void PipelineRun::reportStep(int k) {
   DiagSums D = S.diagSums(a, b);
   long long re = myRestreamed, tr = myTrapped;
-  const bool files = filesAt(k), ck = checkpointAt(k);
+  const bool files = filesAt(k), ck = checkpointAt(k), fields = files || ck || lasyAt(k);
   std::vector<Particle> gbeam, gpend;
   if (files || ck) gbeam = S.beam;
   if (ck) gpend = S.pendingNext;
@@ -755,7 +757,7 @@ void PipelineRun::reportStep(int k) {
     D.add(getDiag(B));
     re += B.get<long long>();
     tr += B.get<long long>();
-    if (files || ck) {
+    if (fields) {
       getRange(B, S.fold, lo[q], lo[q + 1]);
       getDens(B, S.c0b, lo[q], lo[q + 1]);
       getDens(B, S.c0s, lo[q], lo[q + 1]);

@@ -18,4 +18,7 @@ Read this first. README.md is the user documentation; docs/ holds the details.
   - GPU check: `benchmarks/gpu/` (not yet run on a GPU).
   - **Flying focus** (luminal Bessel pulse fed through the radial boundary, `flying_focus` block): handover in
     `docs/flying_focus_handoff.md`; tests and production decks in `benchmarks/flying_focus/` (README there).
+  - **LASY** laser files (branch `lasy`): `laser.file` (import, exact propagation, `inject = boundary`) and
+    `output.lasy` (export), `src/laser_file.*`, ctest `lasy`, docs/input_deck.md. Motivation: flying focus /
+    structured light prepared in LASY. Not yet run on a real GPU; MPI checked in tests/mpi.sh (3 ranks = serial).
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

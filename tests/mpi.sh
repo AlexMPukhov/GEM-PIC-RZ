@@ -6,6 +6,8 @@
 #   4. free-hand zeta and z grids (tests/flexgrid.deck): 3 ranks agree with the serial run
 #   5. hybrid: 2 ranks x 2 OpenMP threads (backend = openmp) agree with the serial run, also with
 #      field ionization (tests/ionization_N.deck) and a beam-dominated undulator run
+#   6. (python3 with numpy and h5py) a laser from a LASY file fed through the absorber layer
+#      (laser.inject = boundary) and the LASY export (output.lasy): 3 ranks = serial
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -64,6 +66,20 @@ run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi
 run 3 "$DECK" $C output.dir=w --restart latest > w2.log
 compare w 1e-6 1e-9
+if python3 -c "import numpy, h5py" 2>/dev/null; then
+  python3 "$SRC/tests/lasy_files.py"
+  sed -e 's|^flying_focus.*|laser { file = ffm.h5; zeta_center = 90 um; inject = boundary }|' \
+    "$SRC/benchmarks/flying_focus/vacuum.deck" > ffl.deck
+  L="grid.z_end=50um grid.absorber_strength=1 output.every=0 output.maps=false numerics.backend=serial output.lasy=true"
+  "$EXE" ffl.deck $L output.dir=lser > lser.log
+  run 3 ffl.deck $L output.dir=lmp > lmp.log
+  "$CMP" lser/axis_00005.txt lmp/axis_00005.txt 1e-6 1e-9
+  python3 -c "
+import h5py, numpy as np
+a, b = (h5py.File(d + '/lasy/laser_00005.h5')['/data/5/meshes/laserEnvelope'][()] for d in ('lser', 'lmp'))
+assert np.abs(a - b).max() <= 1e-6 * np.abs(a).max()"
+  echo "  LASY boundary injection and export: 3 ranks = serial"
+fi
 cd - > /dev/null
 rm -rf "$WORK"
 echo "mpi test passed"

@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
+  src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -116,7 +116,7 @@ elseif(GEMPIC_OPENMP)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
       src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
-      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp)
+      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
     target_include_directories(gempic_rz_gpuemu PRIVATE src)
@@ -235,6 +235,9 @@ if(GEMPIC_HAVE_HDF5)
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)
+  # lasers from and to LASY envelope files: import, exact propagation, boundary injection, export
+  add_test(NAME lasy COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lasy.sh $<TARGET_FILE:gempic_rz>)
+  set_tests_properties(lasy PROPERTIES SKIP_RETURN_CODE 77)
   # GUI (tools/gempic_gui.py): runs started through its HTTP API; fields against the code's gather
   add_test(NAME gui COMMAND sh ${CMAKE_SOURCE_DIR}/tests/gui.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(gui PROPERTIES SKIP_RETURN_CODE 77)

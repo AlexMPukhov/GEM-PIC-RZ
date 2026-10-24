@@ -9,7 +9,7 @@ ifeq ($(notdir $(CXX)),nvcc)
 endif
 CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra
 BUILD    := build-make
-CORE     := units deck config mapping atomic_data ionization grid solver smoothing simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import
+CORE     := units deck config mapping atomic_data ionization grid solver smoothing simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import laser_file
 OBJ      := $(CORE:%=$(BUILD)/%.o)
 # MPI (domain decomposition along zeta): enabled if mpicxx is found (make MPI=0 disables it)
 MPI ?= $(shell command -v mpicxx > /dev/null 2>&1 && echo 1)

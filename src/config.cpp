@@ -464,9 +464,96 @@ void readConstants(const Block& b, const Deck& d, const Units& u, std::map<std::
   }
 }
 
+// laser from a LASY / openPMD envelope file (laser.file)
+void readLaserFromFile(const Block& b, const Deck& d, const Units& u, const GridConfig& g, LaserConfig& L,
+                       std::vector<std::string>& warn) {
+  BlockReader r(b, d, u);
+  for (const char* k : {"waist", "tau_fwhm", "length_1e", "z_focus", "cep", "polarization", "pol_angle", "helicity",
+                        "profile_function", "envelope_function", "wavelength"})
+    if (r.has(k)) r.failKey(k, "is given by the laser file (remove it, or remove 'file')");
+  std::string path = r.str("file", "");
+  if (!std::filesystem::exists(path)) {  // relative to the directory of the deck
+    const std::filesystem::path alt = std::filesystem::path(d.source).parent_path() / path;
+    if (std::filesystem::exists(alt)) path = alt.string();
+  }
+  auto D = std::make_shared<LaserFileData>();
+  try {
+    *D = readLaserFile(path, r.str("file_mesh", ""), r.integer("file_iteration", -1), u);
+  } catch (const std::exception& e) {
+    r.failKey("file", e.what());
+  }
+  L.omega = D->omegaL;
+  // centroid and rms duration of the intensity (all radii, weight r), for t_center and the checks
+  double s0 = 0, s1 = 0, s2 = 0;
+  const size_t inner = D->cartesian ? size_t(D->ny) * D->nx : size_t(D->nr);
+  const int outer = D->cartesian ? 1 : D->ncomp;
+  for (int c = 0; c < outer; ++c)
+    for (int l = 0; l < D->nt; ++l)
+      for (size_t q = 0; q < inner; ++q) {
+        double w = std::norm(D->env[(size_t(c) * D->nt + l) * inner + q]);
+        if (!D->cartesian) w *= std::max(D->r0 + q * D->dr, 0.25 * D->dr);
+        const double t = D->t0 + l * D->dt;
+        s0 += w; s1 += w * t; s2 += w * t * t;
+      }
+  const double tc = s1 / s0;
+  L.length_1e = std::max(2.0 * std::sqrt(std::max(0.0, s2 / s0 - tc * tc)), 1e-3);
+  L.t_center = r.has("t_center") ? r.num("t_center", Dim::Time) : tc;
+  L.zeta_center = r.num("zeta_center", Dim::Length);
+  if (L.zeta_center < 0 || L.zeta_center > g.window()) r.failKey("zeta_center", "lies outside the window");
+  L.file_z = r.num("file_z", Dim::Length, 0.0);
+  L.boundary = r.word("inject", "box", {"box", "boundary"}) == "boundary";
+  L.background = r.num("background_density", Dim::Density, 0.0);
+  if (L.background < 0) r.failKey("background_density", "must be >= 0");
+  if (L.background >= L.omega * L.omega) r.failKey("background_density", "is overcritical for the laser");
+  L.n_theta = int(r.integer("n_theta", 0));
+  if (L.n_theta < 0) r.failKey("n_theta", "must be >= 0");
+  if (L.n_theta > 0 && !D->cartesian) r.failKey("n_theta", "is only used for cartesian files");
+  L.time_padding = int(r.integer("time_padding", 2));
+  if (L.time_padding < 1 || L.time_padding > 16) r.failKey("time_padding", "must be 1 ... 16");
+  // amplitude: as in the file, or rescaled so that the peak |E| is a0 omega_L
+  if (r.has("a0")) {
+    L.a0 = r.num("a0", Dim::None);
+    if (!(L.a0 > 0)) r.failKey("a0", "must be positive");
+    L.file_scale = L.a0 * L.omega / D->peak;
+  } else {
+    L.a0 = D->peak / L.omega;
+  }
+  L.waist = 0.0;  // not used for file lasers
+  if (L.boundary) {
+    if (!(g.r_absorber < g.r_max))
+      r.failKey("inject", "boundary feeds the field through the radial absorber layer: set grid.r_absorber < r_max");
+    if (std::fabs(g.absorber_strength - 1.0) > 1e-12)
+      warn.push_back(b.label() + ": inject = boundary works best with grid.absorber_strength = 1 (R = incident "
+                                 "field at r_max)");
+  }
+  // window: the file's time span at zeta_center
+  const double front = L.zeta_center + (L.t_center - D->t0), rear = L.zeta_center - (D->t0 + (D->nt - 1) * D->dt - L.t_center);
+  if (front > g.window() || rear < 0)
+    warn.push_back(b.label() + ": the time span of the file does not fit into the window at zeta_center (it covers "
+                   "zeta = " + std::to_string(rear * u.k0inv_um()).substr(0, 7) + " ... " +
+                   std::to_string(front * u.k0inv_um()).substr(0, 7) + " um); the part outside is cut");
+  double hmax = 0.0;
+  for (int k = -20; k <= 20; ++k) hmax = std::max(hmax, g.zetaStep(L.zeta_center + 0.1 * k * L.length_1e));
+  if (hmax * L.omega > 0.5)
+    warn.push_back(b.label() + ": fewer than ~12 points per laser wavelength in zeta (dzeta too large)");
+  const double Rf = D->cartesian ? std::min({-D->x0, D->x0 + (D->nx - 1) * D->dx, -D->y0, D->y0 + (D->ny - 1) * D->dy})
+                                 : D->r0 + (D->nr - 1) * D->dr;
+  if (L.boundary && Rf < g.r_max)
+    warn.push_back(b.label() + ": the file ends at r = " + std::to_string(Rf * u.k0inv_um()).substr(0, 7) +
+                   " um, inside the box: the incident field beyond is zero (the file should extend past r_max)");
+  L.file = D;
+}
+
 void readLaser(const Block& b, const Deck& d, const Units& u, const GridConfig& g, LaserConfig& L,
                std::vector<std::string>& warn) {
   BlockReader r(b, d, u);
+  if (r.has("file")) {
+    readLaserFromFile(b, d, u, g, L, warn);
+    return;
+  }
+  for (const char* k : {"file_mesh", "file_iteration", "t_center", "file_z", "inject", "background_density", "n_theta",
+                        "time_padding"})
+    if (r.has(k)) r.failKey(k, "is only used with 'file' (a laser from a LASY / openPMD envelope file)");
   L.a0 = r.num("a0", Dim::None);
   if (r.has("wavelength")) {
     const double lam = r.num("wavelength", Dim::Length);  // code units: 2 pi lambda/lambda0
@@ -1064,6 +1151,26 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   O.fel_harmonics = int(r.integer("fel_harmonics", 1));
   if (O.fel_harmonics < 1 || O.fel_harmonics > 9) r.failKey("fel_harmonics", "must be between 1 and 9");
   if (O.map_stride < 1) r.failKey("map_stride", "must be >= 1");
+  // LASY envelope files of the laser
+  O.lasy = r.flag("lasy", false);
+  O.lasy_every = int(r.integer("lasy_every", 0));
+  O.lasy_dr = r.num("lasy_dr", Dim::Length, 0.0);
+  O.lasy_dt = r.num("lasy_dt", Dim::Time, 0.0);
+  O.lasy_r_max = r.num("lasy_r_max", Dim::Length, 0.0);
+  if (r.has("lasy_wavelength")) {
+    const double lam = r.num("lasy_wavelength", Dim::Length);
+    if (!(lam > 0)) r.failKey("lasy_wavelength", "must be positive");
+    O.lasy_omega = 2.0 * PI / lam;
+  }
+  O.lasy_band = r.num("lasy_bandwidth", Dim::None, 0.5);
+  for (const char* k : {"lasy_every", "lasy_dr", "lasy_dt", "lasy_r_max", "lasy_wavelength", "lasy_bandwidth"})
+    if (!O.lasy && r.has(k)) r.failKey(k, "needs lasy = true");
+  if (O.lasy_every < 0) r.failKey("lasy_every", "must be >= 0");
+  if (O.lasy_dr < 0 || O.lasy_dt < 0 || O.lasy_r_max < 0) r.failKey("lasy", "grid steps must be positive");
+  if (!(O.lasy_band > 0 && O.lasy_band < 1)) r.failKey("lasy_bandwidth", "must be between 0 and 1");
+#if !defined(GEMPIC_HAVE_HDF5)
+  if (O.lasy) r.failKey("lasy", "LASY files need HDF5 support (install libhdf5-dev and rebuild)");
+#endif
 }
 
 void readUndulator(const Block& b, const Deck& d, const Units& u, UndulatorConfig& U) {
@@ -1350,6 +1457,9 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     }
     if (!(O.fel_slice > 0)) O.fel_slice = 20.0 * O.fel_wavelength;
   }
+  if (c.output.lasy && !(c.output.lasy_omega > 0)) c.output.lasy_omega = c.lasers.empty() ? 1.0 : c.lasers[0].omega;
+  if (c.output.lasy && c.grid.M < 1)
+    throw DeckError(deck.source + ": output.lasy needs the laser modes: set grid.m_max >= 1");
   if (const Block* b = deck.single("numerics")) readNumerics(*b, deck, c.units, c.numerics);
   deck.checkAllUsed();
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
@@ -1462,6 +1572,26 @@ std::string Config::summary() const {
   }
   for (size_t i = 0; i < lasers.size(); ++i) {
     const auto& L = lasers[i];
+    if (L.file) {
+      const auto& D = *L.file;
+      const double tfs = 1.0 / units.omega0_per_fs();
+      line("laser[%zu]: from file %s (iteration %ld, mesh %s, %s%s)", i, D.path.c_str(), D.iteration, D.mesh.c_str(),
+           D.cartesian ? "cartesian" : "thetaMode", D.software.empty() ? "" : (", written by " + D.software).c_str());
+      line("        lambda_L = %.4g um, peak |E| = %.4g m c omega0/e (a0 = %.4g%s), polarization (%.3g%+.3gi, "
+           "%.3g%+.3gi), %s", units.lambda0_um / L.omega, L.a0 * L.omega, L.a0, L.file_scale != 1.0 ? ", rescaled" : "",
+           D.px.real(), D.px.imag(), D.py.real(), D.py.imag(), D.field.c_str());
+      line("        t = %.4g ... %.4g fs (%d points), %s; t_center = %.4g fs at zeta_c = %.4g um", D.t0 * tfs,
+           (D.t0 + (D.nt - 1) * D.dt) * tfs, D.nt,
+           D.cartesian ? (std::to_string(D.nx) + " x " + std::to_string(D.ny) + " points in x, y").c_str()
+                       : ("r <= " + std::to_string((D.r0 + (D.nr - 1) * D.dr) * um).substr(0, 7) + " um (" +
+                          std::to_string(D.nr) + " points), " + std::to_string((D.ncomp + 1) / 2) + " modes").c_str(),
+           L.t_center * tfs, L.zeta_center * um);
+      line("        plane of the file z = %.4g mm; %s%s", L.file_z * um * 1e-3,
+           L.boundary ? "fed through the absorber layer at every step (inject = boundary)" : "initial field (inject = box)",
+           L.background > 0 ? (", propagation in n = " + std::to_string(L.background * units.nc_cm3()).substr(0, 9) +
+                               " cm^-3").c_str() : "");
+      continue;
+    }
     // peak power, linear polarization: P = 21.5 GW (a0 w0 / lambda)^2; circular: x2
     const double lam_um = units.lambda0_um / L.omega;
     double P_TW = 21.5e-3 * std::pow(L.a0 * L.waist * um / lam_um, 2.0);

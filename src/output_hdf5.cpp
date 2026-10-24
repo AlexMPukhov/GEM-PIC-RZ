@@ -1070,6 +1070,242 @@ void Simulation::readCheckpoint(const std::string& path) {
   n_trapped_total = long(R.attrI("n_trapped_total"));
 }
 
+// ============================================================================
+//  LASY envelope file (output.lasy): <dir>/lasy/laser_NNNNN.h5
+//
+//  The level s is the plane z = s, its slices the times t = s - zeta + lasyTref. The forward field R/2 is
+//  interpolated (as in the particle gather) to uniform nodes r_j = j dr, t_l = t_min + l dt, turned into E_x,
+//  E_y at 2 M + 4 angles, demodulated at omega_L (analytic signal through an FFT, spectrum kept for
+//  |omega - omega_L| < lasy_bandwidth omega_L), and projected on the dominant polarization p (eigenvector of
+//  the coherence matrix): env = conj(p_x) env_x + conj(p_y) env_y. The azimuthal modes of env, |k| <= M + 1,
+//  are written in the openPMD thetaMode form C_0, C_m, S_m (env = C_0 + sum C_m cos + S_m sin), axes (t, r),
+//  as LASY writes them: lasy.profiles.FromOpenPMDProfile(path, "laserEnvelope") reads the file.
+// ============================================================================
+std::string Simulation::writeLasy() {
+  namespace fs = std::filesystem;
+  const auto& O = cfg.output;
+  const std::string dir = O.dir + "/lasy";
+  fs::create_directories(dir);
+  char nm[64];
+  std::snprintf(nm, sizeof nm, "laser_%05d.h5", step_no);
+  const std::string path = dir + "/" + nm;
+  H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
+  const Units& u = cfg.units;
+  const double Lm = u.k0inv_um() * 1e-6, E0 = MC2_MEV * 1e6 / Lm, T0 = 1.0 / (u.omega0_per_fs() * 1e15);
+  const int N = g.N, K = M + 1, NK = 2 * K + 1, nth = 2 * M + 4;
+  const double wL = O.lasy_omega;
+
+  // ---- output grid
+  double dr = O.lasy_dr, dt = O.lasy_dt;
+  if (!(dr > 0)) { dr = 1e300; for (int i = 0; i < N; ++i) dr = std::min(dr, g.rho[i + 1] - g.rho[i]); }
+  if (!(dt > 0)) { dt = 1e300; for (int n = 0; n < Nz; ++n) dt = std::min(dt, zv.len(n)); }
+  double rmax = O.lasy_r_max > 0 ? O.lasy_r_max : (cfg.grid.r_absorber < g.rho[N] ? cfg.grid.r_absorber : g.rho[N]);
+  rmax = std::min(rmax, g.rho[N]);
+  const int nr = int(std::floor(rmax / dr + 1e-9)) + 1;
+  const double Z = zv.node(Nz - 1);
+  const int nt = int(std::floor(Z / dt + 1e-9)) + 1;
+  const double tmin = s0 + lasyTref - Z;  // t_l = tmin + l dt  <->  zeta_l = Z - l dt
+
+  // zeta stencil per time sample
+  std::vector<int> zn(nt);
+  std::vector<double> zw(nt);
+  for (int l = 0; l < nt; ++l) {
+    const double z = std::max(0.0, Z - l * dt);
+    double wdum = 0.0;
+    int n = std::max(0, std::min(Nz - 2, zv.cell(z, wdum)));
+    while (n > 0 && zv.node(n) > z) --n;
+    while (n < Nz - 2 && zv.node(n + 1) <= z) ++n;
+    zn[l] = n;
+    zw[l] = std::min(1.0, std::max(0.0, (z - zv.node(n)) / zv.len(n)));
+  }
+  // R_r,m (faces) and R_phi,m (centres) of slice n at radius r, with the regular forms on the axis
+  const cd I(0.0, 1.0);
+  auto lin0 = [&](cd f0, cd f1) { return (g.c[1] * f0 - g.c[0] * f1) / (g.c[1] - g.c[0]); };
+  auto Rphi = [&](int m, int n, double r) -> cd {
+    auto F = [&](int i) { return fold.Rp[fold.c(m, n, i)]; };
+    if (r >= g.c[N - 1]) return F(N - 1);
+    if (r < g.c[0]) {
+      const double x = r / g.c[0];
+      if (m == 0) return F(0) * x;
+      if (m == 1) { const cd a0 = lin0(F(0), F(1)); return a0 + (F(0) - a0) * x; }
+      return F(0) * std::pow(x, m - 1);
+    }
+    const int a = int(std::upper_bound(g.c.begin(), g.c.begin() + N, r) - g.c.begin()) - 1;
+    const double w = (r - g.c[a]) / (g.c[a + 1] - g.c[a]);
+    return (1 - w) * F(a) + w * F(a + 1);
+  };
+  auto Rrad = [&](int m, int n, double r) -> cd {
+    auto F = [&](int i) -> cd {
+      if (i > 0) return fold.Rr[fold.f(m, n, i)];
+      return m == 1 ? -I * lin0(fold.Rp[fold.c(1, n, 0)], fold.Rp[fold.c(1, n, 1)]) : cd(0.0);
+    };
+    if (r >= g.rho[N]) return F(N);
+    const int a = int(std::upper_bound(g.rho.begin(), g.rho.begin() + N + 1, r) - g.rho.begin()) - 1;
+    const double w = (r - g.rho[a]) / (g.rho[a + 1] - g.rho[a]);
+    return (1 - w) * F(a) + w * F(a + 1);
+  };
+
+  // ---- per radius: E_x, E_y at the angles, envelopes, azimuthal modes b_k (x and y)
+  int n2 = 1;
+  while (n2 < 2 * nt) n2 <<= 1;
+  const double dOm = 2.0 * PI / (n2 * dt);
+  std::vector<cd> bx(size_t(NK) * nt * nr), by(size_t(NK) * nt * nr);  // [k + K][l][j]
+#pragma omp parallel for schedule(dynamic)
+  for (int j = 0; j < nr; ++j) {
+    const double r = j * dr;
+    std::vector<cd> rr(size_t(M + 1) * nt), rp(size_t(M + 1) * nt), X(n2), Y(n2);
+    for (int m = 0; m <= M; ++m)
+      for (int l = 0; l < nt; ++l) {
+        const int n = zn[l];
+        const double w = zw[l];
+        rr[size_t(m) * nt + l] = (1 - w) * Rrad(m, n, r) + w * Rrad(m, n + 1, r);
+        rp[size_t(m) * nt + l] = (1 - w) * Rphi(m, n, r) + w * Rphi(m, n + 1, r);
+      }
+    for (int q = 0; q < nth; ++q) {
+      const double th = 2.0 * PI * q / nth, ct = std::cos(th), st = std::sin(th);
+      std::fill(X.begin(), X.end(), cd(0.0));
+      std::fill(Y.begin(), Y.end(), cd(0.0));
+      for (int l = 0; l < nt; ++l) {
+        // E = R_0 / 2 + Re sum_m R_m e^{i m theta} (forward field E = R / 2)
+        double er = 0.5 * rr[l].real(), ep = 0.5 * rp[l].real();
+        for (int m = 1; m <= M; ++m) {
+          const cd e = std::polar(1.0, m * th);
+          er += (rr[size_t(m) * nt + l] * e).real();
+          ep += (rp[size_t(m) * nt + l] * e).real();
+        }
+        X[l] = er * ct - ep * st;
+        Y[l] = er * st + ep * ct;
+      }
+      // analytic signal in the band around omega_L (e^{-i omega t}, omega > 0), then the envelope
+      for (auto* V : {&X, &Y}) {
+        fft(*V, +1);
+        for (int k = 0; k < n2; ++k) {
+          const double om = (k < n2 / 2 ? k : k - n2) * dOm;
+          if (!(om > 0 && std::fabs(om - wL) < O.lasy_band * wL)) (*V)[k] = 0.0;
+        }
+        fft(*V, -1);
+      }
+      for (int l = 0; l < nt; ++l) {
+        const cd c = std::polar(2.0 / n2, wL * (tmin + l * dt));
+        const cd ex = X[l] * c, ey = Y[l] * c;
+        for (int k = -K; k <= K; ++k) {  // env = sum_k b_k e^{-i k theta}
+          const cd ph = std::polar(1.0 / nth, k * th);
+          bx[(size_t(k + K) * nt + l) * nr + j] += ex * ph;
+          by[(size_t(k + K) * nt + l) * nr + j] += ey * ph;
+        }
+      }
+    }
+  }
+  // ---- dominant polarization: coherence matrix (Parseval over the modes, weight r)
+  double jxx = 0, jyy = 0;
+  cd jxy = 0.0;
+  for (int k = 0; k < NK; ++k)
+    for (int l = 0; l < nt; ++l)
+      for (int j = 0; j < nr; ++j) {
+        const size_t id = (size_t(k) * nt + l) * nr + j;
+        const double w = std::max(j * dr, 0.25 * dr);
+        jxx += std::norm(bx[id]) * w;
+        jyy += std::norm(by[id]) * w;
+        jxy += std::conj(bx[id]) * by[id] * w;
+      }
+  const double tr = jxx + jyy, det = jxx * jyy - std::norm(jxy);
+  const double lmax = 0.5 * tr + std::sqrt(std::max(0.0, 0.25 * tr * tr - det));
+  cd px = 1.0, py = 0.0;
+  if (tr > 0) {
+    // eigenvector of [[jxx, jxy], [conj jxy, jyy]] for lmax
+    cd vx = jxy, vy = lmax - jxx;
+    if (std::norm(vx) + std::norm(vy) < 1e-24 * tr * tr) { vx = lmax - jyy; vy = std::conj(jxy); }
+    if (std::norm(vx) + std::norm(vy) < 1e-24 * tr * tr) { vx = jxx >= jyy ? 1.0 : 0.0; vy = jxx >= jyy ? 0.0 : 1.0; }
+    const double nn = std::sqrt(std::norm(vx) + std::norm(vy));
+    px = vx / nn;
+    py = vy / nn;
+    const cd ref = std::abs(px) > 1e-6 ? px : py;  // phase convention: the first nonzero component real > 0
+    const cd ph = std::conj(ref) / std::abs(ref);
+    px *= ph;
+    py *= ph;
+    if (std::fabs(px.imag()) < 1e-12) px = px.real();
+    if (std::fabs(py.imag()) < 1e-12 * std::max(1.0, std::abs(py))) py = py.real();
+  }
+  const double captured = tr > 0 ? lmax / tr : 1.0;
+  // ---- envelope modes -> openPMD components [2K + 1][t][r] in V/m
+  std::vector<cd> out(size_t(NK) * nt * nr);
+  for (int l = 0; l < nt; ++l)
+    for (int j = 0; j < nr; ++j) {
+      auto e = [&](int k) {
+        const size_t id = (size_t(k + K) * nt + l) * nr + j;
+        return (std::conj(px) * bx[id] + std::conj(py) * by[id]) * E0;
+      };
+      out[(size_t(0) * nt + l) * nr + j] = e(0);
+      for (int m = 1; m <= K; ++m) {
+        out[(size_t(2 * m - 1) * nt + l) * nr + j] = e(m) + e(-m);
+        out[(size_t(2 * m) * nt + l) * nr + j] = -I * e(m) + I * e(-m);
+      }
+    }
+
+  // ---- file (layout of LASY's writer)
+  Writer W(path, false, O.hdf5_compression);
+  const hid_t root = W.file();
+  Writer::attr(root, "openPMD", std::string("1.1.0"));
+  Writer::attrU32(root, "openPMDextension", 0u);
+  Writer::attr(root, "basePath", std::string("/data/%T/"));
+  Writer::attr(root, "meshesPath", std::string("meshes/"));
+  Writer::attr(root, "iterationEncoding", std::string("fileBased"));
+  Writer::attr(root, "iterationFormat", std::string("laser_%05T"));
+  Writer::attr(root, "software", std::string("GEM-PIC-RZ"));
+  Writer::attr(root, "softwareVersion", std::string(GEMPIC_VERSION));
+  {
+    char buf[64];
+    const std::time_t t = std::time(nullptr);
+    std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S %z", std::localtime(&t));
+    Writer::attr(root, "date", std::string(buf));
+  }
+  char cm[512];
+  std::snprintf(cm, sizeof cm,
+                "GEM-PIC-RZ laser envelope at the plane z = %.9g m of the simulation (step %d): forward field R/2, "
+                "polarization captures %.6f of the energy",
+                s0 * Lm, step_no, captured);
+  Writer::attr(root, "comment", std::string(cm));
+  const std::string base = "/data/" + std::to_string(step_no);
+  {
+    Handle it(W.groups(base), H5Gclose, "group " + base);
+    Writer::attr(it, "time", 0.0);
+    Writer::attr(it, "dt", 1.0);
+    Writer::attr(it, "timeUnitSI", 1.0);
+  }
+  { Handle h(W.groups(base + "/meshes"), H5Gclose, "group meshes"); }
+  const std::string mp = base + "/meshes/laserEnvelope";
+  W.complex(mp, {hsize_t(NK), hsize_t(nt), hsize_t(nr)}, out.data(), 1.0, "V/m",
+            "complex envelope of the transverse electric field, openPMD thetaMode components");
+  Handle ds(H5Dopen2(W.file(), mp.c_str(), H5P_DEFAULT), H5Dclose, "laserEnvelope");
+  Writer::attr(ds, "geometry", std::string("thetaMode"));
+  Writer::attr(ds, "geometryParameters", "m=" + std::to_string(K + 1) + ";imag=+");
+  Writer::attr(ds, "dataOrder", std::string("C"));
+  Writer::attr(ds, "axisLabels", std::vector<std::string>{"t", "r"});
+  Writer::attr(ds, "gridSpacing", std::vector<double>{dt * T0, dr * Lm});
+  Writer::attr(ds, "gridGlobalOffset", std::vector<double>{tmin * T0, 0.0});
+  Writer::attr(ds, "gridUnitSI", 1.0);
+  Writer::attr(ds, "position", std::vector<double>{0.0, 0.0});
+  Writer::attr(ds, "timeOffset", 0.0);
+  Writer::attr(ds, "unitDimension", std::vector<double>{1, 1, -3, -1, 0, 0, 0});
+  Writer::attr(ds, "angularFrequency", wL / T0);
+  Writer::attr(ds, "envelopeField", std::string("electric_field"));
+  if (px.imag() == 0.0 && py.imag() == 0.0) {
+    Writer::attr(ds, "polarization", std::vector<double>{px.real(), py.real()});
+  } else {
+    const hsize_t two = 2;
+    Handle sp(H5Screate_simple(1, &two, nullptr), H5Sclose, "dataspace");
+    Handle ct(H5Tcreate(H5T_COMPOUND, 2 * sizeof(double)), H5Tclose, "complex type");
+    H5Tinsert(ct, "r", 0, H5T_NATIVE_DOUBLE);
+    H5Tinsert(ct, "i", sizeof(double), H5T_NATIVE_DOUBLE);
+    Handle a(H5Acreate2(ds, "polarization", ct, sp, H5P_DEFAULT, H5P_DEFAULT), H5Aclose, "polarization");
+    const cd pv[2] = {px, py};
+    check(H5Awrite(a, ct, pv), "polarization");
+  }
+  return path + "  (polarization (" + std::to_string(px.real()).substr(0, 6) + (px.imag() != 0 ? "..." : "") + ", " +
+         std::to_string(py.real()).substr(0, 6) + (py.imag() >= 0 ? "+" : "") + std::to_string(py.imag()).substr(0, 6) +
+         "i), captures " + std::to_string(captured).substr(0, 8) + " of the energy)";
+}
+
 std::string Simulation::latestCheckpoint(const std::string& dir) {
   namespace fs = std::filesystem;
   int best = -1;
@@ -1093,6 +1329,7 @@ void Simulation::writeOpenPMD() { throw std::runtime_error("this build has no HD
 std::string Simulation::writeCheckpoint() { throw std::runtime_error("checkpoints need HDF5 support"); }
 void Simulation::readCheckpoint(const std::string&) { throw std::runtime_error("restarts need HDF5 support"); }
 std::string Simulation::latestCheckpoint(const std::string&) { return ""; }
+std::string Simulation::writeLasy() { throw std::runtime_error("LASY files need HDF5 support"); }
 }  // namespace gem
 
 #endif
