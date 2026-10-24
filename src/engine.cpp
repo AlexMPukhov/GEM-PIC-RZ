@@ -463,6 +463,40 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
   }
 }
 
+// (PipelineRun::pushBeamParticle): from sub-step p.sub; F2, a2 as above; returns true if the push must
+// continue on the rank behind (zeta < lowZ; p.sub = the next sub-step), else p.sub = 0
+GEM_HD inline bool pushBeamCont(const Params& P, const FieldsV& F, Particle& p, int nsub, double dz, double lowZ,
+                                const FieldsV& F2, double a2) {
+  const double rmax = P.g.rho[P.g.N];
+  for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
+    if (p.zeta < lowZ) { p.sub = sub; return true; }
+    double gm = gammaOf(p);
+    const double vz = p.uz / gm;
+    if (vz < P.vz_min) { p.status = 3; break; }
+    const double dt = dz / vz;
+    double w;
+    const int na = P.zv.cell(p.zeta, w);
+    if (na < 0 || na >= P.Nz) { p.status = 2; break; }
+    EB f = gather(P, F, na, 1.0 - w, na + 1, w, p.x, p.y);
+    if (a2 != 0.0) {
+      const EB f2 = gather(P, F2, na, 1.0 - w, na + 1, w, p.x, p.y);
+      const double b = 1.0 - a2;
+      f = {b * f.Ex + a2 * f2.Ex, b * f.Ey + a2 * f2.Ey, b * f.Ez + a2 * f2.Ez,
+           b * f.Bx + a2 * f2.Bx, b * f.By + a2 * f2.By, b * f.Bz + a2 * f2.Bz};
+    }
+    addExternal(P.ext, p.x, p.y, p.z, f, dz);
+    if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
+    else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+    gm = gammaOf(p);
+    p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
+    p.zeta += (p.uz / gm - 1.0) * dt;
+    p.z += dz;
+    if (p.zeta < 0.0 || hypot(p.x, p.y) >= rmax) p.status = 2;
+  }
+  p.sub = 0;
+  return false;
+}
+
 // ---------------------------------------------------------------- field solve
 GEM_HD inline void thomas(const TriV& T, const cplx* rhs, cplx* x, cplx* dp) {
   dp[0] = rhs[T.i0] * T.den[0];
@@ -674,11 +708,12 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   });
 }
 
-// (1,2,1) filter of the beam current along zeta over the stored half-cells (Simulation::filterBeamCurrent),
-// one thread per column of jr, jp, jz; zero beyond the ends of the stored range
-inline void filterBeamDev(const CurrV& C, int passes) {
+// (1,2,1) filter of the beam current along zeta over the half-cells [k0, k1) (default: the stored range;
+// Simulation::filterBeamCurrent), one thread per column of jr, jp, jz; zero beyond the ends of the range
+inline void filterBeamDev(const CurrV& C, int passes, int k0 = -1, int k1 = -1) {
   if (passes <= 0) return;
-  const int M = C.M, N = C.N, k0 = C.k0, k1 = C.k0 + C.nk;
+  if (k0 < 0) { k0 = C.k0; k1 = C.k0 + C.nk; }
+  const int M = C.M, N = C.N;
   for (int a = 0; a < 3; ++a) {
     cplx* v = (a == 0) ? C.jr : (a == 1) ? C.jp : C.jz;
     const int L = (a == 0) ? N + 1 : N;
@@ -898,6 +933,10 @@ struct EngineState {
   size_t preW = 0;
   int preF = 0, preC = 0;  // first kept face / centre
   par::Array<cplx> belowR, belowP;  // MPI block: prediction at slice a
+  dev::CurrStore aux[3];            // MPI block: halo deposits H, the front rank's raw current Rw, scratch
+  bool auxReady = false;
+  par::Array<Particle> plist;       // MPI block: particles of pushBeams / depositBeams
+  par::Array<int> pflag;
   par::Array<Particle> beamSave;  // beam_field = mean: the beam list at s^0
   par::Array<int> beamMap;        // beam_field = mean: index of beamSave[i] in the beam list after the push, or -1
   par::Array<unsigned long long> lcntScratch;
@@ -1662,20 +1701,178 @@ void moveCurrents(Currents& H, dev::CurrStore& D, int lo, int hi, bool up) {
 }
 }  // namespace
 
-void Engine::putCurrents(Curr which, int lo, int hi) {
+namespace {
+dev::CurrStore& storeOf(EngineState& E, Engine::Curr w) {
+  switch (w) {
+    case Engine::C0B: return E.Cb[E.iold];
+    case Engine::C0S: return E.Cs[E.iold];
+    case Engine::C1B: return E.Cb[1 - E.iold];
+    case Engine::C1S: return E.Cs[1 - E.iold];
+    case Engine::AUX_H: return E.aux[0];
+    default: return E.aux[1];
+  }
+}
+// the auxiliary current arrays (allocated at their first use)
+void needAux(EngineState& E, int M, int N) {
+  if (E.auxReady) return;
+  for (auto& A : E.aux) A.init(size_t(M + 1) * E.cnk * (N + 1), size_t(M + 1) * E.cnk * N, size_t(E.cnk) * N);
+  E.auxReady = true;
+}
+}  // namespace
+
+void Engine::putCurrents(Curr which, int lo, int hi, const Currents* host) {
   EngineState& E = *st;
-  const int k = (which == C0B || which == C0S) ? E.iold : 1 - E.iold;
-  Currents& H = which == C0B ? sim.c0b : which == C0S ? sim.c0s : which == C1B ? sim.c1b : sim.c1s;
-  moveCurrents(H, (which == C0B || which == C1B) ? E.Cb[k] : E.Cs[k], lo, hi, true);
+  if (which >= AUX_H) needAux(E, sim.M, sim.g.N);
+  Currents& H = host ? const_cast<Currents&>(*host)
+                     : which == C0B ? sim.c0b : which == C0S ? sim.c0s : which == C1B ? sim.c1b : sim.c1s;
+  moveCurrents(H, storeOf(E, which), lo, hi, true);
 }
 
-void Engine::getCurrents(Curr which, int lo, int hi) {
+void Engine::getCurrents(Curr which, int lo, int hi, Currents* host) {
   EngineState& E = *st;
-  const int k = (which == C0B || which == C0S) ? E.iold : 1 - E.iold;
-  Currents& H = which == C0B ? sim.c0b : which == C0S ? sim.c0s : which == C1B ? sim.c1b : sim.c1s;
-  moveCurrents(H, (which == C0B || which == C1B) ? E.Cb[k] : E.Cs[k], lo, hi, false);
+  if (which >= AUX_H) needAux(E, sim.M, sim.g.N);
+  Currents& H = host ? *host : which == C0B ? sim.c0b : which == C0S ? sim.c0s : which == C1B ? sim.c1b : sim.c1s;
+  moveCurrents(H, storeOf(E, which), lo, hi, false);
 }
 
+void Engine::zeroCurrents(Curr which, int lo, int hi) {
+  EngineState& E = *st;
+  if (which >= AUX_H) needAux(E, sim.M, sim.g.N);
+  lo = std::max(lo, E.ck0);
+  hi = std::min(hi, E.ck0 + E.cnk);
+  if (hi <= lo) return;
+  dev::CurrStore& D = storeOf(E, which);
+  const dev::CurrV v = D.view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const int N = sim.g.N;
+  for (int m = 0; m <= sim.M; ++m) {
+    par::zero(D.jr.data() + v.f(m, lo, 0), size_t(hi - lo) * (N + 1));
+    par::zero(D.jp.data() + v.c(m, lo, 0), size_t(hi - lo) * N);
+    par::zero(D.jz.data() + v.c(m, lo, 0), size_t(hi - lo) * N);
+  }
+  par::zero(D.rho.data() + v.d(lo, 0), size_t(hi - lo) * N);
+  par::zero(D.rhoi.data() + v.d(lo, 0), size_t(hi - lo) * N);
+}
+
+void Engine::combineCurrents(Curr which, Curr src, int lo, int hi, bool add) {
+  EngineState& E = *st;
+  if (which >= AUX_H || src >= AUX_H) needAux(E, sim.M, sim.g.N);
+  lo = std::max(lo, E.ck0);
+  hi = std::min(hi, E.ck0 + E.cnk);
+  if (hi <= lo) return;
+  const dev::CurrV d = storeOf(E, which).view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const dev::CurrV s = storeOf(E, src).view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const int N = sim.g.N, nk = hi - lo;
+  par::forN(long(sim.M + 1) * nk * (N + 1), GEM_LAMBDA(long idx) {
+    const int i = int(idx % (N + 1));
+    const long mk = idx / (N + 1);
+    const int m = int(mk / nk), k = lo + int(mk % nk);
+    const size_t f = d.f(m, k, i);
+    d.jr[f] = add ? d.jr[f] + s.jr[f] : s.jr[f];
+    if (i < N) {
+      const size_t c = d.c(m, k, i);
+      d.jp[c] = add ? d.jp[c] + s.jp[c] : s.jp[c];
+      d.jz[c] = add ? d.jz[c] + s.jz[c] : s.jz[c];
+    }
+  });
+}
+
+void Engine::addCurrents(Curr which, const Currents& host, int lo, int hi) {
+  EngineState& E = *st;
+  needAux(E, sim.M, sim.g.N);
+  moveCurrents(const_cast<Currents&>(host), E.aux[2], lo, hi, true);
+  // aux[2] as the source (rho, rhoi added as well)
+  lo = std::max(lo, E.ck0);
+  hi = std::min(hi, E.ck0 + E.cnk);
+  if (hi <= lo) return;
+  const dev::CurrV d = storeOf(E, which).view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const dev::CurrV s = E.aux[2].view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const int N = sim.g.N, nk = hi - lo;
+  par::forN(long(sim.M + 1) * nk * (N + 1), GEM_LAMBDA(long idx) {
+    const int i = int(idx % (N + 1));
+    const long mk = idx / (N + 1);
+    const int m = int(mk / nk), k = lo + int(mk % nk);
+    d.jr[d.f(m, k, i)] += s.jr[s.f(m, k, i)];
+    if (i < N) {
+      d.jp[d.c(m, k, i)] += s.jp[s.c(m, k, i)];
+      d.jz[d.c(m, k, i)] += s.jz[s.c(m, k, i)];
+      if (m == 0) {
+        d.rho[d.d(k, i)] += s.rho[s.d(k, i)];
+        d.rhoi[d.d(k, i)] += s.rhoi[s.d(k, i)];
+      }
+    }
+  });
+}
+
+void Engine::filterCurrents(Curr which, int lo, int hi, int passes) {
+  EngineState& E = *st;
+  if (which >= AUX_H) needAux(E, sim.M, sim.g.N);
+  lo = std::max(lo, E.ck0);
+  hi = std::min(hi, E.ck0 + E.cnk);
+  if (hi <= lo) return;
+  dev::filterBeamDev(storeOf(E, which).view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk), passes, lo, hi);
+}
+
+void Engine::getHalfJ(Curr which, int k, std::vector<cd>& jr, std::vector<cd>& jp) {
+  EngineState& E = *st;
+  if (which >= AUX_H) needAux(E, sim.M, sim.g.N);
+  dev::CurrStore& D = storeOf(E, which);
+  const dev::CurrV v = D.view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const int N = sim.g.N;
+  jr.resize(size_t(sim.M + 1) * (N + 1));
+  jp.resize(size_t(sim.M + 1) * N);
+  par::fence();
+  for (int m = 0; m <= sim.M; ++m) {
+    par::download(reinterpret_cast<cplx*>(jr.data()) + size_t(m) * (N + 1), D.jr.data() + v.f(m, k, 0), N + 1);
+    par::download(reinterpret_cast<cplx*>(jp.data()) + size_t(m) * N, D.jp.data() + v.c(m, k, 0), N);
+  }
+}
+
+
+void Engine::pushBeams(std::vector<Particle>& ps, double lowZ, double wMean, std::vector<char>& cont) {
+  using namespace dev;
+  EngineState& E = *st;
+  // parameters of the current step (Simulation::beginStep has run on the host)
+  E.P.Delta = sim.Delta;
+  E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.theta = sim.cfg.numerics.theta;  const Params P = E.P;
+  const size_t n = ps.size();
+  cont.assign(n, 0);
+  if (n == 0) return;
+  E.plist.reserve(n);
+  E.pflag.reserve(n);
+  par::upload(E.plist.data(), ps.data(), n);
+  const int nsub = std::max(1, int(std::ceil(sim.Delta / sim.cfg.numerics.beam_dz_max)));
+  const double dz = sim.Delta / nsub;
+  const FieldsV fo = E.fview(E.iold), fn = E.fview(1 - E.iold);
+  const FieldsV F = (wMean != 0.0) ? fn : fo;  // first push: fold; second push: (1 - w) fnew + w fold
+  Particle* pl = E.plist.data();
+  int* fl = E.pflag.data();
+  par::forN(long(n), GEM_LAMBDA(long i) { fl[i] = pushBeamCont(P, F, pl[i], nsub, dz, lowZ, fo, wMean) ? 1 : 0; });
+  par::fence();
+  par::download(ps.data(), pl, n);
+  std::vector<int> f(n);
+  par::download(f.data(), fl, n);
+  for (size_t i = 0; i < n; ++i) cont[i] = char(f[i]);
+}
+
+void Engine::depositBeams(const std::vector<Particle>& ps, Curr which) {
+  using namespace dev;
+  EngineState& E = *st;
+  if (which >= AUX_H) needAux(E, sim.M, sim.g.N);
+  // parameters of the current step (Simulation::beginStep has run on the host)
+  E.P.Delta = sim.Delta;
+  E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.theta = sim.cfg.numerics.theta;  const Params P = E.P;
+  const size_t n = ps.size();
+  if (n == 0) return;
+  E.plist.reserve(n);
+  par::upload(E.plist.data(), ps.data(), n);
+  const CurrV C = storeOf(E, which).view(sim.M, sim.Nz, sim.g.N, E.ck0, E.cnk);
+  const Particle* pl = E.plist.data();
+  par::forN(long(n), GEM_LAMBDA(long i) { depositBeam(P, C, pl[i]); });
+}
 void Engine::swapLevels() { st->iold = 1 - st->iold; }
 
 std::vector<Particle> Engine::trapped(size_t from) {

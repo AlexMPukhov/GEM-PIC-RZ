@@ -34,6 +34,7 @@ namespace gem {
 
 class Simulation;
 struct EngineState;
+struct Currents;
 
 class Engine {
  public:
@@ -50,12 +51,28 @@ class Engine {
   // beam list, the exchanges and the output; the state is moved between sim and the device by the calls below
   // (levels: 0 = sim.fold / c0b / c0s, 1 = sim.fnew / c1b / c1s; slice and half-cell ranges [lo, hi) of the
   // stored range). The level index of the device follows swapLevels().
-  enum Curr { C0B, C0S, C1B, C1S };
+  // currents: those of sim, and two more arrays of the same layout (the pipeline's halo deposits H and the
+  // front rank's raw beam current Rw); host: `host` if given, else the array of sim (AUX_*: `host` required)
+  enum Curr { C0B, C0S, C1B, C1S, AUX_H, AUX_RW };
   void putFields(int level, int lo, int hi);
   void getFields(int level, int lo, int hi);
-  void putCurrents(Curr which, int lo, int hi);
-  void getCurrents(Curr which, int lo, int hi);
+  void putCurrents(Curr which, int lo, int hi, const Currents* host = nullptr);
+  void getCurrents(Curr which, int lo, int hi, Currents* host = nullptr);
+  void zeroCurrents(Curr which, int lo, int hi);
+  void addCurrents(Curr which, const Currents& host, int lo, int hi);  // which += host on [lo, hi)
+  // jr, jp, jz of `which` on [lo, hi): add = true: += src, else = src
+  void combineCurrents(Curr which, Curr src, int lo, int hi, bool add);
+  // (1,2,1) filter along zeta of jr, jp, jz on the half-cells [lo, hi) (zero beyond; Simulation::filterBeamCurrent)
+  void filterCurrents(Curr which, int lo, int hi, int passes);
+  // jr and jp of half-cell k (mode-major: m (N+1) + i, m N + i)
+  void getHalfJ(Curr which, int k, std::vector<std::complex<double>>& jr, std::vector<std::complex<double>>& jp);
   void swapLevels();
+  // the beam push (PipelineRun::pushBeamParticle) of the particles ps from their sub-step p.sub, in the fields
+  // of level 0 (wMean = 0), or in (1 - wMean) F + wMean G with F = fnew, G = fold (beam_field = mean, the
+  // second push of the step that just ended: fnew = F^0, fold = F^1). cont[i] = 1: the push continues on the
+  // rank behind (zeta < lowZ, p.sub = the next sub-step)
+  void pushBeams(std::vector<Particle>& ps, double lowZ, double wMean, std::vector<char>& cont);
+  void depositBeams(const std::vector<Particle>& ps, Curr which);  // Simulation::depositBeamParticle
   struct BlockMarch {
     int a = 0, b = 0;  // own slices: the march goes from b-1 down to a
     double s1 = 0.0;   // level of the step
