@@ -325,6 +325,7 @@ struct NumericsConfig {
   Backend backend = Backend::Serial;
 #endif
   int iterations = 2;        // passes per slice (1 = predictor only)
+  double beam_smooth_length = 0.0;  // radial smoothing of the beam current (as plasma.smooth_length); 0: off
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
   double trap_gamma = 0.0;       // ... and only if its gamma is at least this (0: any gamma)
   double trap_advance = 1.0;     // a streaming particle leaves its level after advancing this many steps in z

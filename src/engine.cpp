@@ -924,6 +924,10 @@ struct EngineState {
   par::Array<cplx> filtBand, filtScratch;
   par::Array<double> filtS;
   dev::FiltV filt{0, 0, nullptr, nullptr, nullptr, nullptr};
+  // numerics.beam_smooth_length (radial smoothing of the beam current)
+  par::Array<cplx> bfiltBand, bfiltScratch;
+  par::Array<double> bfiltS;
+  dev::FiltV bfilt{0, 0, nullptr, nullptr, nullptr, nullptr};
   std::vector<dev::CurrStore> local;  // CPU: per-thread currents of one half-cell
   // particles
   par::Array<Particle> stream, backup, born, beam, beamTmp, pnext, pprev;
@@ -1113,6 +1117,22 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
     E.filt = dev::FiltV{1, N, E.filtBand.data(), E.filtS.data(), E.filtS.data() + ns, E.filtS.data() + 2 * ns};
     E.filtScratch.clear(size_t(M + 1) * (4 * size_t(N) + 1));
   }
+  if (sim.bfilter.on()) {  // factors of the beam-current filter
+    std::vector<cplx> band;
+    for (const Banded5& B : sim.bfilter.vectorFactors())
+      for (const cd& v : B.A) band.push_back(cplx(v.real(), v.imag()));
+    E.bfiltBand.assign(band.data(), band.size());
+    std::vector<double> sv;
+    for (int k = 0; k < 3; ++k)
+      for (int m = 0; m <= M; ++m) {
+        const auto& v = sim.bfilter.scalarFactors(k)[m];
+        sv.insert(sv.end(), v.begin(), v.end());
+      }
+    E.bfiltS.assign(sv.data(), sv.size());
+    const size_t ns = size_t(M + 1) * N;
+    E.bfilt = dev::FiltV{1, N, E.bfiltBand.data(), E.bfiltS.data(), E.bfiltS.data() + ns, E.bfiltS.data() + 2 * ns};
+    E.bfiltScratch.clear(size_t(M + 1) * (4 * size_t(N) + 1));
+  }
 #if !defined(GEM_BACKEND_CUDA) && !defined(GEM_EMULATE_GPU)
 #if defined(_OPENMP)
   E.local = std::vector<dev::CurrStore>(size_t(omp_get_max_threads()));
@@ -1163,6 +1183,16 @@ void Engine::step() {
   const FieldsV fo = E.fview(iold), fn = E.fview(inew);
   const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
   const CurrV c1b = E.bview(inew), c1s = E.sview(inew);
+  // numerics.beam_smooth_length: radial smoothing of the beam current, every half-cell (Simulation::smoothBeamRadially)
+  auto smoothBeam = [&]() {
+    if (!E.bfilt.on) return;
+    const dev::FiltV BV = E.bfilt;
+    cplx* fs = E.bfiltScratch.data();
+    for (int n = c1b.k0; n < c1b.k0 + c1b.nk; ++n)
+      par::teams(M + 1, GEM_LAMBDA(const Team& t) {
+        filterTeam(t, BV, t.league, n, c1b, fs + size_t(t.league) * (4 * size_t(N) + 1));
+      });
+  };
   E.Cb[inew].zero();
   E.Cs[inew].zero();
   par::zero(E.freed.data(), E.freed.capacity());
@@ -1257,6 +1287,7 @@ void Engine::step() {
     par::forDyn(&cnt[C_BEAM], nullptr, E.nBeam, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[i]); });
   }
   filterBeamDev(c1b, sim.cfg.numerics.beam_filter);
+  smoothBeam();
   const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
   par::zero(E.pred[1 - E.ip].data(), npf);
   par::zero(E.predP[1 - E.ip].data(), npc);
@@ -1286,6 +1317,7 @@ void Engine::step() {
     E.Cb[inew].zero();
     par::forN(nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[i]); });
     filterBeamDev(c1b, sim.cfg.numerics.beam_filter);
+    smoothBeam();
     // particles trapped during the march: deposited unfiltered, as in the march
     par::forN(nAll - nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[nSurv + i]); });
     par::fence();
