@@ -132,6 +132,7 @@ class PipelineRun {
   // numerics.backend = cuda (or GEMPIC_PIPELINE_ENGINE=1, testing): the march of the block on the device
   std::unique_ptr<Engine> eng;
   void deviceMarch(int k, double s1, std::vector<Particle>& newForFront, std::vector<Particle>& transferDown);
+  void deviceBeamCurrent(const std::vector<Particle>& depB, const std::vector<Particle>& depH);
 
   int kh(const Particle& p) const { return S.zv.nearest(p.zeta); }
   // half-cells of the rank behind whose beam current this rank needs (filter reach)
@@ -562,9 +563,14 @@ void PipelineRun::step(Buffer& F) {
 
   // ---- beam push (fields of s^0; slices a-2 ... b are available)
   beamPushSetup();
+  if (eng) eng->putFields(0, sa, sb + 1);  // level s^0 on the device: the own block and the ghosts
   // returns true if the push must continue on the rank behind (zeta < lowZ)
   auto push = [&](Particle& p, bool count) { return pushBeamParticle(p, S.fold, nullptr, count); };
   std::vector<Particle> newBeam, handCont, handFin, transferDown;
+  // beam deposits into c1b and H (the device: collected, deposited there after the bookkeeping)
+  std::vector<Particle> depB, depH;
+  auto toC1b = [&](const Particle& p) { if (eng) depB.push_back(p); else S.depositBeamParticle(S.c1b, p); };
+  auto toH = [&](const Particle& p) { if (eng) depH.push_back(p); else S.depositBeamParticle(H, p); };
   // beam_field = mean: the first-push outcome of a tag that does not stay on this rank's list (fpKnow), and
   // for particles continued here from the front rank also in the report to it (fpBackOut)
   auto record = [&](const Particle& p, int st, bool fromFront) {
@@ -586,7 +592,7 @@ void PipelineRun::step(Buffer& F) {
       if (mean && fromFront) { Particle o = p; o.status = FP_BELOW; fpBackOut.push_back(o); }
       return;
     }
-    if (inHalo(kh(p))) S.depositBeamParticle(H, p);  // completes the current below the block
+    if (inHalo(kh(p))) toH(p);  // completes the current below the block
     handFin.push_back(p);
     record(p, FP_BELOW, fromFront);
   };
@@ -594,7 +600,19 @@ void PipelineRun::step(Buffer& F) {
     handCont.push_back(p);
     if (mean && fromFront) { Particle o = p; o.status = FP_UNKNOWN; fpBackOut.push_back(o); }
   };
-  if (threads > 1) {
+  if (eng) {
+    // on the device (numerics.backend = cuda): the own beam and the pushes continued from the front rank
+    std::vector<Particle> L(S.beam);
+    L.insert(L.end(), inContinue.begin(), inContinue.end());
+    std::vector<char> cont;
+    eng->pushBeams(L, lowZ, 0.0, cont);
+    const size_t nOwn = S.beam.size();
+    for (size_t i = 0; i < L.size(); ++i) {
+      if (L[i].status == 3) ++myRestreamed;
+      if (cont[i]) continued(L[i], i >= nOwn);
+      else afterPush(L[i], i >= nOwn);
+    }
+  } else if (threads > 1) {
     // the push of every particle is independent; the bookkeeping follows in the serial order
     std::vector<char> cont(S.beam.size());
     long long restreamed = 0;
@@ -625,11 +643,11 @@ void PipelineRun::step(Buffer& F) {
       else afterPush(p, true);
     }
   }
-  for (const auto& p : newBeam) S.depositBeamParticle(S.c1b, p);
+  for (const auto& p : newBeam) toC1b(p);
   for (const auto& p : inFinished) {  // pushed by a rank in front
-    if (beamOwner(p) == r) { S.depositBeamParticle(S.c1b, p); newBeam.push_back(p); }
+    if (beamOwner(p) == r) { toC1b(p); newBeam.push_back(p); }
     else {
-      if (inHalo(kh(p))) S.depositBeamParticle(H, p);
+      if (inHalo(kh(p))) toH(p);
       handFin.push_back(p);
       record(p, FP_BELOW, false);
     }
@@ -640,13 +658,20 @@ void PipelineRun::step(Buffer& F) {
   }
   S.beam.swap(newBeam);
   if (mean) { haloSave = halo; haloFp.clear(); }
-  for (const auto& p0 : halo) {  // copies of rank r-1's particles near the boundary
-    Particle q = p0;
-    const bool c = push(q, false);
-    if (mean) { haloFp.push_back(q); if (c) haloFp.back().status = FP_UNKNOWN; }
-    if (!c && q.status == 0 && inHalo(kh(q))) S.depositBeamParticle(H, q);
+  {  // copies of rank r-1's particles near the boundary
+    std::vector<Particle> hc(halo);
+    std::vector<char> cont(hc.size(), 0);
+    if (eng) eng->pushBeams(hc, lowZ, 0.0, cont);
+    else
+      for (size_t i = 0; i < hc.size(); ++i) cont[i] = push(hc[i], false) ? 1 : 0;
+    for (size_t i = 0; i < hc.size(); ++i) {
+      const Particle& q = hc[i];
+      if (mean) { haloFp.push_back(q); if (cont[i]) haloFp.back().status = FP_UNKNOWN; }
+      if (!cont[i] && q.status == 0 && inHalo(kh(q))) toH(q);
+    }
   }
-  filterBeam();
+  if (eng) deviceBeamCurrent(depB, depH);
+  else filterBeam();
 
   // ---- streaming particles: fresh plasma (front rank), then the waiting ones
   if (r == P - 1) S.loadFresh();
@@ -825,6 +850,36 @@ void PipelineRun::step(Buffer& F) {
   ++S.step_no;
 }
 
+// numerics.backend = cuda: the beam current of s^1 on the device (filterBeam): the deposits of the own beam
+// (depB) and of the particles below the block (depH, the halo H), the front rank's raw deposits below its
+// block and its raw current above b (Rw); the raw current of [a-2, a+pf-1] for the rank behind (Snap) and
+// the filtered current of half-cell a-1 (predBelowR / P) come back to the host
+void PipelineRun::deviceBeamCurrent(const std::vector<Particle>& depB, const std::vector<Particle>& depH) {
+  const int Nz = S.Nz;
+  eng->zeroCurrents(Engine::C1B, sa, sb);
+  if (r < P - 1) eng->putCurrents(Engine::C1B, b - 2, b);  // the front rank's raw deposits (in S.c1b)
+  eng->depositBeams(depB, Engine::C1B);
+  if (r > 0) {
+    eng->zeroCurrents(Engine::AUX_H, sa, a);
+    eng->depositBeams(depH, Engine::AUX_H);
+  }
+  const int k0 = (r > 0) ? a - 2 : a, k1 = std::min(b - 1, a + pf - 1);
+  eng->getCurrents(Engine::C1B, k0, k1 + 1, &Snap);
+  // the raw current over [klo, khi]: own + halo below a, the front rank's above b; then the filter
+  const int klo = std::max(0, (r > 0) ? a - pf - 1 : a), khi = std::min(Nz - 1, b + pf - 1);
+  if (r > 0) eng->combineCurrents(Engine::C1B, Engine::AUX_H, klo, a, true);
+  if (b <= khi) {
+    eng->putCurrents(Engine::AUX_RW, b, khi + 1, &Rw);
+    eng->combineCurrents(Engine::C1B, Engine::AUX_RW, b, khi + 1, false);
+  }
+  eng->filterCurrents(Engine::C1B, klo, khi + 1, pf);
+  if (r > 0) eng->getHalfJ(Engine::C1B, a - 1, predBelowR, predBelowP);
+  // below a: from now on only the deposits of trapped particles; above b: nothing of this rank
+  eng->zeroCurrents(Engine::C1B, klo, a);
+  eng->zeroCurrents(Engine::C1B, b, khi + 1);
+  if (r < P - 1) eng->addCurrents(Engine::C1B, Tr, b - 2, b);  // trapped at the lowest slices of the front rank
+}
+
 // numerics.backend = cuda: the march of the own slices on the device (Engine::marchBlock). The host uploads
 // the state of the step (level s^0 with the ghosts from the rank behind and the mean phase, slice b of s^1
 // from the front rank, the currents of s^0 and the filtered beam current of s^1), sends the R message from
@@ -832,11 +887,10 @@ void PipelineRun::step(Buffer& F) {
 void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFront,
                               std::vector<Particle>& transferDown) {
   const int N = S.g.N;
-  eng->putFields(0, sa, sb + 1);
+  // (level s^0 and the beam current c1b are on the device since the beam push)
   eng->putFields(1, b, b + 1);
   eng->putCurrents(Engine::C0B, sa, sb);
   eng->putCurrents(Engine::C0S, sa, sb);
-  eng->putCurrents(Engine::C1B, sa, sb);
   size_t routed = 0;
   auto route = [&]() {  // trapped particles (fast ones, already deposited into c1b on the device)
     for (const Particle& t : eng->trapped(routed)) {

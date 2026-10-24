@@ -78,8 +78,8 @@ The GPU tests compare the GPU with the serial reference:
 
 Several GPUs (MPI, one rank per GPU): `mpirun -np 4 build-gpu/gempic_rz run.deck numerics.backend=cuda`. Every rank
 takes the GPU of its node-local rank (Open MPI, Slurm, MPICH, MVAPICH variables), or the single GPU it sees with
-`srun --gpus-per-task=1`. Each rank marches its block of slices on its GPU; the beam push and the exchanges go
-through the host (see the MPI section of the README).
+`srun --gpus-per-task=1`. Each rank pushes its beam and marches its block of slices on its GPU; the beam
+bookkeeping, the mean-field second push and the exchanges go through the host (see the MPI section of the README).
 
 Then a timing run:
 
