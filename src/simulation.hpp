@@ -177,8 +177,37 @@ class Simulation {
   bool lasyDue(int step, bool last) const {
     return cfg.output.lasy && ((cfg.output.lasy_every > 0 && step % cfg.output.lasy_every == 0) || last);
   }
-  std::string writeLasy();  // output_hdf5.cpp: <dir>/lasy/laser_NNNNN.h5, returns the path
+  // ---- output of the window, block by block (no rank ever needs the whole window in memory)
+  // A step's output files are opened by beginOutput, filled by outputBlock for the blocks [n0, n1) in increasing
+  // order (fold must hold the slices [n0, n1], c0b / c0s the half-cells [n0, n1] (n1 < Nz) - one slice / half-cell
+  // beyond the block for the interpolations), and closed by endOutput, which returns the console messages.
+  // Without MPI the whole window is one block; the MPI pipeline streams the blocks of the ranks through rank 0.
+  struct OutputPlan {
+    bool files = false;       // the formats of output.format (text, hdf5, openpmd)
+    bool lasy = false;        // output.lasy
+    bool checkpoint = false;  // checkpoint_NNNNN.h5 (beam, pendingNext and rng must be complete)
+    bool any() const { return files || lasy || checkpoint; }
+  };
+  struct Sink {
+    virtual ~Sink() = default;
+    virtual void block(int n0, int n1) = 0;
+    virtual std::string finish() = 0;  // message for the console ("" for none)
+  };
+  struct OutputSet {
+    std::vector<std::unique_ptr<Sink>> sinks;
+  };
+  std::unique_ptr<OutputSet> beginOutput(const OutputPlan& plan);
+  void outputBlock(OutputSet& o, int n0, int n1);
+  std::vector<std::string> endOutput(OutputSet& o);
+  bool externalOutput = false;  // MPI pipeline: report() writes no files, rank 0 streams the blocks itself
  private:
+  struct TextSink;        // diagnostics.cpp: axis_, map_, beam_NNNNN.txt
+  struct Hdf5Sink;        // output_hdf5.cpp: data_NNNNN.h5
+  struct OpenPMDSink;     // output_hdf5.cpp: openpmd/openpmd_<step>.h5
+  struct LasySink;        // output_hdf5.cpp: lasy/laser_NNNNN.h5
+  struct CheckpointSink;  // output_hdf5.cpp: checkpoint_NNNNN.h5
+  static std::unique_ptr<Sink> makeHdf5Sink(Simulation& S, int kind);  // output_hdf5.cpp (0 data, 1 openPMD, 2 LASY,
+                                                                       // 3 checkpoint)
   void initBunches();
   void initBunchFields();
   void addBeamFields(double sign, bool deckGamma);  // co-moving self-fields of the beam list
@@ -219,10 +248,6 @@ class Simulation {
 
   DiagSums diagSums(int n0, int n1) const;          // slices / half-cells [n0, n1) and the beam list
   void report(const DiagSums& D, bool files);       // console, tables, files
-  void writeFiles();
-  void writeHdf5();     // output_hdf5.cpp
-  void writeHdf5File(const std::string& path);  // output_hdf5.cpp: the content of data_NNNNN.h5
-  void writeOpenPMD();  // output_hdf5.cpp (openPMD 1.1.0)
   void readCheckpoint(const std::string& path);
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt
   void writeBunchTable(const DiagSums& D);

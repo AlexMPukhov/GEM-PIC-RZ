@@ -33,10 +33,10 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        zeta solve is a Thomas sweep across the ranks, bit-identical to one rank); restart reads the block from the
        checkpoint (hyperslabs); the initial output goes through the pipeline. Results bit-identical to
        `GEMPIC_FULL_STORAGE=1`; tests/mpi.sh passes with range checks.
-    3. next: output and checkpoints without assembling the whole window on rank 0 (rank 0 receives one block at a
-       time and writes it as HDF5 hyperslabs / text slices; LASY export gathers only the output radii). The
-       owner insists that no rank ever holds the whole window (out-of-memory problems before).
-    4. then: mean-field beam push (`beam_field = mean`) in MPI (needed for undulators / XFEL).
+    3. done: block-wise output (Simulation::beginOutput / outputBlock / endOutput with one sink per format, HDF5
+       hyperslabs); the pipeline streams the blocks of the ranks through rank 0 (at most two blocks there). Files
+       of 3 ranks = serial files (h5diff: only date / input_deck differ).
+    4. next: mean-field beam push (`beam_field = mean`) in MPI (needed for undulators / XFEL).
     5. then: the GPU engine on a block (march over [a, b), the pipeline exchanges staged through the host, later
        CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
     6. then: real-GPU tests (`ctest -R lasy`, regression_cuda, physics_cuda) and a scaling series (1, 4, 16, 64

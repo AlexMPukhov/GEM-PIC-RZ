@@ -50,7 +50,7 @@
 namespace gem {
 
 namespace {
-enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103 };
+enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103, TAG_BLOCK = 104 };
 constexpr int MIN_SLICES = 4;  // per rank without beam filter (the R message needs 3 processed slices)
 }  // namespace
 
@@ -745,20 +745,14 @@ void PipelineRun::recvRear() {
 // diagnostics: partial sums (and data of output / checkpoint steps) to rank 0
 // ----------------------------------------------------------------------------
 void PipelineRun::sendDiag(int k) {
+  const bool files = filesAt(k), ck = checkpointAt(k), fields = files || ck || lasyAt(k);
   Buffer B;
   B.put<int>(k);
   putDiag(B, S.diagSums(a, b));
   B.put(myRestreamed);
   B.put(myTrapped);
-  if (filesAt(k) || checkpointAt(k) || lasyAt(k)) {
-    putRange(B, S.fold, a, b);
-    putDens(B, S.c0b, a, b);
-    putDens(B, S.c0s, a, b);
-    B.putVec(S.beam);
-  }
-  if (checkpointAt(k)) {
-    putJ(B, S.c0b, a, b);
-    putJ(B, S.c0s, a, b);
+  if (files || ck) B.putVec(S.beam);
+  if (ck) {
     B.putVec(S.pendingNext);
     std::string rs;
     if (r == P - 1) {
@@ -769,27 +763,28 @@ void PipelineRun::sendDiag(int k) {
     B.putVec(std::vector<char>(rs.begin(), rs.end()));
   }
   comm::send(0, TAG_DIAG, std::move(B));
+  if (fields) {  // the own block for the output, streamed through rank 0 (separate message)
+    Buffer F;
+    F.put<int>(k);
+    putRange(F, S.fold, a, (r == P - 1) ? S.Nz + 1 : b);
+    putJ(F, S.c0b, a, b);
+    putJ(F, S.c0s, a, b);
+    putDens(F, S.c0b, a, b);
+    putDens(F, S.c0s, a, b);
+    comm::send(0, TAG_BLOCK, std::move(F));
+  }
 }
 
+// rank 0: console line and tables from the partial sums; the output files are written block by block: the block
+// of rank q (fields of its slices, currents of its half-cells) with the first slice / half-cell of rank q+1
+// appended, so that rank 0 never holds more than two blocks
 void PipelineRun::reportStep(int k) {
   DiagSums D = S.diagSums(a, b);
   long long re = myRestreamed, tr = myTrapped;
-  const bool files = filesAt(k), ck = checkpointAt(k), fields = files || ck || lasyAt(k);
+  const bool files = filesAt(k), ck = checkpointAt(k), lasy = lasyAt(k), fields = files || ck || lasy;
   std::vector<Particle> gbeam, gpend;
   if (files || ck) gbeam = S.beam;
   if (ck) gpend = S.pendingNext;
-  // output steps: the whole window, assembled on rank 0 only for the output (the ranks store their blocks)
-  Fields gF;
-  Currents gCb, gCs;
-  if (fields) {
-    const int M = S.M, Nz = S.Nz, N = S.g.N;
-    gF.init(M, Nz, N);
-    gF.copyRange(S.fold, a, (P == 1) ? Nz + 1 : b);
-    gCb.init(M, Nz, N);
-    gCs.init(M, Nz, N);
-    gCb.copyRange(S.c0b, a, b);
-    gCs.copyRange(S.c0s, a, b);
-  }
   std::string rngState;
   for (int q = 1; q < P; ++q) {
     Buffer B = comm::recv(q, TAG_DIAG);
@@ -797,16 +792,11 @@ void PipelineRun::reportStep(int k) {
     D.add(getDiag(B));
     re += B.get<long long>();
     tr += B.get<long long>();
-    if (fields) {
-      getRange(B, gF, lo[q], lo[q + 1]);
-      getDens(B, gCb, lo[q], lo[q + 1]);
-      getDens(B, gCs, lo[q], lo[q + 1]);
+    if (files || ck) {
       const std::vector<Particle> pb = B.getVec<Particle>();
       gbeam.insert(gbeam.end(), pb.begin(), pb.end());
     }
     if (ck) {
-      getJ(B, gCb, lo[q], lo[q + 1]);
-      getJ(B, gCs, lo[q], lo[q + 1]);
       const std::vector<Particle> pp = B.getVec<Particle>();
       gpend.insert(gpend.end(), pp.begin(), pp.end());
       const std::vector<char> rs = B.getVec<char>();
@@ -815,28 +805,80 @@ void PipelineRun::reportStep(int k) {
   }
   S.n_restreamed = baseRestreamed + long(re);
   S.n_trapped_total = baseTrapped + long(tr);
-  auto swapWindow = [&] {
-    if (!fields) return;
-    std::swap(S.fold, gF);
-    std::swap(S.c0b, gCb);
-    std::swap(S.c0s, gCs);
+  S.report(D, files);  // console and tables (S.externalOutput: no files)
+  if (!fields) { std::fflush(stdout); return; }
+
+  const int M = S.M, Nz = S.Nz, N = S.g.N;
+  struct Blk { Fields F; Currents Cb, Cs; int lo = 0, hi = 0; };
+  auto getBlock = [&](int q) {
+    auto bl = std::make_unique<Blk>();
+    bl->lo = lo[q];
+    bl->hi = lo[q + 1];
+    const int fe = (q == P - 1) ? Nz + 1 : bl->hi;
+    bl->F.initRange(M, Nz, N, bl->lo, fe);
+    bl->Cb.initRange(M, Nz, N, bl->lo, bl->hi);
+    bl->Cs.initRange(M, Nz, N, bl->lo, bl->hi);
+    if (q == 0) {
+      bl->F.copyRange(S.fold, bl->lo, fe);
+      bl->Cb.copyRange(S.c0b, bl->lo, bl->hi);
+      bl->Cs.copyRange(S.c0s, bl->lo, bl->hi);
+    } else {
+      Buffer B = comm::recv(q, TAG_BLOCK);
+      if (B.get<int>() != k) throw std::runtime_error("MPI pipeline: step mismatch (output block)");
+      getRange(B, bl->F, bl->lo, fe);
+      getJ(B, bl->Cb, bl->lo, bl->hi);
+      getJ(B, bl->Cs, bl->lo, bl->hi);
+      getDens(B, bl->Cb, bl->lo, bl->hi);
+      getDens(B, bl->Cs, bl->lo, bl->hi);
+    }
+    return bl;
   };
-  swapWindow();
-  if (files) S.beam.swap(gbeam);
-  S.report(D, files);
-  if (files) S.beam.swap(gbeam);
+  Simulation::OutputPlan plan;
+  plan.files = files;
+  plan.lasy = lasy;
+  plan.checkpoint = ck;
+  if (files || ck) S.beam.swap(gbeam);
   if (ck) {
-    S.beam.swap(gbeam);
     S.pendingNext.swap(gpend);
     if (P > 1) {
       std::istringstream is(rngState);
       is >> S.rng;  // rank 0 does not load plasma itself: its generator is unused
     }
-    std::printf("checkpoint: %s\n", S.writeCheckpoint().c_str());
-    S.beam.swap(gbeam);
-    S.pendingNext.swap(gpend);
   }
-  swapWindow();
+  {
+    auto out = S.beginOutput(plan);
+    std::unique_ptr<Blk> cur = getBlock(0);
+    for (int q = 0; q < P; ++q) {
+      std::unique_ptr<Blk> next = (q + 1 < P) ? getBlock(q + 1) : nullptr;
+      // the block of rank q, extended by one slice / half-cell of rank q+1
+      Fields F;
+      Currents Cb, Cs;
+      const int fe = (q == P - 1) ? Nz + 1 : cur->hi + 1;
+      F.initRange(M, Nz, N, cur->lo, fe);
+      F.copyRange(cur->F, cur->lo, fe);
+      Cb.initRange(M, Nz, N, cur->lo, cur->hi + 1);
+      Cs.initRange(M, Nz, N, cur->lo, cur->hi + 1);
+      Cb.copyRange(cur->Cb, cur->lo, cur->hi);
+      Cs.copyRange(cur->Cs, cur->lo, cur->hi);
+      if (next) {
+        F.copyRange(next->F, cur->hi, cur->hi + 1);
+        Cb.copyRange(next->Cb, cur->hi, cur->hi + 1);
+        Cs.copyRange(next->Cs, cur->hi, cur->hi + 1);
+      }
+      cur.reset();
+      std::swap(S.fold, F);
+      std::swap(S.c0b, Cb);
+      std::swap(S.c0s, Cs);
+      S.outputBlock(*out, lo[q], lo[q + 1]);
+      std::swap(S.fold, F);
+      std::swap(S.c0b, Cb);
+      std::swap(S.c0s, Cs);
+      cur = std::move(next);
+    }
+    for (const auto& msg : S.endOutput(*out)) std::printf("%s\n", msg.c_str());
+  }
+  if (files || ck) S.beam.swap(gbeam);
+  if (ck) S.pendingNext.swap(gpend);
   std::fflush(stdout);
 }
 
@@ -853,6 +895,7 @@ int PipelineRun::run() {
     return 1;
   }
   r = comm::rank();
+  S.externalOutput = true;  // rank 0 streams the output block by block (reportStep)
   t0 = std::chrono::steady_clock::now();
   try {
     partition();

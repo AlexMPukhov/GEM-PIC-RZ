@@ -244,11 +244,16 @@ void Simulation::report(const DiagSums& D, bool files) {
   writeIonizationTable(D);
   if (cfg.output.fel) writeFelTable(D);
   if (cfg.output.fel && cfg.output.fel_harmonics > 1) writeFelHarmonics(D);
-  if (files && cfg.output.text) writeFiles();
-  if (files && cfg.output.hdf5) writeHdf5();
-  if (files && cfg.output.openpmd) writeOpenPMD();
-  if (lasyDue(step_no, s0 >= cfg.grid.z_end - cfg.grid.endTol())) std::printf("LASY file: %s\n", writeLasy().c_str());
+  if (externalOutput) return;  // MPI pipeline: rank 0 streams the blocks of the ranks itself
+  OutputPlan plan;
+  plan.files = files;
+  plan.lasy = lasyDue(step_no, s0 >= cfg.grid.z_end - cfg.grid.endTol());
+  if (!plan.any()) return;
+  auto out = beginOutput(plan);
+  outputBlock(*out, 0, Nz);  // the whole window is one block
+  for (const auto& msg : endOutput(*out)) std::printf("%s\n", msg.c_str());
 }
+
 
 // After a restart from step N the tables may hold lines of steps > N from the
 // interrupted run: keep the comments and the lines of steps <= N.
@@ -461,63 +466,104 @@ void Simulation::writeIonizationTable(const DiagSums& D) {
   std::fclose(fp);
 }
 
-void Simulation::writeFiles() {
-  namespace fs = std::filesystem;
-  const auto& O = cfg.output;
-  fs::create_directories(O.dir);
-  const double um = cfg.units.k0inv_um();
-  char name[1024];
+// text files axis_, map_ (written slice by slice, block by block) and beam_NNNNN.txt (at the end)
+struct Simulation::TextSink : Simulation::Sink {
+  Simulation& S;
+  FILE* axis = nullptr;
+  FILE* map = nullptr;
+  double um;
+  explicit TextSink(Simulation& s) : S(s), um(s.cfg.units.k0inv_um()) {
+    const auto& O = S.cfg.output;
+    std::filesystem::create_directories(O.dir);
+    char name[1024];
+    if (O.axis) {
+      std::snprintf(name, sizeof name, "%s/axis_%05d.txt", O.dir.c_str(), S.step_no);
+      if ((axis = std::fopen(name, "w")))
+        std::fprintf(axis, "# zeta[um]  Ex  Ez  ne/n0  Zni/n0     (z = %.6g mm, fields in m c omega0/e)\n",
+                     S.s0 * um * 1e-3);
+    }
+    if (O.maps) {
+      std::snprintf(name, sizeof name, "%s/map_%05d.txt", O.dir.c_str(), S.step_no);
+      if ((map = std::fopen(name, "w")))
+        std::fprintf(map, "# zeta[um]  x[um]  Ex  Ez  ne/n0(m=0)  Zni/n0(m=0)     (z = %.6g mm, plane phi = 0 / pi)\n",
+                     S.s0 * um * 1e-3);
+    }
+  }
+  ~TextSink() override {
+    if (axis) std::fclose(axis);
+    if (map) std::fclose(map);
+  }
   // densities in half-cell k (the last slice has no half-cell: use k = Nz-1)
-  auto ne = [&](int k, int i) {
-    k = std::min(k, Nz - 1);
-    return -(c0s.rho[c0s.d(k, i)] + c0b.rho[c0b.d(k, i)]) / n_ref;
-  };
-  auto ni = [&](int k, int i) {
-    k = std::min(k, Nz - 1);
-    return (c0s.rhoi[c0s.d(k, i)] + c0b.rhoi[c0b.d(k, i)]) / n_ref;
-  };
-
-  if (O.axis) {
-    std::snprintf(name, sizeof name, "%s/axis_%05d.txt", O.dir.c_str(), step_no);
-    if (FILE* fp = std::fopen(name, "w")) {
-      std::fprintf(fp, "# zeta[um]  Ex  Ez  ne/n0  Zni/n0     (z = %.6g mm, fields in m c omega0/e)\n",
-                   s0 * um * 1e-3);
-      for (int n = 0; n < Nz; ++n) {
-        EB f = gather(fold, n, 1.0, n, 0.0, 1e-9, 0.0);
-        std::fprintf(fp, "%.6e %.6e %.6e %.6e %.6e\n", zv.node(n) * um, f.Ex, f.Ez, ne(n, 0), ni(n, 0));
-      }
-      std::fclose(fp);
-    }
+  double ne(int k, int i) const {
+    k = std::min(k, S.Nz - 1);
+    return -(S.c0s.rho[S.c0s.d(k, i)] + S.c0b.rho[S.c0b.d(k, i)]) / S.n_ref;
   }
-  if (O.maps) {
-    std::snprintf(name, sizeof name, "%s/map_%05d.txt", O.dir.c_str(), step_no);
-    if (FILE* fp = std::fopen(name, "w")) {
-      std::fprintf(fp, "# zeta[um]  x[um]  Ex  Ez  ne/n0(m=0)  Zni/n0(m=0)     (z = %.6g mm, plane phi = 0 / pi)\n",
-                   s0 * um * 1e-3);
-      for (int n = 0; n < Nz; n += O.map_stride) {
+  double ni(int k, int i) const {
+    k = std::min(k, S.Nz - 1);
+    return (S.c0s.rhoi[S.c0s.d(k, i)] + S.c0b.rhoi[S.c0b.d(k, i)]) / S.n_ref;
+  }
+  void block(int n0, int n1) override {
+    const int stride = S.cfg.output.map_stride, N = S.g.N;
+    for (int n = n0; n < n1; ++n) {
+      if (axis) {
+        EB f = S.gather(S.fold, n, 1.0, n, 0.0, 1e-9, 0.0);
+        std::fprintf(axis, "%.6e %.6e %.6e %.6e %.6e\n", S.zv.node(n) * um, f.Ex, f.Ez, ne(n, 0), ni(n, 0));
+      }
+      if (map && n % stride == 0) {
         for (int sgn = -1; sgn <= 1; sgn += 2)
-          for (int ii = 0; ii < g.N; ++ii) {
-            int i = (sgn < 0) ? g.N - 1 - ii : ii;
-            double x = sgn * g.c[i];
-            EB f = gather(fold, n, 1.0, n, 0.0, x, 0.0);
-            std::fprintf(fp, "%.5e %.5e %.5e %.5e %.5e %.5e\n", zv.node(n) * um, x * um, f.Ex, f.Ez, ne(n, i), ni(n, i));
+          for (int ii = 0; ii < N; ++ii) {
+            int i = (sgn < 0) ? N - 1 - ii : ii;
+            double x = sgn * S.g.c[i];
+            EB f = S.gather(S.fold, n, 1.0, n, 0.0, x, 0.0);
+            std::fprintf(map, "%.5e %.5e %.5e %.5e %.5e %.5e\n", S.zv.node(n) * um, x * um, f.Ex, f.Ez, ne(n, i),
+                         ni(n, i));
           }
-        std::fprintf(fp, "\n");
+        std::fprintf(map, "\n");
       }
-      std::fclose(fp);
     }
   }
-  if (O.particles) {
-    std::snprintf(name, sizeof name, "%s/beam_%05d.txt", O.dir.c_str(), step_no);
-    if (FILE* fp = std::fopen(name, "w")) {
-      std::fprintf(fp, "# x[um] y[um] zeta[um] ux uy uz q[pC] species  (species: bunch index, -1 self-trapped plasma "
-                       "electrons, -30-s trapped electrons from ionization of ion block s)\n");
-      for (const auto& p : beam)
-        std::fprintf(fp, "%.6e %.6e %.6e %.6e %.6e %.6e %.6e %d\n", p.x * um, p.y * um, p.zeta * um, p.ux, p.uy,
-                     p.uz, cfg.units.codeToPC(p.q), p.sp);
-      std::fclose(fp);
+  std::string finish() override {
+    if (axis) { std::fclose(axis); axis = nullptr; }
+    if (map) { std::fclose(map); map = nullptr; }
+    const auto& O = S.cfg.output;
+    if (O.particles) {
+      char name[1024];
+      std::snprintf(name, sizeof name, "%s/beam_%05d.txt", O.dir.c_str(), S.step_no);
+      if (FILE* fp = std::fopen(name, "w")) {
+        std::fprintf(fp, "# x[um] y[um] zeta[um] ux uy uz q[pC] species  (species: bunch index, -1 self-trapped plasma "
+                         "electrons, -30-s trapped electrons from ionization of ion block s)\n");
+        for (const auto& p : S.beam)
+          std::fprintf(fp, "%.6e %.6e %.6e %.6e %.6e %.6e %.6e %d\n", p.x * um, p.y * um, p.zeta * um, p.ux, p.uy,
+                       p.uz, S.cfg.units.codeToPC(p.q), p.sp);
+        std::fclose(fp);
+      }
     }
+    return "";
   }
+};
+
+std::unique_ptr<Simulation::OutputSet> Simulation::beginOutput(const OutputPlan& plan) {
+  auto o = std::make_unique<OutputSet>();
+  if (plan.files && cfg.output.text) o->sinks.push_back(std::make_unique<TextSink>(*this));
+  if (plan.files && cfg.output.hdf5) o->sinks.push_back(makeHdf5Sink(*this, 0));
+  if (plan.files && cfg.output.openpmd) o->sinks.push_back(makeHdf5Sink(*this, 1));
+  if (plan.lasy) o->sinks.push_back(makeHdf5Sink(*this, 2));
+  if (plan.checkpoint) o->sinks.push_back(makeHdf5Sink(*this, 3));
+  return o;
+}
+
+void Simulation::outputBlock(OutputSet& o, int n0, int n1) {
+  for (auto& s : o.sinks) s->block(n0, n1);
+}
+
+std::vector<std::string> Simulation::endOutput(OutputSet& o) {
+  std::vector<std::string> msg;
+  for (auto& s : o.sinks) {
+    const std::string m = s->finish();
+    if (!m.empty()) msg.push_back(m);
+  }
+  o.sinks.clear();
+  return msg;
 }
 
 }  // namespace gem

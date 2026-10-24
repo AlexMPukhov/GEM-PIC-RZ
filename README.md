@@ -268,8 +268,14 @@ code 3).
   falls as 1/P, which makes long windows (XFEL, multi-period wakes) possible. The results are identical to those with
   the whole window on every rank (`GEMPIC_FULL_STORAGE=1`, testing). Example: `tests/regression.deck` with a 300 µm
   window (9400 slices) on 4 ranks: 0.43 GB per rank during the steps; the whole window on every rank needed more
-  than 1 GB per rank and did not fit on a 4 GB machine. Remaining: rank 0 still assembles the whole window on output
-  and checkpoint steps (0.69 GB peak in this example).
+  than 1 GB per rank and did not fit on a 4 GB machine.
+- **Output without the whole window:** every output file (text, HDF5, openPMD, LASY, checkpoints) is written block
+  by block: the datasets are created at their full size and filled with hyperslabs. Rank 0 receives the blocks of
+  the ranks one after the other and never holds more than two of them (the next block supplies the one slice and
+  half-cell that the interpolations need beyond a block). The files are the same as those of a serial run. In the
+  example above, with HDF5, openPMD, text and checkpoint output, the largest rank needs 0.60 GB. Exception: the
+  LASY export keeps R at its output radii for all time samples (its demodulation needs the whole time series of a
+  radius); the beam list (bunches, trapped particles) is gathered on rank 0 for the files.
 
 ## GPU and multi-core backends
 
