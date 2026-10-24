@@ -273,7 +273,7 @@ code 3).
 
 **Current limits:**
 
-- **Backend:** `numerics.backend = serial` runs the serial step on every rank; `numerics.backend = openmp` adds OpenMP threads on every rank (hybrid MPI + threads, `OMP_NUM_THREADS` threads per rank). The GPU engine is not yet combined with MPI.
+- **Backend:** `numerics.backend = serial` runs the serial step on every rank; `numerics.backend = openmp` adds OpenMP threads on every rank (hybrid MPI + threads, `OMP_NUM_THREADS` threads per rank). `numerics.backend = cuda` runs the ζ-march of every block on a GPU (one GPU per rank, chosen by the node-local rank of the launcher, or the one GPU a task sees with `srun --gpus-per-task=1`): the streaming plasma, the field solves and the R corrections of the own slices as kernels (`Engine::marchBlock`), staged through the host for the messages. The beam push, its bookkeeping and the mean-field second push still run on the host. Tested in the GPU emulation build (`GEMPIC_PIPELINE_ENGINE=1 gempic_rz_gpuemu ... numerics.backend=openmp`: the GPU code paths on CPU threads): 1–4 ranks, a restart from 3 to 2 ranks, the mean-field push, free-hand grids, field ionization, the flying focus and the FEL beam across 3 blocks agree with the serial run to all printed digits (`tests/mpi.sh`). Not yet run on a real GPU.
 - **Memory:** every rank builds and stores the fields and currents only of its own block of slices and ghost slices
   (2 × beam-filter passes + 6 on each side); the particles are distributed as well. Nothing is built for the whole
   window on any rank at the start: lasers (also from LASY files), the flying focus and the bunch self-fields are

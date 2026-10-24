@@ -12,6 +12,8 @@
 #      serial step, 2-4 ranks agree with it, also across a checkpoint (regression deck: wake, trapping,
 #      absorber; beam filter 2); the intense beam in a planar undulator at dz = lambda_u/16
 #      (benchmarks/harmonics/fel.deck, the beam spans the 3 blocks): 3 ranks = serial
+#   8. the march of the blocks on the device (Engine::marchBlock; GPU emulation build, or a CUDA build with a
+#      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -23,6 +25,7 @@ fi
 # Open MPI: allow more ranks than cores (the test uses up to 4 ranks)
 if $MPIEXEC --version 2>&1 | grep -qiE "open mpi|openrte|open-mpi"; then FLAGS="$FLAGS --oversubscribe"; fi
 run() { np=$1; shift; $MPIEXEC $FLAGS -n $np "$EXE" "$@"; }  # -n: mpirun and srun (srun reads -np as "-n p")
+runx() { np=$1; x=$2; shift 2; $MPIEXEC $FLAGS -n $np "$x" "$@"; }  # with another executable
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 cd "$WORK"
@@ -83,6 +86,31 @@ OMP_NUM_THREADS=2 run 2 "$SRC/tests/undulator.deck" $U numerics.backend=openmp o
 for f in bunches.txt fel.txt; do "$CMP" user/$f uhy/$f 1e-6 1e-12; done
 else
   echo "  hybrid MPI + OpenMP part skipped: no openmp backend in this build (CUDA build)"
+fi
+# the march of the blocks on the device (Engine::marchBlock): the GPU code paths emulated on CPU threads
+# (gempic_rz_gpuemu of this build, GEMPIC_PIPELINE_ENGINE=1), or a CUDA build on its GPU(s)
+DEV=""
+if [ -x "$(dirname "$EXE")/gempic_rz_gpuemu" ]; then
+  DEV="$(dirname "$EXE")/gempic_rz_gpuemu"; DB="numerics.backend=openmp"; export GEMPIC_PIPELINE_ENGINE=1
+elif "$EXE" "$DECK" numerics.backend=cuda --check > devcheck.log 2>&1 && command -v nvidia-smi > /dev/null; then
+  DEV="$EXE"; DB="numerics.backend=cuda"
+fi
+if [ -n "$DEV" ]; then
+  E="output.every=1 output.map_stride=8 grid.z_end=160k0^-1 $DB"
+  GEMPIC_PIPELINE=1 "$DEV" "$DECK" $E output.dir=d1 > d1.log
+  compare d1 1e-6 1e-9
+  for np in 2 3; do
+    OMP_NUM_THREADS=2 runx $np "$DEV" "$DECK" $E output.dir=d$np > d$np.log
+    compare d$np 1e-6 1e-9
+  done
+  OMP_NUM_THREADS=2 runx 3 "$DEV" "$DECK" $E numerics.beam_field=mean numerics.beam_filter=2 output.dir=dm > dm.log
+  for f in axis_00002.txt axis_00004.txt map_00004.txt bunches.txt; do "$CMP" mser/$f dm/$f 1e-6 1e-9; done
+  OMP_NUM_THREADS=2 runx 3 "$DEV" "$SRC/tests/flexgrid.deck" $DB output.map_stride=8 output.dir=dfx > dfx.log
+  for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" fser/$f dfx/$f 1e-6 1e-9; done
+  unset GEMPIC_PIPELINE_ENGINE
+  echo "  device march of the blocks ($DB): 1-3 ranks, mean-field push, free-hand grids = serial"
+else
+  echo "  device march of the blocks skipped: no GPU emulation build and no GPU"
 fi
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
