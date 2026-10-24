@@ -4,6 +4,7 @@
 #include <functional>
 #include "simulation.hpp"
 
+#include "comm.hpp"
 #include "eigen.hpp"
 #include "rng.hpp"
 
@@ -17,13 +18,19 @@
 namespace gem {
 
 static const cd I1(0.0, 1.0);
+enum { TAG_BF_FWD = 201, TAG_BF_BWD = 202, TAG_BF_GHOST = 203 };  // MPI: bunch fields at the start
 
 // ============================================================================
 //  setup
 // ============================================================================
-Simulation::Simulation(const Config& c, const std::string& restartFile, bool useEngine) : cfg(c) {
+Simulation::Simulation(const Config& c, const std::string& restartFile, bool useEngine, const StorageBlock* sb)
+    : cfg(c) {
   M = cfg.grid.M;
   Nz = cfg.grid.Nz;
+  blk.a = 0; blk.b = Nz; blk.sa = 0; blk.sb = Nz;
+  if (sb) { blk = *sb; partial = true; }
+  sLo = std::max(0, blk.sa);
+  sHi = std::min(Nz, blk.sb + 1);
   {
     std::vector<double> nodes(Nz + 1);
     for (int n = 0; n <= Nz; ++n) nodes[n] = cfg.grid.zetaNode(n);
@@ -50,9 +57,10 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   n_ref = cfg.plasma.present ? cfg.plasma.n0 : 1.0;
   rng.seed(cfg.numerics.seed);
   g.build(cfg.grid);
-  fold.init(M, Nz, g.N);
-  fnew.init(M, Nz, g.N);
-  for (auto* C : {&c0b, &c0s, &c1b, &c1s}) C->init(M, Nz, g.N);
+  // fields and currents: the whole window, or (MPI) only the stored block, built there
+  fold.initRange(M, Nz, g.N, blk.sa, blk.sb + 1);
+  fnew.initRange(M, Nz, g.N, blk.sa, blk.sb + 1);
+  for (auto* C : {&c0b, &c0s, &c1b, &c1s}) C->initRange(M, Nz, g.N, blk.sa, blk.sb);
   solver.setup(g, M);
   solver.theta = cfg.numerics.theta;
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
@@ -96,14 +104,16 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
     while (iaC < g.N && g.c[iaC] <= ra) ++iaC;
     nLF = g.N + 1 - iaF;
     nLC = g.N - iaC;
-    incF.assign(size_t(M + 1) * Nz * std::max(nLF, 0), cd(0.0));
-    incC.assign(size_t(M + 1) * Nz * std::max(nLC, 0), cd(0.0));
+    nLo = sLo;
+    nInc = sHi - sLo;
+    incF.assign(size_t(M + 1) * nInc * std::max(nLF, 0), cd(0.0));
+    incC.assign(size_t(M + 1) * nInc * std::max(nLC, 0), cd(0.0));
     incS = std::numeric_limits<double>::quiet_NaN();
   }
   if (restartFile.empty()) {
     initLasers();
     if (cfg.flying_focus.present)  // the incident field of level s0 in the whole box
-      for (int n = 0; n < Nz; ++n) {
+      for (int n = sLo; n < sHi; ++n) {
         for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(1, n, i)] += ffInc(true, n, i, s0);
         for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(1, n, i)] += I1 * ffInc(false, n, i, s0);
       }
@@ -140,17 +150,18 @@ void Simulation::initLasers() {
     if (!fileFields[k]) continue;
     const LaserFileField& F = *fileFields[k];
     const bool direct = F.atFilePlane(s0);
-    std::vector<double> zeta(Nz), rf(g.rho.begin() + 1, g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
-    for (int n = 0; n < Nz; ++n) zeta[n] = zv.node(n);
+    const int nz = sHi - sLo;  // the stored slices
+    std::vector<double> zeta(nz), rf(g.rho.begin() + 1, g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
+    for (int n = 0; n < nz; ++n) zeta[n] = zv.node(sLo + n);
     std::vector<cd> out;
     F.field(s0, rf, zeta, 0, out, direct);
     for (int i = 1; i <= g.N; ++i)
-      for (int n = 0; n < Nz; ++n)
-        for (int m = 0; m <= M; ++m) fold.Rr[fold.f(m, n, i)] += out[(size_t(i - 1) * Nz + n) * (M + 1) + m];
+      for (int n = 0; n < nz; ++n)
+        for (int m = 0; m <= M; ++m) fold.Rr[fold.f(m, sLo + n, i)] += out[(size_t(i - 1) * nz + n) * (M + 1) + m];
     F.field(s0, rc, zeta, 1, out, direct);
     for (int i = 0; i < g.N; ++i)
-      for (int n = 0; n < Nz; ++n)
-        for (int m = 0; m <= M; ++m) fold.Rp[fold.c(m, n, i)] += out[(size_t(i) * Nz + n) * (M + 1) + m];
+      for (int n = 0; n < nz; ++n)
+        for (int m = 0; m <= M; ++m) fold.Rp[fold.c(m, sLo + n, i)] += out[(size_t(i) * nz + n) * (M + 1) + m];
     std::printf("laser[%zu]: field of the file %s at z = %.6g mm\n", k,
                 direct ? "interpolated" : "propagated from its plane", s0 * cfg.units.k0inv_um() * 1e-3);
     for (const auto& l : F.info) std::printf("          %s\n", l.c_str());
@@ -186,7 +197,7 @@ void Simulation::initLasers() {
       if (linear) return E.real() * rot;                     // conj(Re(E) e^{i theta})
       return (L.helicity > 0) ? std::conj(E) : E;            // conj(P)
     };
-    for (int n = 0; n < Nz; ++n) {
+    for (int n = sLo; n < sHi; ++n) {
       const double zeta = zv.node(n);
       for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(1, n, i)] += Rr1(g.rho[i], zeta);
       for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(1, n, i)] += I1 * Rr1(g.c[i], zeta);
@@ -462,9 +473,12 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
     if (!symTridiagEigen(d, e, Q[m])) throw std::runtime_error("bunch fields: eigenvalue iteration failed");
     lam[m] = d;
   };
+  // the stored slices [sLo, sHi) (whole window, or an MPI block with ghosts: the solve along zeta for v < c is then
+  // distributed over the ranks, with the same arithmetic as on one rank)
   Currents C;
-  C.init(M, Nz, N);
-  std::vector<cd> rho(size_t(Nz) * N), psi(size_t(Nz) * N), col(Nz), Er(N + 1), Ep(N);
+  C.initRange(M, Nz, N, blk.sa, blk.sb);
+  const int nS = sHi - sLo;
+  std::vector<cd> rho(size_t(nS) * N), psi(size_t(nS) * N), col(Nz), Er(N + 1), Ep(N);
   std::vector<double> sq(N);
   for (int i = 0; i < N; ++i) sq[i] = std::sqrt(g.Ac[i]);
   std::vector<int> groups;
@@ -491,18 +505,19 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
     const double ig2 = (gam > 1e5) ? 0.0 : 1.0 / (gam * gam);
     for (int m = 0; m <= M; ++m) {
       // charge density at slice n: linear interpolation of the half-cells n-1 and n
-      for (int n = 0; n < Nz; ++n)
+      for (int n = sLo; n < sHi; ++n)
         for (int i = 0; i < N; ++i)
-          rho[size_t(n) * N + i] = 0.5 * (zv.wLo(n) * ((n > 0) ? C.jz[C.c(m, n - 1, i)] : cd(0.0)) +
-                                          zv.wHi(n) * C.jz[C.c(m, n, i)]) / beta;
+          rho[size_t(n - sLo) * N + i] =
+              0.5 * (zv.wLo(n) * ((n > 0 && C.has(n - 1)) ? C.jz[C.c(m, n - 1, i)] : cd(0.0)) +
+                     zv.wHi(n) * (C.has(n) ? C.jz[C.c(m, n, i)] : cd(0.0))) / beta;
       if (ig2 == 0.0) {
-        for (int n = 0; n < Nz; ++n) solver.poisson(m, &rho[size_t(n) * N], &psi[size_t(n) * N]);
+        for (int n = 0; n < nS; ++n) solver.poisson(m, &rho[size_t(n) * N], &psi[size_t(n) * N]);
       } else {
         eigen(m);
         const std::vector<double>& Z = Q[m];
         // rho_k(n) = sum_i Q_ik sqrt(A_i) rho_i(n)
-        std::vector<cd> rk(size_t(Nz) * N);
-        for (int n = 0; n < Nz; ++n) {
+        std::vector<cd> rk(size_t(nS) * N);
+        for (int n = 0; n < nS; ++n) {
           const cd* r = &rho[size_t(n) * N];
           cd* out = &rk[size_t(n) * N];
           for (int i = 0; i < N; ++i) {
@@ -512,29 +527,87 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
             for (int k = 0; k < N; ++k) out[k] += zi[k] * v;
           }
         }
-        // tridiagonal solve along zeta for every eigenmode
-        std::vector<double> lo(Nz), di(Nz), up(Nz), cp(Nz);
+        // tridiagonal solve along zeta for every eigenmode (Thomas; with MPI the forward sweep runs from rank 0
+        // upwards and the back substitution downwards, passing the boundary values of the own block [a, b))
+        std::vector<double> lo(Nz), di(Nz), up(Nz);
         for (int n = 0; n < Nz; ++n) {
           const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
           const double f = 2.0 * ig2 / (hm + hp);
           lo[n] = -f / hm; up[n] = -f / hp; di[n] = f / hm + f / hp;
         }
+        const int A = blk.a, Bk = blk.b, P = blk.P, r = blk.r;
+        const bool dist = partial && P > 1;
+        std::vector<double> cp(size_t(Bk - A) * N), cpIn(N, 0.0), cpOut(N);
+        std::vector<cd> colIn(N, cd(0.0)), colOut(N);
+        auto R = [&](int n, int k) -> cd& { return rk[size_t(n - sLo) * N + k]; };
+        if (dist && r > 0) {
+          Buffer B = comm::recv(r - 1, TAG_BF_FWD);
+          cpIn = B.getVec<double>();
+          colIn = B.getVec<cd>();
+        }
         for (int k = 0; k < N; ++k) {
           const double lk = lam[m][k];
-          for (int n = 0; n < Nz; ++n) col[n] = rk[size_t(n) * N + k];
-          double den = di[0] + lk;
-          cp[0] = up[0] / den;
-          col[0] /= den;
-          for (int n = 1; n < Nz; ++n) {
-            den = di[n] + lk - lo[n] * cp[n - 1];
-            cp[n] = up[n] / den;
-            col[n] = (col[n] - lo[n] * col[n - 1]) / den;
+          for (int n = A; n < Bk; ++n) {
+            double& c = cp[size_t(n - A) * N + k];
+            if (n == 0) {
+              const double den = di[0] + lk;
+              c = up[0] / den;
+              R(0, k) /= den;
+            } else {
+              const double cprev = (n == A) ? cpIn[k] : cp[size_t(n - 1 - A) * N + k];
+              const cd colprev = (n == A) ? colIn[k] : R(n - 1, k);
+              const double den = di[n] + lk - lo[n] * cprev;
+              c = up[n] / den;
+              R(n, k) = (R(n, k) - lo[n] * colprev) / den;
+            }
           }
-          for (int n = Nz - 2; n >= 0; --n) col[n] -= cp[n] * col[n + 1];
-          for (int n = 0; n < Nz; ++n) rk[size_t(n) * N + k] = col[n];
+          cpOut[k] = cp[size_t(Bk - 1 - A) * N + k];
+          colOut[k] = R(Bk - 1, k);
+        }
+        if (dist && r < P - 1) {
+          Buffer B;
+          B.putVec(cpOut);
+          B.putVec(colOut);
+          comm::send(r + 1, TAG_BF_FWD, std::move(B));
+          colIn = comm::recv(r + 1, TAG_BF_BWD).getVec<cd>();  // solution at slice b
+        }
+        for (int k = 0; k < N; ++k)
+          for (int n = Bk - 1; n >= A; --n) {
+            if (n >= Nz - 1) continue;  // the last slice of the window: no update
+            const cd next = (n == Bk - 1) ? colIn[k] : R(n + 1, k);
+            R(n, k) -= cp[size_t(n - A) * N + k] * next;
+          }
+        if (dist && r > 0) {
+          std::vector<cd> first(N);
+          for (int k = 0; k < N; ++k) first[k] = R(A, k);
+          Buffer B;
+          B.putVec(first);
+          comm::send(r - 1, TAG_BF_BWD, std::move(B));
+        }
+        // ghost slices of the block from the neighbours (their own slices)
+        if (dist) {
+          auto sendRows = [&](int dest, int n0, int n1) {
+            Buffer B;
+            B.put<int>(n0);
+            B.put<int>(n1);
+            B.putRaw(&rk[size_t(n0 - sLo) * N], sizeof(cd) * size_t(n1 - n0) * N);
+            comm::send(dest, TAG_BF_GHOST, std::move(B));
+          };
+          auto recvRows = [&](int src) {
+            Buffer B = comm::recv(src, TAG_BF_GHOST);
+            const int n0 = B.get<int>(), n1 = B.get<int>();
+            std::vector<cd> v(size_t(n1 - n0) * N);
+            B.getRaw(v.data(), sizeof(cd) * v.size());
+            for (int n = std::max(n0, sLo); n < std::min(n1, sHi); ++n)
+              std::copy_n(&v[size_t(n - n0) * N], N, &rk[size_t(n - sLo) * N]);
+          };
+          if (r > 0) sendRows(r - 1, A, std::min(Bk, A + blk.g));
+          if (r < P - 1) sendRows(r + 1, std::max(A, Bk - blk.g), Bk);
+          if (r < P - 1) recvRows(r + 1);
+          if (r > 0) recvRows(r - 1);
         }
         // psi_i(n) = sum_k Q_ik psi_k(n) / sqrt(A_i)
-        for (int n = 0; n < Nz; ++n) {
+        for (int n = 0; n < nS; ++n) {
           const cd* in = &rk[size_t(n) * N];
           cd* out = &psi[size_t(n) * N];
           for (int i = 0; i < N; ++i) {
@@ -545,8 +618,8 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
           }
         }
       }
-      for (int n = 0; n < Nz; ++n) {
-        solver.gradient(m, &psi[size_t(n) * N], Er.data(), Ep.data());
+      for (int n = sLo; n < sHi; ++n) {
+        solver.gradient(m, &psi[size_t(n - sLo) * N], Er.data(), Ep.data());
         for (int i = 1; i <= N; ++i) {
           fold.Rr[fold.f(m, n, i)] += sign * ((1.0 + beta) * Er[i]);
           if (beta < 1.0) fold.Lr[fold.f(m, n, i)] += sign * ((1.0 - beta) * Er[i]);
@@ -558,8 +631,8 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
         if (ig2 > 0.0) {  // E_z = -gamma^-2 d_zeta psi (central difference, psi = 0 beyond the window)
           const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
           for (int i = 0; i < N; ++i) {
-            const cd up1 = (n + 1 < Nz) ? psi[size_t(n + 1) * N + i] : cd(0.0);
-            const cd dn1 = (n > 0) ? psi[size_t(n - 1) * N + i] : cd(0.0);
+            const cd up1 = (n + 1 < sHi) ? psi[size_t(n + 1 - sLo) * N + i] : cd(0.0);
+            const cd dn1 = (n - 1 >= sLo) ? psi[size_t(n - 1 - sLo) * N + i] : cd(0.0);
             fold.Ez[fold.c(m, n, i)] -= sign * (ig2 * (up1 - dn1) / (hm + hp));
           }
         }
@@ -650,6 +723,7 @@ EB Simulation::gather(const Fields& F, int n1, double w1, int n2, double w2, dou
 void Simulation::deposit(Currents& C, int k, double wk, double x, double y, double vx, double vy, double vz,
                          double W, bool ion, int kc) {
   if (k < 0 || k >= Nz || wk == 0.0 || W == 0.0) return;
+  if (kc < 0 && !C.has(k)) return;  // outside the stored half-cells (MPI block)
   const int kd = (kc < 0) ? k : kc;  // index in C
   const int N = g.N;
   double r = std::sqrt(x * x + y * y);
@@ -716,15 +790,18 @@ void Simulation::smoothStream(Currents& C, int n) {
 void Simulation::filterBeamCurrent(Currents& C) const {
   const int passes = cfg.numerics.beam_filter;
   if (passes <= 0) return;
+  // over the stored half-cells [k0, k0 + nk): the whole window, or an MPI block with ghosts (the values within
+  // `passes` of the ends of a block are then not used)
+  const int k0 = C.k0, k1 = C.k0 + C.nk;
   auto column = [&](std::vector<cd>& v, int L) {
     for (int m = 0; m <= M; ++m)
       for (int i = 0; i < L; ++i)
         for (int p = 0; p < passes; ++p) {
           cd prev(0.0);
-          for (int k = 0; k < Nz; ++k) {
-            cd& x = v[(size_t(m) * Nz + k) * L + i];
+          for (int k = k0; k < k1; ++k) {
+            cd& x = v[(size_t(m) * C.nk + k - k0) * L + i];
             const cd cur = x;
-            const cd next = (k + 1 < Nz) ? v[(size_t(m) * Nz + k + 1) * L + i] : cd(0.0);
+            const cd next = (k + 1 < k1) ? v[(size_t(m) * C.nk + k + 1 - k0) * L + i] : cd(0.0);
             x = 0.25 * prev + 0.5 * cur + 0.25 * next;
             prev = cur;
           }
@@ -1317,8 +1394,8 @@ void Simulation::absorber(double s) {
 // inject = boundary: incident field of the file lasers in the absorber layer at level s, slices [n0, n1)
 void Simulation::prepareIncident(double s, int n0, int n1) {
   if (!hasIncident) return;
-  n0 = std::max(0, n0);
-  n1 = std::min(Nz, n1);
+  n0 = std::max(sLo, n0);
+  n1 = std::min(sHi, n1);
   if (s == incS && n0 >= incN0 && n1 <= incN1) return;
   std::fill(incF.begin(), incF.end(), cd(0.0));
   std::fill(incC.begin(), incC.end(), cd(0.0));
@@ -1332,11 +1409,11 @@ void Simulation::prepareIncident(double s, int n0, int n1) {
     fileFields[k]->field(s, rf, zeta, 0, out, false);
     for (int i = 0; i < nLF; ++i)
       for (int n = 0; n < nz; ++n)
-        for (int m = 0; m <= M; ++m) incF[(size_t(m) * Nz + n0 + n) * nLF + i] += out[(size_t(i) * nz + n) * (M + 1) + m];
+        for (int m = 0; m <= M; ++m) incF[(size_t(m) * nInc + n0 + n - nLo) * nLF + i] += out[(size_t(i) * nz + n) * (M + 1) + m];
     fileFields[k]->field(s, rc, zeta, 1, out, false);
     for (int i = 0; i < nLC; ++i)
       for (int n = 0; n < nz; ++n)
-        for (int m = 0; m <= M; ++m) incC[(size_t(m) * Nz + n0 + n) * nLC + i] += out[(size_t(i) * nz + n) * (M + 1) + m];
+        for (int m = 0; m <= M; ++m) incC[(size_t(m) * nInc + n0 + n - nLo) * nLC + i] += out[(size_t(i) * nz + n) * (M + 1) + m];
   }
   incS = s;
   incN0 = n0;
@@ -1360,23 +1437,24 @@ void Simulation::setupFlyingFocus() {
             std::polar(1.0, F.cep);
   }
   auto fill = [&](std::vector<cd>& G, const std::vector<double>& rr, int nr, int i0) {
-    G.assign(size_t(Nz) * nr, cd(0.0));
+    G.assign(size_t(sHi - sLo) * nr, cd(0.0));
     std::vector<double> J(size_t(nr) * nw);
     for (int i = i0; i < nr; ++i)
       for (int j = 0; j < nw; ++j) J[size_t(i) * nw + j] = std::cyl_bessel_j(0.0, kj[j] * rr[i]);
     std::vector<cd> e(nw);
-    for (int n = 0; n < Nz; ++n) {
+    for (int n = sLo; n < sHi; ++n) {
       const double d = zv.node(n) - F.zeta_center;
       for (int j = 0; j < nw; ++j) e[j] = cj[j] * std::polar(1.0, wj[j] * d);
       for (int i = i0; i < nr; ++i) {
         cd sum = 0.0;
         const double* Ji = &J[size_t(i) * nw];
         for (int j = 0; j < nw; ++j) sum += Ji[j] * e[j];
-        G[size_t(n) * nr + i] = sum;
+        G[size_t(n - sLo) * nr + i] = sum;
       }
     }
   };
   std::vector<double> rf(g.rho.begin(), g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
+  ffN0 = sLo;
   fill(ffGf, rf, g.N + 1, 1);
   fill(ffGc, rc, g.N, 0);
 }

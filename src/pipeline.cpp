@@ -91,9 +91,10 @@ class PipelineRun {
   }
   int beamOwner(const Particle& p) const { return ownerHalf(kh(p)); }
   int joinOwner(const Particle& p) const { return ownerHalf(S.zv.joinCell(p.zeta)); }
+  int firstOut = -1;  // step of the initial output (not after a restart)
   bool filesAt(int k) const {
     const int e = S.cfg.output.every;
-    return (e > 0 && k % e == 0) || k == lastStep;
+    return (e > 0 && k % e == 0) || k == lastStep || k == firstOut;
   }
   bool lasyAt(int k) const { return S.lasyDue(k, k == lastStep); }
   bool checkpointAt(int k) const {
@@ -232,6 +233,32 @@ class PipelineRun {
 // ----------------------------------------------------------------------------
 // decomposition of the window and of the (global) initial state
 // ----------------------------------------------------------------------------
+StorageBlock pipelineBlock(const Config& cfg, int P, int r) {
+  const int Nz = cfg.grid.Nz, pf = cfg.numerics.beam_filter;
+  // ghost width: the beam push reaches down to half-cell a - pf - 2, the filter and the exchanges up to b + pf - 1;
+  // the bunch fields of the start are built on the stored range, where the filtered current is valid pf away
+  // from its ends
+  const int G = 2 * pf + 6;
+  const int minSlices = std::max(MIN_SLICES + pf, G);
+  for (int q = 0; q < P; ++q) {
+    const int lq = int((long long)Nz * q / P), hq = int((long long)Nz * (q + 1) / P);
+    if (hq - lq < minSlices && P > 1)
+      throw std::runtime_error("MPI: " + std::to_string(P) + " ranks for " + std::to_string(Nz) +
+                               " slices; every rank needs at least " + std::to_string(minSlices) +
+                               " slices (use at most " + std::to_string(Nz / minSlices) + " ranks)");
+  }
+  StorageBlock B;
+  B.P = P;
+  B.r = r;
+  B.a = int((long long)Nz * r / P);
+  B.b = int((long long)Nz * (r + 1) / P);
+  B.g = G;
+  B.sa = B.a - G;
+  B.sb = B.b + G;
+  if (P == 1 || std::getenv("GEMPIC_FULL_STORAGE")) { B.sa = 0; B.sb = Nz; }  // the whole window (testing)
+  return B;
+}
+
 void PipelineRun::partition() {
   P = comm::size();
   r = comm::rank();
@@ -239,14 +266,9 @@ void PipelineRun::partition() {
   lo.resize(P + 1);
   for (int q = 0; q <= P; ++q) lo[q] = int((long long)Nz * q / P);
   pf = S.cfg.numerics.beam_filter;
-  const int minSlices = MIN_SLICES + pf;
-  for (int q = 0; q < P; ++q)
-    if (lo[q + 1] - lo[q] < minSlices && P > 1)
-      throw std::runtime_error("MPI: " + std::to_string(P) + " ranks for " + std::to_string(Nz) +
-                               " slices; every rank needs at least " + std::to_string(minSlices) +
-                               " slices (use at most " + std::to_string(Nz / minSlices) + " ranks)");
-  a = lo[r];
-  b = lo[r + 1];
+  const StorageBlock blk = pipelineBlock(S.cfg, P, r);
+  a = blk.a;
+  b = blk.b;
   // beam list: own particles, and the copies of the particles of rank r-1 in half-cell a-1
   std::vector<Particle> own;
   halo.clear();
@@ -261,28 +283,13 @@ void PipelineRun::partition() {
   S.pendingNext.swap(pend);
   baseRestreamed = (r == 0) ? S.n_restreamed : 0;
   baseTrapped = (r == 0) ? S.n_trapped_total : 0;
-  // distributed storage: every rank keeps the slices and half-cells [a - G, b + G) of its block and ghosts
-  // (the beam push reaches down to half-cell a - pf - 2, the filter and the exchanges up to b + pf - 1); all
-  // current arrays of a rank share one layout (filterBeam indexes the halo / front arrays like c1b)
-  const int G = pf + 4, M = S.M, N = S.g.N;
-  sa = a - G;
-  sb = b + G;
-  if (std::getenv("GEMPIC_FULL_STORAGE")) { sa = 0; sb = Nz; }  // the previous behaviour (testing)
-  auto shrinkF = [&](Fields& F) {
-    Fields t;
-    t.initRange(M, Nz, N, sa, sb + 1);
-    t.copyRange(F, sa, sb + 1);
-    F = std::move(t);
-  };
-  auto shrinkC = [&](Currents& C) {
-    Currents t;
-    t.initRange(M, Nz, N, sa, sb);
-    t.copyRange(C, sa, sb);
-    C = std::move(t);
-  };
-  shrinkF(S.fold);
-  shrinkF(S.fnew);
-  for (auto* C : {&S.c0b, &S.c0s, &S.c1b, &S.c1s}) shrinkC(*C);
+  // distributed storage: every rank keeps (and has built) only the slices and half-cells [sa, sb) of its block
+  // and ghosts; all current arrays of a rank share one layout (filterBeam indexes the halo / front arrays like c1b)
+  const int M = S.M, N = S.g.N;
+  sa = blk.sa;
+  sb = blk.sb;
+  if (S.fold.n0 != std::max(0, sa) || S.c0b.k0 != std::max(0, sa))
+    throw std::runtime_error("MPI pipeline: the simulation was not built for the block of this rank");
   for (auto* C : {&H, &Tr, &Rw, &Snap}) C->initRange(M, Nz, N, sa, sb);
   predBelowR.assign(S.predR.size(), cd(0.0));
   predBelowP.assign(S.predP.size(), cd(0.0));
@@ -848,8 +855,12 @@ int PipelineRun::run() {
   r = comm::rank();
   t0 = std::chrono::steady_clock::now();
   try {
-    if (r == 0 && !rc.restarted) S.diagnostics(true);  // initial state (global on every rank)
     partition();
+    if (!rc.restarted) {  // initial state: collected from the blocks like every output step
+      firstOut = S.step_no;
+      if (r > 0) sendDiag(firstOut);
+      else reportStep(firstOut);
+    }
     if (r == 0) {
       std::printf("MPI pipeline along zeta: %d ranks, slices per rank %d ... %d\n", P, lo[1] - lo[0],
                   lo[P] - lo[P - 1]);

@@ -68,11 +68,21 @@ struct DiagSums {
 
 class PipelineRun;
 
+// MPI pipeline: the part of the window a rank owns and stores (see pipeline.cpp). The state is built only there.
+struct StorageBlock {
+  int P = 1, r = 0;  // ranks, own rank
+  int a = 0, b = 0;  // own slices / half-cells [a, b)
+  int sa = 0, sb = 0;  // stored slices [sa, sb] and half-cells [sa, sb) (block and ghosts; not clipped)
+  int g = 0;           // ghost width
+};
+
 class Simulation {
  public:
   // restartFile empty: initial state from the deck; else: state of a checkpoint
   // useEngine = false: no parallel engine even for backend openmp/cuda (MPI pipeline, threads in its loops)
-  explicit Simulation(const Config& cfg, const std::string& restartFile = "", bool useEngine = true);
+  // blk: build and store only that part of the window (MPI pipeline); null: the whole window
+  explicit Simulation(const Config& cfg, const std::string& restartFile = "", bool useEngine = true,
+                      const StorageBlock* blk = nullptr);
   ~Simulation();
 
   void step();
@@ -119,6 +129,10 @@ class Simulation {
 
   // shortcuts to often used parameters
   int M = 0, Nz = 0;
+  StorageBlock blk;   // own and stored part of the window (whole window without MPI)
+  bool partial = false;  // only a block is stored
+  // stored slices with data, [sLo, sHi) within 0..Nz-1
+  int sLo = 0, sHi = 0;
   double Delta = 0;  // step of the current s^0 -> s^1 (set at the start of every step)
   ZetaGrid zg;       // longitudinal grid of the window
   ZetaView zv;       // view of zg
@@ -133,9 +147,10 @@ class Simulation {
   // flying focus (cfg.flying_focus): incident field G(r, zeta) of R_r,1 at s = 0 on the faces (n (N+1) + i) and
   // centres (n N + i); at level s, R_r,1 = Re(G e^{-i kappa s}) and R_phi,1 = i R_r,1
   std::vector<cd> ffGf, ffGc;
+  int ffN0 = 0;  // first slice of ffGf, ffGc (stored slices only)
   void setupFlyingFocus();
   double ffInc(bool face, int n, int i, double s) const {
-    const cd G = face ? ffGf[size_t(n) * (g.N + 1) + i] : ffGc[size_t(n) * g.N + i];
+    const cd G = face ? ffGf[size_t(n - ffN0) * (g.N + 1) + i] : ffGc[size_t(n - ffN0) * g.N + i];
     return (G * std::polar(1.0, -cfg.flying_focus.kappa() * s)).real();
   }
   // lasers from LASY / openPMD envelope files (laser.file): field evaluators (null for the other lasers)
@@ -147,11 +162,13 @@ class Simulation {
   std::vector<cd> incF, incC;
   double incS = 0.0;
   void prepareIncident(double s, int n0, int n1);
+  // (slices of the stored range: index n - nLo, nInc slices)
+  int nLo = 0, nInc = 0;
   cd incidentF(int m, int n, int i) const {
-    return (hasIncident && i >= iaF) ? incF[(size_t(m) * Nz + n) * nLF + i - iaF] : cd(0.0);
+    return (hasIncident && i >= iaF) ? incF[(size_t(m) * nInc + n - nLo) * nLF + i - iaF] : cd(0.0);
   }
   cd incidentC(int m, int n, int i) const {
-    return (hasIncident && i >= iaC) ? incC[(size_t(m) * Nz + n) * nLC + i - iaC] : cd(0.0);
+    return (hasIncident && i >= iaC) ? incC[(size_t(m) * nInc + n - nLo) * nLC + i - iaC] : cd(0.0);
   }
   // LASY output (output.lasy): lab time of slice zeta at level s is s - zeta + lasyTref (the time base of the
   // first file laser, else 0)

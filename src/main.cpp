@@ -168,7 +168,12 @@ int run(int argc, char** argv) {
 
   std::unique_ptr<gem::Simulation> simp;
   try {
-    simp = std::make_unique<gem::Simulation>(cfg, restart, !pipeline);
+    if (pipeline) {  // every rank builds only its own block of the window
+      const gem::StorageBlock blk = gem::pipelineBlock(cfg, nranks, gem::comm::rank());
+      simp = std::make_unique<gem::Simulation>(cfg, restart, false, &blk);
+    } else {
+      simp = std::make_unique<gem::Simulation>(cfg, restart, true);
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "error: %s\n", e.what());
     return 1;

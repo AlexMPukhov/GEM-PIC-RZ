@@ -276,6 +276,34 @@ class Reader {
   std::vector<double> reals(const std::string& p, size_t expect = size_t(-1)) const {
     return read<double>(p, H5T_NATIVE_DOUBLE, expect);
   }
+  // the blocks {offset, count} of a 1-D dataset of `total` elements, in that order, into dst (its size: the sum)
+  template <class T>
+  void readBlocks(const std::string& p, hid_t mt, size_t total, const std::vector<std::pair<hsize_t, hsize_t>>& blocks,
+                  std::vector<T>& dst) const {
+    Handle ds(H5Dopen2(file_, p.c_str(), H5P_DEFAULT), H5Dclose, path_ + ": no dataset " + p);
+    Handle sp(H5Dget_space(ds), H5Sclose, "dataspace");
+    if (size_t(H5Sget_simple_extent_npoints(sp)) != total)
+      throw std::runtime_error(path_ + ": " + p + " has " + std::to_string(H5Sget_simple_extent_npoints(sp)) +
+                               " elements, expected " + std::to_string(total) + " (grid of the deck differs?)");
+    hsize_t n = 0;
+    check(H5Sselect_none(sp), "select");
+    for (const auto& b : blocks) {
+      if (b.second == 0) continue;
+      check(H5Sselect_hyperslab(sp, H5S_SELECT_OR, &b.first, nullptr, &b.second, nullptr), "hyperslab " + p);
+      n += b.second;
+    }
+    if (n != dst.size()) throw std::runtime_error("readBlocks: size mismatch for " + p);
+    if (n == 0) return;
+    Handle ms(H5Screate_simple(1, &n, nullptr), H5Sclose, "memory space");
+    check(H5Dread(ds, mt, ms, sp, H5P_DEFAULT, dst.data()), "read " + p);
+  }
+  void complexBlocks(const std::string& p, size_t total, const std::vector<std::pair<hsize_t, hsize_t>>& blocks,
+                     std::vector<std::complex<double>>& dst) const {
+    Handle mt(H5Tcreate(H5T_COMPOUND, sizeof(std::complex<double>)), H5Tclose, "complex type");
+    H5Tinsert(mt, "r", 0, H5T_NATIVE_DOUBLE);
+    H5Tinsert(mt, "i", sizeof(double), H5T_NATIVE_DOUBLE);
+    readBlocks(p, mt, total, blocks, dst);
+  }
   void complexes(const std::string& p, std::vector<std::complex<double>>& dst) const {
     Handle mt(H5Tcreate(H5T_COMPOUND, sizeof(std::complex<double>)), H5Tclose, "complex type");
     H5Tinsert(mt, "r", 0, H5T_NATIVE_DOUBLE);
@@ -344,12 +372,20 @@ void writeCurrents(Writer& W, const std::string& g, const Currents& C) {
   W.real(g + "/rho", {C.rho.size()}, C.rho.data(), 1.0, "code units", "charge density (electrons, bunches), m = 0");
   W.real(g + "/rhoi", {C.rhoi.size()}, C.rhoi.data(), 1.0, "code units", "charge density of the ions, m = 0");
 }
+// the stored half-cells [k0, k0 + nk) of C (the whole window, or an MPI block)
 void readCurrents(const Reader& R, const std::string& g, Currents& C) {
-  R.complexes(g + "/jr", C.jr);
-  R.complexes(g + "/jp", C.jp);
-  R.complexes(g + "/jz", C.jz);
-  C.rho = R.reals(g + "/rho", C.rho.size());
-  C.rhoi = R.reals(g + "/rhoi", C.rhoi.size());
+  auto blocks = [&](size_t L) {
+    std::vector<std::pair<hsize_t, hsize_t>> b;
+    for (int m = 0; m <= C.M; ++m) b.push_back({hsize_t((size_t(m) * C.Nz + C.k0) * L), hsize_t(size_t(C.nk) * L)});
+    return b;
+  };
+  const size_t nf = size_t(C.M + 1) * C.Nz * (C.N + 1), nc = size_t(C.M + 1) * C.Nz * C.N;
+  R.complexBlocks(g + "/jr", nf, blocks(C.N + 1), C.jr);
+  R.complexBlocks(g + "/jp", nc, blocks(C.N), C.jp);
+  R.complexBlocks(g + "/jz", nc, blocks(C.N), C.jz);
+  const std::vector<std::pair<hsize_t, hsize_t>> d = {{hsize_t(size_t(C.k0) * C.N), hsize_t(size_t(C.nk) * C.N)}};
+  R.readBlocks(g + "/rho", H5T_NATIVE_DOUBLE, size_t(C.Nz) * C.N, d, C.rho);
+  R.readBlocks(g + "/rhoi", H5T_NATIVE_DOUBLE, size_t(C.Nz) * C.N, d, C.rhoi);
 }
 
 // step number of a checkpoint file name, -1 if it is none
@@ -1051,12 +1087,19 @@ void Simulation::readCheckpoint(const std::string& path) {
     std::printf("WARNING: numerics.seed differs from the checkpoint: the ionization random numbers differ from the "
                 "uninterrupted run\n");
   // state
-  R.complexes("/state/fields/Rr", fold.Rr);
-  R.complexes("/state/fields/Lr", fold.Lr);
-  R.complexes("/state/fields/Bz", fold.Bz);
-  R.complexes("/state/fields/Rp", fold.Rp);
-  R.complexes("/state/fields/Lp", fold.Lp);
-  R.complexes("/state/fields/Ez", fold.Ez);
+  // fields: the stored slices only (the whole window, or the block of an MPI rank)
+  auto fblocks = [&](size_t L) {
+    std::vector<std::pair<hsize_t, hsize_t>> b;
+    for (int m = 0; m <= M; ++m) b.push_back({hsize_t((size_t(m) * (Nz + 1) + fold.n0) * L), hsize_t(size_t(fold.ns) * L)});
+    return b;
+  };
+  const size_t nff = size_t(M + 1) * (Nz + 1) * (g.N + 1), ncf = size_t(M + 1) * (Nz + 1) * g.N;
+  R.complexBlocks("/state/fields/Rr", nff, fblocks(g.N + 1), fold.Rr);
+  R.complexBlocks("/state/fields/Lr", nff, fblocks(g.N + 1), fold.Lr);
+  R.complexBlocks("/state/fields/Bz", nff, fblocks(g.N + 1), fold.Bz);
+  R.complexBlocks("/state/fields/Rp", ncf, fblocks(g.N), fold.Rp);
+  R.complexBlocks("/state/fields/Lp", ncf, fblocks(g.N), fold.Lp);
+  R.complexBlocks("/state/fields/Ez", ncf, fblocks(g.N), fold.Ez);
   readCurrents(R, "/state/beam_currents", c0b);
   readCurrents(R, "/state/stream_currents", c0s);
   beam = readParticles(R, "/state/beam");
