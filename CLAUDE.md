@@ -8,7 +8,11 @@ Read this first. README.md is the user documentation; docs/ holds the details.
 - Build/test: `cmake -B build && cmake --build build -j && (cd build && ctest)`; for many threads use
   `numerics.backend=openmp` and `OMP_PROC_BIND=false` in containers.
 - Unsubmitted papers that are not directly about the code go to the private repository CLAUDE-notes, never here.
-- Commit at milestones with descriptive messages; push to origin main.
+- Commit at milestones with descriptive messages. Larger features go on a branch and are merged into main by a pull
+  request after the tests pass; the owner prefers that Claude pushes and opens the pull requests itself.
+- Every new feature gets a test (ctest) against an independent reference and an entry in docs/ and README.md.
+- Testing aids: `-DCMAKE_CXX_FLAGS=-DGEMPIC_RANGE_CHECK` (every field/current access checked against the stored
+  slices), an AddressSanitizer build, and `tests/mpi.sh <exe> <compare_columns> mpirun` for 2-4 ranks.
 - Ongoing work:
   - **FEL** (separate paper): draft, notes and handoff are in the PRIVATE repository AlexMPukhov/CLAUDE-notes
     (`gem-pic-rz/`); read them there if that repository is in the session. Benchmarks here:
@@ -18,11 +22,23 @@ Read this first. README.md is the user documentation; docs/ holds the details.
   - GPU check: `benchmarks/gpu/` (not yet run on a GPU).
   - **Flying focus** (luminal Bessel pulse fed through the radial boundary, `flying_focus` block): handover in
     `docs/flying_focus_handoff.md`; tests and production decks in `benchmarks/flying_focus/` (README there).
-  - **LASY** laser files (branch `lasy`): `laser.file` (import, exact propagation, `inject = boundary`) and
+  - **LASY** laser files (merged, PR #1): `laser.file` (import, exact propagation, `inject = boundary`) and
     `output.lasy` (export), `src/laser_file.*`, ctest `lasy`, docs/input_deck.md. Motivation: flying focus /
     structured light prepared in LASY. Not yet run on a real GPU; MPI checked in tests/mpi.sh (3 ranks = serial).
-  - **Multi-GPU plan** (MPI pipeline + GPU engine): step 1 done = distributed field storage and per-block initialization/restart in the MPI pipeline
-    (`Fields`/`Currents` store [n0, n0 + ns) with global-index accessors; `-DGEMPIC_RANGE_CHECK` checks every
-    access). Next: output and checkpoints without assembling the window on rank 0, then the mean-field beam push (`beam_field = mean`) in MPI, then the block-restricted GPU march with the
-    pipeline exchanges, then a scaling test on JUPITER.
+  - **Multi-GPU plan** (MPI pipeline + GPU engine), branch `distfields`:
+    1. done: distributed storage in the MPI pipeline: `Fields`/`Currents` store only [n0, n0 + ns) with
+       global-index accessors; every rank keeps its block and 2 pf + 6 ghost slices (`pipelineBlock()` in
+       pipeline.cpp, `StorageBlock` in simulation.hpp).
+    2. done: every rank BUILDS only its block (lasers, LASY lasers, flying focus, bunch self-fields: for v < c the
+       zeta solve is a Thomas sweep across the ranks, bit-identical to one rank); restart reads the block from the
+       checkpoint (hyperslabs); the initial output goes through the pipeline. Results bit-identical to
+       `GEMPIC_FULL_STORAGE=1`; tests/mpi.sh passes with range checks.
+    3. next: output and checkpoints without assembling the whole window on rank 0 (rank 0 receives one block at a
+       time and writes it as HDF5 hyperslabs / text slices; LASY export gathers only the output radii). The
+       owner insists that no rank ever holds the whole window (out-of-memory problems before).
+    4. then: mean-field beam push (`beam_field = mean`) in MPI (needed for undulators / XFEL).
+    5. then: the GPU engine on a block (march over [a, b), the pipeline exchanges staged through the host, later
+       CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
+    6. then: real-GPU tests (`ctest -R lasy`, regression_cuda, physics_cuda) and a scaling series (1, 4, 16, 64
+       ranks/GPUs) on JUWELS/JUPITER, run by a group member.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
