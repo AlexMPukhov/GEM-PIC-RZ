@@ -45,8 +45,8 @@ Stats finish(const Moments& M) {
   const double Q = s.Q;
   auto var = [&](double a1, double a2) { return std::max(0.0, a2 / Q - (a1 / Q) * (a1 / Q)); };
   auto cov = [&](double a1, double b1, double ab) { return ab / Q - (a1 / Q) * (b1 / Q); };
-  s.gmean = M.g1 / Q;
-  s.dgrel = std::sqrt(var(M.g1, M.g2)) / s.gmean;
+  s.gmean = M.gmean;
+  s.dgrel = std::sqrt(std::max(0.0, M.gM2 / Q)) / s.gmean;
   s.sx = std::sqrt(var(M.x1, M.x2));
   s.sy = std::sqrt(var(M.y1, M.y2));
   s.ex = std::sqrt(std::max(0.0, var(M.x1, M.x2) * var(M.u1, M.u2) - std::pow(cov(M.x1, M.u1, M.xu), 2)));
@@ -67,13 +67,22 @@ void Moments::add(const Particle& p) {
   const double w = std::fabs(p.q), gm = gammaOf(p);
   ++n;
   Q += w;
-  g1 += w * gm; g2 += w * gm * gm;
+  if (Q > 0) {  // weighted Welford update
+    const double d = gm - gmean;
+    gmean += d * (w / Q);
+    gM2 += w * d * (gm - gmean);
+  }
   x1 += w * p.x; x2 += w * p.x * p.x; u1 += w * p.ux; u2 += w * p.ux * p.ux; xu += w * p.x * p.ux;
   y1 += w * p.y; y2 += w * p.y * p.y; v1 += w * p.uy; v2 += w * p.uy * p.uy; yv += w * p.y * p.uy;
   z1 += w * p.zeta; z2 += w * p.zeta * p.zeta;
 }
 void Moments::add(const Moments& o) {
-  n += o.n; Q += o.Q; g1 += o.g1; g2 += o.g2; x1 += o.x1; x2 += o.x2; u1 += o.u1; u2 += o.u2; xu += o.xu;
+  if (o.Q > 0) {  // centred combination of the gamma moments
+    const double Qt = Q + o.Q, d = o.gmean - gmean;
+    gmean += d * (o.Q / Qt);
+    gM2 += o.gM2 + d * d * (Q * o.Q / Qt);
+  }
+  n += o.n; Q += o.Q; x1 += o.x1; x2 += o.x2; u1 += o.u1; u2 += o.u2; xu += o.xu;
   y1 += o.y1; y2 += o.y2; v1 += o.v1; v2 += o.v2; yv += o.yv; z1 += o.z1; z2 += o.z2;
   br += o.br; bi += o.bi;
 }

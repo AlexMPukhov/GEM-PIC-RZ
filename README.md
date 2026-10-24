@@ -175,6 +175,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
 | `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
+| `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
@@ -267,9 +268,7 @@ code 3).
   checkpoint on 3 ranks continued on 2 agree with the serial run to all printed digits (regression deck with
   `beam_field = mean` and beam filter 2: wake, trapping, absorber). The 4 kA beam in a planar undulator at λ_u/16
   (`tests/planar_step.sh` settings, 5 cm, the beam spans the 3 blocks): ε_nx = 0.0067 µm on 3 ranks as serially
-  (`level`: 0.118 µm); `fel.txt` and `bunches.txt` agree except dE/E. That column (and the same one with `level`, and
-  before this change) differs by up to 0.4 % between rank counts: at γ = 1000, dE/E ~ 1e-5, the variance
-  ⟨γ²⟩ − ⟨γ⟩² is ~1e-11 of ⟨γ²⟩ and depends on the order of the sums over the ranks.
+  (`level`: 0.118 µm); `fel.txt` and `bunches.txt` agree to all printed digits.
 - **Hard case:** the ionization-injection example at a0 = 2.5 on 3 ranks (13 steps: trapping, re-streaming of 1936 particles, field ionization). `bunches.txt` and `ionization.txt` are identical to the serial run, and the axis fields agree to rounding.
 
 **Current limits:**

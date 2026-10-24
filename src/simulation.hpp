@@ -37,8 +37,10 @@ namespace gem {
 // moments of the particles of one species (combinable over MPI ranks)
 struct Moments {
   long long n = 0;
-  double Q = 0, g1 = 0, g2 = 0, x1 = 0, x2 = 0, u1 = 0, u2 = 0, xu = 0, y1 = 0, y2 = 0, v1 = 0, v2 = 0, yv = 0,
-         z1 = 0, z2 = 0;
+  double Q = 0, x1 = 0, x2 = 0, u1 = 0, u2 = 0, xu = 0, y1 = 0, y2 = 0, v1 = 0, v2 = 0, yv = 0, z1 = 0, z2 = 0;
+  // gamma: charge-weighted mean and sum of |q| (gamma - mean)^2, updated and combined centred (West / Chan et al.):
+  // sum gamma^2 - (sum gamma)^2 / Q cancels to ~(dE/E)^2 of the sums (1e-11 at gamma = 1000, dE/E = 3e-6)
+  double gmean = 0, gM2 = 0;
   double br = 0, bi = 0;  // sum |q| exp(i k zeta) at the FEL wavelength (bunching factor)
   void add(const Particle& p);
   void add(const Moments& o);
