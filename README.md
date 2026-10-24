@@ -260,7 +260,14 @@ code 3).
 **Current limits:**
 
 - **Backend:** `numerics.backend = serial` runs the serial step on every rank; `numerics.backend = openmp` adds OpenMP threads on every rank (hybrid MPI + threads, `OMP_NUM_THREADS` threads per rank). The GPU engine is not yet combined with MPI.
-- **Memory:** every rank stores the field and current arrays of the whole window (the particles are distributed). This keeps the indexing of the serial code and is small for typical grids, but it limits very large windows.
+- **Memory:** every rank stores the fields and currents only of its own block of slices and a few ghost slices
+  (beam-filter passes + 4 on each side); the particles are distributed as well. The memory per rank therefore falls
+  as 1/P, which makes long windows (XFEL, multi-period wakes) possible. The code accesses the arrays with the global
+  slice index, so the physics code is the same as in the serial run. Rank 0 assembles the whole window only on
+  output and checkpoint steps (host memory), and frees it afterwards. Example: `tests/regression.deck` with a
+  300 µm window (9400 slices) on 4 ranks needs 0.43 GB per rank; with the whole window on every rank it needed
+  more than 1 GB per rank and did not fit on a 4 GB machine. `GEMPIC_FULL_STORAGE=1` restores the old layout
+  (testing). The initial state is still built in full on every rank before it is cut to the blocks.
 
 ## GPU and multi-core backends
 

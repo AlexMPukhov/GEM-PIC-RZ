@@ -24,7 +24,8 @@
 //  A beam particle belongs to the rank of the upper half-cell of its
 //  deposition (the slice nearest to it, ZetaView::nearest). Rank 0 finishes every step last; it
 //  collects the diagnostics of all ranks and writes the output and the
-//  checkpoints (same files as a serial run).
+//  checkpoints (same files as a serial run). Storage: every rank keeps only the slices and
+//  half-cells [a - G, b + G) (G = beam_filter + 4); rank 0 assembles the whole window for output steps.
 //  With one rank the pipelined step is identical to Simulation::step().
 // ============================================================================
 #include "pipeline.hpp"
@@ -62,6 +63,7 @@ class PipelineRun {
   Simulation& S;
   RunControl rc;
   int P = 1, r = 0, a = 0, b = 0;
+  int sa = 0, sb = 0;  // stored slices [sa, sb] and half-cells [sa, sb) (block and ghosts, clipped)
   std::vector<int> lo;
   int lastStep = 0;
   bool wallStop = false;
@@ -135,8 +137,8 @@ class PipelineRun {
     for (int m = 0; m <= S.M; ++m) B.putRaw(&C.jr[C.f(m, k, 0)], sizeof(cd) * (N + 1));
     for (int m = 0; m <= S.M; ++m) B.putRaw(&C.jp[C.c(m, k, 0)], sizeof(cd) * N);
     for (int m = 0; m <= S.M; ++m) B.putRaw(&C.jz[C.c(m, k, 0)], sizeof(cd) * N);
-    B.putRaw(&C.rho[size_t(k) * N], sizeof(double) * N);
-    B.putRaw(&C.rhoi[size_t(k) * N], sizeof(double) * N);
+    B.putRaw(&C.rho[C.d(k, 0)], sizeof(double) * N);
+    B.putRaw(&C.rhoi[C.d(k, 0)], sizeof(double) * N);
   }
   void getHalf(Buffer& B, Currents& C, int k, bool add) {
     const int N = S.g.N;
@@ -153,8 +155,8 @@ class PipelineRun {
     for (int m = 0; m <= S.M; ++m) take(&C.jr[C.f(m, k, 0)], N + 1);
     for (int m = 0; m <= S.M; ++m) take(&C.jp[C.c(m, k, 0)], N);
     for (int m = 0; m <= S.M; ++m) take(&C.jz[C.c(m, k, 0)], N);
-    taked(&C.rho[size_t(k) * N]);
-    taked(&C.rhoi[size_t(k) * N]);
+    taked(&C.rho[C.d(k, 0)]);
+    taked(&C.rhoi[C.d(k, 0)]);
   }
   // slices [n0, n1) of the fields, half-cells [n0, n1) of the currents
   void putRange(Buffer& B, const Fields& F, int n0, int n1) const {
@@ -172,12 +174,12 @@ class PipelineRun {
       for (int m = 0; m <= S.M; ++m) B.getRaw(&(*v)[F.c(m, n0, 0)], sizeof(cd) * nc);
   }
   void putDens(Buffer& B, const Currents& C, int k0, int k1) const {
-    B.putRaw(&C.rho[size_t(k0) * S.g.N], sizeof(double) * size_t(k1 - k0) * S.g.N);
-    B.putRaw(&C.rhoi[size_t(k0) * S.g.N], sizeof(double) * size_t(k1 - k0) * S.g.N);
+    B.putRaw(&C.rho[C.d(k0, 0)], sizeof(double) * size_t(k1 - k0) * S.g.N);
+    B.putRaw(&C.rhoi[C.d(k0, 0)], sizeof(double) * size_t(k1 - k0) * S.g.N);
   }
   void getDens(Buffer& B, Currents& C, int k0, int k1) {
-    B.getRaw(&C.rho[size_t(k0) * S.g.N], sizeof(double) * size_t(k1 - k0) * S.g.N);
-    B.getRaw(&C.rhoi[size_t(k0) * S.g.N], sizeof(double) * size_t(k1 - k0) * S.g.N);
+    B.getRaw(&C.rho[C.d(k0, 0)], sizeof(double) * size_t(k1 - k0) * S.g.N);
+    B.getRaw(&C.rhoi[C.d(k0, 0)], sizeof(double) * size_t(k1 - k0) * S.g.N);
   }
   void putJ(Buffer& B, const Currents& C, int k0, int k1) const {
     const size_t nf = size_t(k1 - k0) * (S.g.N + 1), nc = size_t(k1 - k0) * S.g.N;
@@ -259,10 +261,29 @@ void PipelineRun::partition() {
   S.pendingNext.swap(pend);
   baseRestreamed = (r == 0) ? S.n_restreamed : 0;
   baseTrapped = (r == 0) ? S.n_trapped_total : 0;
-  H.init(S.M, Nz, S.g.N);
-  Tr.init(S.M, Nz, S.g.N);
-  Rw.init(S.M, Nz, S.g.N);
-  Snap.init(S.M, Nz, S.g.N);
+  // distributed storage: every rank keeps the slices and half-cells [a - G, b + G) of its block and ghosts
+  // (the beam push reaches down to half-cell a - pf - 2, the filter and the exchanges up to b + pf - 1); all
+  // current arrays of a rank share one layout (filterBeam indexes the halo / front arrays like c1b)
+  const int G = pf + 4, M = S.M, N = S.g.N;
+  sa = a - G;
+  sb = b + G;
+  if (std::getenv("GEMPIC_FULL_STORAGE")) { sa = 0; sb = Nz; }  // the previous behaviour (testing)
+  auto shrinkF = [&](Fields& F) {
+    Fields t;
+    t.initRange(M, Nz, N, sa, sb + 1);
+    t.copyRange(F, sa, sb + 1);
+    F = std::move(t);
+  };
+  auto shrinkC = [&](Currents& C) {
+    Currents t;
+    t.initRange(M, Nz, N, sa, sb);
+    t.copyRange(C, sa, sb);
+    C = std::move(t);
+  };
+  shrinkF(S.fold);
+  shrinkF(S.fnew);
+  for (auto* C : {&S.c0b, &S.c0s, &S.c1b, &S.c1s}) shrinkC(*C);
+  for (auto* C : {&H, &Tr, &Rw, &Snap}) C->initRange(M, Nz, N, sa, sb);
   predBelowR.assign(S.predR.size(), cd(0.0));
   predBelowP.assign(S.predP.size(), cd(0.0));
   predRfront.assign(S.predR.size(), cd(0.0));
@@ -627,8 +648,8 @@ void PipelineRun::filterBeam() {
       }
     }
     for (int i = 0; i < N; ++i) {
-      Snap.rho[size_t(k) * N + i] = S.c1b.rho[size_t(k) * N + i];
-      Snap.rhoi[size_t(k) * N + i] = S.c1b.rhoi[size_t(k) * N + i];
+      Snap.rho[Snap.d(k, i)] = S.c1b.rho[S.c1b.d(k, i)];
+      Snap.rhoi[Snap.d(k, i)] = S.c1b.rhoi[S.c1b.d(k, i)];
     }
   }
   const int klo = std::max(0, (r > 0) ? a - pf - 1 : a), khi = std::min(Nz - 1, b + pf - 1);
@@ -676,8 +697,8 @@ void PipelineRun::filterBeam() {
         }
       }
       for (int i = 0; i < N; ++i) {
-        S.c1b.rho[size_t(k) * N + i] += Tr.rho[size_t(k) * N + i];
-        S.c1b.rhoi[size_t(k) * N + i] += Tr.rhoi[size_t(k) * N + i];
+        S.c1b.rho[S.c1b.d(k, i)] += Tr.rho[Tr.d(k, i)];
+        S.c1b.rhoi[S.c1b.d(k, i)] += Tr.rhoi[Tr.d(k, i)];
       }
     }
 }
@@ -750,6 +771,18 @@ void PipelineRun::reportStep(int k) {
   std::vector<Particle> gbeam, gpend;
   if (files || ck) gbeam = S.beam;
   if (ck) gpend = S.pendingNext;
+  // output steps: the whole window, assembled on rank 0 only for the output (the ranks store their blocks)
+  Fields gF;
+  Currents gCb, gCs;
+  if (fields) {
+    const int M = S.M, Nz = S.Nz, N = S.g.N;
+    gF.init(M, Nz, N);
+    gF.copyRange(S.fold, a, (P == 1) ? Nz + 1 : b);
+    gCb.init(M, Nz, N);
+    gCs.init(M, Nz, N);
+    gCb.copyRange(S.c0b, a, b);
+    gCs.copyRange(S.c0s, a, b);
+  }
   std::string rngState;
   for (int q = 1; q < P; ++q) {
     Buffer B = comm::recv(q, TAG_DIAG);
@@ -758,15 +791,15 @@ void PipelineRun::reportStep(int k) {
     re += B.get<long long>();
     tr += B.get<long long>();
     if (fields) {
-      getRange(B, S.fold, lo[q], lo[q + 1]);
-      getDens(B, S.c0b, lo[q], lo[q + 1]);
-      getDens(B, S.c0s, lo[q], lo[q + 1]);
+      getRange(B, gF, lo[q], lo[q + 1]);
+      getDens(B, gCb, lo[q], lo[q + 1]);
+      getDens(B, gCs, lo[q], lo[q + 1]);
       const std::vector<Particle> pb = B.getVec<Particle>();
       gbeam.insert(gbeam.end(), pb.begin(), pb.end());
     }
     if (ck) {
-      getJ(B, S.c0b, lo[q], lo[q + 1]);
-      getJ(B, S.c0s, lo[q], lo[q + 1]);
+      getJ(B, gCb, lo[q], lo[q + 1]);
+      getJ(B, gCs, lo[q], lo[q + 1]);
       const std::vector<Particle> pp = B.getVec<Particle>();
       gpend.insert(gpend.end(), pp.begin(), pp.end());
       const std::vector<char> rs = B.getVec<char>();
@@ -775,6 +808,13 @@ void PipelineRun::reportStep(int k) {
   }
   S.n_restreamed = baseRestreamed + long(re);
   S.n_trapped_total = baseTrapped + long(tr);
+  auto swapWindow = [&] {
+    if (!fields) return;
+    std::swap(S.fold, gF);
+    std::swap(S.c0b, gCb);
+    std::swap(S.c0s, gCs);
+  };
+  swapWindow();
   if (files) S.beam.swap(gbeam);
   S.report(D, files);
   if (files) S.beam.swap(gbeam);
@@ -789,6 +829,7 @@ void PipelineRun::reportStep(int k) {
     S.beam.swap(gbeam);
     S.pendingNext.swap(gpend);
   }
+  swapWindow();
   std::fflush(stdout);
 }
 

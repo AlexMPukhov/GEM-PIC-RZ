@@ -681,7 +681,7 @@ void Simulation::deposit(Currents& C, int k, double wk, double x, double y, doub
   }
   // m = 0 charge density (diagnostic), separately for ions
   std::vector<double>& dens = ion ? C.rhoi : C.rho;
-  auto addR = [&](int i, double s) { dens[size_t(kd) * N + i] += norm * s / g.Vc[i]; };
+  auto addR = [&](int i, double s) { dens[C.d(kd, i)] += norm * s / g.Vc[i]; };
   if (wc.mode == 0) { addR(wc.a, wc.wa); addR(wc.a + 1, wc.wb); }
   else if (wc.mode == 2) addR(N - 1, 1.0);
   else addR(0, 1.0);
@@ -703,8 +703,8 @@ void Simulation::smoothStream(Currents& C, int n) {
     for (int i = 1; i <= N; ++i) C.jr[C.f(m, n, i)] = jr[i];
     for (int i = 0; i < N; ++i) { C.jp[C.c(m, n, i)] = jp[i]; C.jz[C.c(m, n, i)] = jz[i]; }
   }
-  sfilter.scalar0(&C.rho[size_t(n) * N]);
-  sfilter.scalar0(&C.rhoi[size_t(n) * N]);
+  sfilter.scalar0(&C.rho[C.d(n, 0)]);
+  sfilter.scalar0(&C.rhoi[C.d(n, 0)]);
 }
 
 // Numerical Cherenkov: the dispersion relation of the scheme has omega = 0 at
@@ -942,8 +942,8 @@ void Simulation::pushStreamSlice(int n, double s1, int threads) {
         }
       }
       for (int i = 0; i < g.N; ++i) {
-        c1s.rho[size_t(n) * g.N + i] += C.rho[size_t(i)];
-        c1s.rhoi[size_t(n) * g.N + i] += C.rhoi[size_t(i)];
+        c1s.rho[c1s.d(n, i)] += C.rho[size_t(i)];
+        c1s.rhoi[c1s.d(n, i)] += C.rhoi[size_t(i)];
       }
       born.insert(born.end(), bo[size_t(t)].begin(), bo[size_t(t)].end());
     }

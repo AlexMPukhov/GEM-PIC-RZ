@@ -115,7 +115,7 @@ DiagSums Simulation::diagSums(int n0, int n1) const {
     D.maxEz = std::max(D.maxEz, f.Ez);
   }
   for (int k = n0; k < n1; ++k)
-    D.nimax = std::max(D.nimax, (c0s.rhoi[size_t(k) * g.N] + c0b.rhoi[size_t(k) * g.N]) / n_ref);
+    D.nimax = std::max(D.nimax, (c0s.rhoi[c0s.d(k, 0)] + c0b.rhoi[c0b.d(k, 0)]) / n_ref);
   for (const auto& p : beam) D.moments[p.sp].add(p);
   D.freed = freedCharge;
   if (cfg.output.fel) {
@@ -470,11 +470,11 @@ void Simulation::writeFiles() {
   // densities in half-cell k (the last slice has no half-cell: use k = Nz-1)
   auto ne = [&](int k, int i) {
     k = std::min(k, Nz - 1);
-    return -(c0s.rho[size_t(k) * g.N + i] + c0b.rho[size_t(k) * g.N + i]) / n_ref;
+    return -(c0s.rho[c0s.d(k, i)] + c0b.rho[c0b.d(k, i)]) / n_ref;
   };
   auto ni = [&](int k, int i) {
     k = std::min(k, Nz - 1);
-    return (c0s.rhoi[size_t(k) * g.N + i] + c0b.rhoi[size_t(k) * g.N + i]) / n_ref;
+    return (c0s.rhoi[c0s.d(k, i)] + c0b.rhoi[c0b.d(k, i)]) / n_ref;
   };
 
   if (O.axis) {

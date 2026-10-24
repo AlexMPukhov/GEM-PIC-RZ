@@ -21,4 +21,8 @@ Read this first. README.md is the user documentation; docs/ holds the details.
   - **LASY** laser files (branch `lasy`): `laser.file` (import, exact propagation, `inject = boundary`) and
     `output.lasy` (export), `src/laser_file.*`, ctest `lasy`, docs/input_deck.md. Motivation: flying focus /
     structured light prepared in LASY. Not yet run on a real GPU; MPI checked in tests/mpi.sh (3 ranks = serial).
+  - **Multi-GPU plan** (MPI pipeline + GPU engine): step 1 done = distributed field storage in the MPI pipeline
+    (`Fields`/`Currents` store [n0, n0 + ns) with global-index accessors; `-DGEMPIC_RANGE_CHECK` checks every
+    access). Next: mean-field beam push (`beam_field = mean`) in MPI, then the block-restricted GPU march with the
+    pipeline exchanges, then a scaling test on JUPITER.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
