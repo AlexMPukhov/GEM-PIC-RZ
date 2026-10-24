@@ -56,6 +56,7 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   solver.theta = cfg.numerics.theta;
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
                 cfg.plasma.present ? cfg.plasma.smooth_length_m0 : 0.0);
+  bfilter.setup(g, solver, M, cfg.numerics.beam_smooth_length);
   const size_t nf = size_t(M + 1) * (g.N + 1), nc = size_t(M + 1) * g.N;
   predR.assign(nf, 0.0); predRprev.assign(nf, 0.0);
   predP.assign(nc, 0.0); predPprev.assign(nc, 0.0);
@@ -514,7 +515,49 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
           }
         }
       }
+      if (m == 0) addAzimuthalFields(C, sign, beta);
     }
+  }
+}
+
+// Co-moving field of the azimuthal current j_phi (mode 0) of a bunch, e.g. a beam rotating on helical orbits
+// (bunch.ux_function, uy_function): the field of a magnetized ring moving with beta -> 1. With the vector
+// potential A_phi(zeta, r) of the current,
+//     B_z = curl_z A,  dB_z/dr = -j_phi (Ampere),  E_phi = d_zeta A_phi,  B_r = -beta E_phi,
+// i.e. R_phi = (1 + beta) E_phi, L_phi = (1 - beta) E_phi. Discretized with the operators of the field update so
+// that the field is steady in s for a source at rest in the window: the R_phi update needs g(b) = -j_phi
+// (b on the faces, b = 0 at the wall), and the B_z update (Faraday, d_zeta b = CE(E)) gives E_phi = d_zeta A with
+// CE(A) = b. Without this field the beam would start with B_z = 0 and get a spurious kick in the first steps.
+void Simulation::addAzimuthalFields(const Currents& C, double sign, double beta) {
+  const int N = g.N;
+  std::vector<cd> A(size_t(Nz) * N, 0.0), b(size_t(Nz) * (N + 1), 0.0);
+  bool any = false;
+  for (int n = 0; n < Nz; ++n) {
+    // j_phi at slice n: linear interpolation of the half-cells n-1 and n
+    std::vector<cd> jp(N);
+    for (int i = 0; i < N; ++i) {
+      jp[i] = 0.5 * (zv.wLo(n) * ((n > 0) ? C.jp[C.c(0, n - 1, i)] : cd(0.0)) + zv.wHi(n) * C.jp[C.c(0, n, i)]);
+      if (jp[i] != cd(0.0)) any = true;
+    }
+    cd* bn = &b[size_t(n) * (N + 1)];
+    bn[N] = 0.0;
+    for (int i = N - 1; i >= 0; --i) bn[i] = bn[i + 1] + jp[i] * (g.rho[i + 1] - g.rho[i]);
+    // A on the centres from CE(A) = b: c_0 A_0 = Af_0 b_0, c_i A_i = c_{i-1} A_{i-1} + Af_i b_i
+    cd* an = &A[size_t(n) * N];
+    an[0] = g.Af[0] * bn[0] / g.c[0];
+    for (int i = 1; i < N; ++i) an[i] = (g.c[i - 1] * an[i - 1] + g.Af[i] * bn[i]) / g.c[i];
+  }
+  if (!any) return;
+  for (int n = 0; n < Nz; ++n) {
+    const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
+    for (int i = 0; i < N; ++i) {
+      const cd up1 = (n + 1 < Nz) ? A[size_t(n + 1) * N + i] : cd(0.0);
+      const cd dn1 = (n > 0) ? A[size_t(n - 1) * N + i] : cd(0.0);
+      const cd Ep = (up1 - dn1) / (hm + hp);
+      fold.Rp[fold.c(0, n, i)] += sign * ((1.0 + beta) * Ep);
+      fold.Lp[fold.c(0, n, i)] += sign * ((1.0 - beta) * Ep);
+    }
+    for (int i = 0; i <= N; ++i) fold.Bz[fold.f(0, n, i)] += sign * b[size_t(n) * (N + 1) + i];
   }
 }
 
@@ -665,7 +708,7 @@ void Simulation::smoothStream(Currents& C, int n) {
 // (response cos^2(kappa h/2)); zero beyond the ends of the window.
 void Simulation::filterBeamCurrent(Currents& C) const {
   const int passes = cfg.numerics.beam_filter;
-  if (passes <= 0) return;
+  if (passes <= 0) { smoothBeamRadially(C); return; }
   auto column = [&](std::vector<cd>& v, int L) {
     for (int m = 0; m <= M; ++m)
       for (int i = 0; i < L; ++i)
@@ -683,6 +726,33 @@ void Simulation::filterBeamCurrent(Currents& C) const {
   column(C.jr, g.N + 1);
   column(C.jp, g.N);
   column(C.jz, g.N);
+  smoothBeamRadially(C);
+}
+
+// numerics.beam_smooth_length: the beam current of every half-cell smoothed in r as the plasma sources
+// (SourceFilter, charge-conserving), so that thin, intense rings or sheets of beam current have a width of at least
+// a. A beam structure of width w and length L has a near field that changes along s on the scale w^2 / L; a step
+// Delta >> w^2 / L makes that response stiff (the field at the current sheet does not follow the moving beam).
+void Simulation::smoothBeamRadially(Currents& C) const {
+  if (!bfilter.on()) return;
+  const int N = g.N;
+  std::vector<cd> jr(size_t(N) + 1, cd(0.0)), jp(size_t(N), cd(0.0)), jz(size_t(N), cd(0.0));
+  for (int n = 0; n < Nz; ++n) {
+    for (int m = 0; m <= M; ++m) {
+      bool any = false;
+      for (int i = 0; i <= N; ++i) { jr[i] = C.jr[C.f(m, n, i)]; any = any || jr[i] != cd(0.0); }
+      for (int i = 0; i < N; ++i) {
+        jp[i] = C.jp[C.c(m, n, i)]; jz[i] = C.jz[C.c(m, n, i)];
+        any = any || jp[i] != cd(0.0) || jz[i] != cd(0.0);
+      }
+      if (!any) continue;
+      bfilter.vector(m, jr.data(), jp.data());
+      bfilter.scalar(m, jz.data());
+      for (int i = 1; i <= N; ++i) C.jr[C.f(m, n, i)] = jr[i];
+      for (int i = 0; i < N; ++i) { C.jp[C.c(m, n, i)] = jp[i]; C.jz[C.c(m, n, i)] = jz[i]; }
+    }
+    bfilter.scalar0(&C.rho[size_t(n) * N]);
+  }
 }
 
 // beam-type deposit (current at level s^1): W = q / v_z, linear in zeta

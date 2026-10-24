@@ -1163,6 +1163,8 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.iterations = int(r.integer("iterations", N.iterations));
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
+  N.beam_smooth_length = r.num("beam_smooth_length", Dim::Length, 0.0);
+  if (N.beam_smooth_length < 0) r.failKey("beam_smooth_length", "must be >= 0");
   {
     const std::string bf = r.word("beam_field", "auto", {"auto", "level", "mean"});
     N.beam_field = bf == "level" ? BEAM_FIELD_LEVEL : bf == "mean" ? BEAM_FIELD_MEAN : -1;

@@ -140,7 +140,8 @@ class Simulation {
   }
   void initBunches();
   void initBunchFields();
-  void addBeamFields(double sign, bool deckGamma);  // co-moving self-fields of the beam list
+  void addBeamFields(double sign, bool deckGamma);
+  void addAzimuthalFields(const Currents& C, double sign, double beta);  // co-moving self-fields of the beam list
   void applyChicanes(double za, double zb);          // thin chicanes passed in (za, zb]
 
   EB gather(const Fields& F, int n1, double w1, int n2, double w2, double x, double y) const;
@@ -154,6 +155,7 @@ class Simulation {
   // removes the zeta-Nyquist component, which the scheme radiates resonantly
   // (it has omega = 0 there for every k_perp: numerical Cherenkov)
   void filterBeamCurrent(Currents& C) const;
+  void smoothBeamRadially(Currents& C) const;
 
   void pushBeam();
   void march(double s1);
@@ -168,6 +170,7 @@ class Simulation {
   // plasma.smooth_length: radial smoothing of the streaming-plasma sources of half-cell n
   void smoothStream(Currents& C, int n);
   SourceFilter sfilter;
+  mutable SourceFilter bfilter;  // numerics.beam_smooth_length: radial smoothing of the beam current
   // the same, depositing into half-cell kc of C and collecting freed electrons in bornOut
   void pushStreamParticle(Particle& p, int n, double s1, Currents& C, int kc, std::vector<Particle>& bornOut);
   // all streaming particles through half-cell n (threads > 1: OpenMP, per-thread buffers)
