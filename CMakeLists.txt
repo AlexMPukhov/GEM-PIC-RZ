@@ -238,6 +238,9 @@ if(GEMPIC_HAVE_HDF5)
   # lasers from and to LASY envelope files: import, exact propagation, boundary injection, export
   add_test(NAME lasy COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lasy.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(lasy PROPERTIES SKIP_RETURN_CODE 77)
+  # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
+  add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)
+  set_tests_properties(energy_spread PROPERTIES SKIP_RETURN_CODE 77)
   # GUI (tools/gempic_gui.py): runs started through its HTTP API; fields against the code's gather
   add_test(NAME gui COMMAND sh ${CMAKE_SOURCE_DIR}/tests/gui.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(gui PROPERTIES SKIP_RETURN_CODE 77)

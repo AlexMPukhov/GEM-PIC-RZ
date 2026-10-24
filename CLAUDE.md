@@ -41,9 +41,9 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        rank's results in the F message); tags in Particle::id pair the two pushes across ranks; F^1 of the absorber
        layer is used before the absorber, as serially. tests/mpi.sh: 1 rank pipelined = serial (exact), 2-4 ranks
        and a 3 -> 2 restart = serial; planar undulator at lambda_u/16 on 3 ranks: eps_nx 0.0067 um as serial.
-       Known: dE/E in bunches.txt differs by up to 0.4 % between rank counts at gamma = 1000 (cancellation in
-       <g^2> - <g>^2; also with level and on main) - a centred variance would fix it (owner's decision: it changes
-       printed serial values in the last digits).
+       Merged (PR #2). dE/E in bunches.txt is now accumulated centred (Moments::gmean, gM2; branch
+       centred-energy-spread): the old sum gamma^2 - (sum gamma)^2 / Q was 27 % low at dE/E = 4e-6, gamma = 1000,
+       and differed between rank counts; ctest energy_spread checks it against the particle data.
     5. next: the GPU engine on a block (march over [a, b), the pipeline exchanges staged through the host, later
        CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
     6. then: real-GPU tests (`ctest -R lasy`, regression_cuda, physics_cuda) and a scaling series (1, 4, 16, 64

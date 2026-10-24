@@ -59,11 +59,7 @@ FD="$SRC/benchmarks/harmonics/fel.deck"
 FO="numerics.backend=serial grid.z_end=1cm grid.dzeta=1.328nm bunch.macroparticles=24000 output.format=text output.every=100000"
 "$EXE" "$FD" $FO output.dir=fel_ser > fel_ser.log
 run 3 "$FD" $FO output.dir=fel_mp3 > fel_mp3.log
-"$CMP" fel_ser/fel.txt fel_mp3/fel.txt 1e-6 1e-12
-# bunches.txt without dE/E (column 7): at gamma = 1000 and dE/E ~ 1e-5 the variance <g^2> - <g>^2 cancels to
-# ~1e-11 of <g^2>, and the order of the sums over the ranks changes it by up to 0.4 % (also with level)
-for d in fel_ser fel_mp3; do awk '/^#/ { print; next } { $7 = 0; print }' $d/bunches.txt > $d/b6.txt; done
-"$CMP" fel_ser/b6.txt fel_mp3/b6.txt 1e-6 1e-12
+for f in fel.txt bunches.txt; do "$CMP" fel_ser/$f fel_mp3/$f 1e-6 1e-12; done
 echo "  mean-field beam push: 1 rank pipelined = serial, 2-4 ranks and a 3 -> 2 rank restart agree"
 # free-hand zeta and z grids (tests/flexgrid.deck) on 3 ranks
 F="numerics.backend=serial output.map_stride=8"
