@@ -129,6 +129,9 @@ class PipelineRun {
   bool pushBeamParticle(Particle& p, const Fields& F0, const Fields* F1, bool count);
   Buffer recvFront(int k);
   void meanPhase(Buffer* F);
+  // numerics.backend = cuda (or GEMPIC_PIPELINE_ENGINE=1, testing): the march of the block on the device
+  std::unique_ptr<Engine> eng;
+  void deviceMarch(int k, double s1, std::vector<Particle>& newForFront, std::vector<Particle>& transferDown);
 
   int kh(const Particle& p) const { return S.zv.nearest(p.zeta); }
   // half-cells of the rank behind whose beam current this rank needs (filter reach)
@@ -357,6 +360,12 @@ void PipelineRun::partition() {
   predPfront.assign(S.predP.size(), cd(0.0));
   // number of the last step (same arithmetic as the serial loop)
   lastStep = S.step_no + S.cfg.grid.stepsFrom(S.s0);
+  // the march on the device: backend = cuda; GEMPIC_PIPELINE_ENGINE=1 also with backend = openmp (the GPU
+  // emulation build runs the GPU code paths on CPU threads: testing)
+  const char* pe = std::getenv("GEMPIC_PIPELINE_ENGINE");
+  if (S.cfg.numerics.backend == NumericsConfig::Backend::Cuda ||
+      (S.cfg.numerics.backend == NumericsConfig::Backend::OpenMP && pe && pe[0] == '1'))
+    eng = std::make_unique<Engine>(S);
 }
 
 void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
@@ -654,10 +663,11 @@ void PipelineRun::step(Buffer& F) {
     std::fill(S.predPprev.begin(), S.predPprev.end(), 0.0);
   }
 
-  // ---- zeta march over the own slices
+  // ---- zeta march over the own slices (numerics.backend = cuda: on the device, deviceMarch)
   std::vector<Particle> newForFront;
   int done = 0;
-  for (int n = b - 1; n >= a; --n) {
+  if (eng) deviceMarch(k, s1, newForFront, transferDown);
+  else for (int n = b - 1; n >= a; --n) {
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i) {
         const cd c1 = (n == a && r > 0) ? predBelowR[m * (N + 1) + i]
@@ -767,7 +777,7 @@ void PipelineRun::step(Buffer& F) {
     S.predPprev.swap(S.predP);
     if (++done == pf + 3 && r < P - 1) sendFront(k, newForFront);
   }
-  if (r == 0) absorb(0, s1);
+  if (r == 0 && !eng) absorb(0, s1);
   for (auto& v : S.exitStates) std::fill(v.begin(), v.end(), 0.0);
   if (r == 0)
     for (const auto& p : S.stream)
@@ -810,8 +820,65 @@ void PipelineRun::step(Buffer& F) {
   std::swap(S.fold, S.fnew);
   std::swap(S.c0b, S.c1b);
   std::swap(S.c0s, S.c1s);
+  if (eng) eng->swapLevels();
   S.s0 = s1;
   ++S.step_no;
+}
+
+// numerics.backend = cuda: the march of the own slices on the device (Engine::marchBlock). The host uploads
+// the state of the step (level s^0 with the ghosts from the rank behind and the mean phase, slice b of s^1
+// from the front rank, the currents of s^0 and the filtered beam current of s^1), sends the R message from
+// device data after pf+3 slices, routes the trapped particles as in step(), and takes back level s^1.
+void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFront,
+                              std::vector<Particle>& transferDown) {
+  const int N = S.g.N;
+  eng->putFields(0, sa, sb + 1);
+  eng->putFields(1, b, b + 1);
+  eng->putCurrents(Engine::C0B, sa, sb);
+  eng->putCurrents(Engine::C0S, sa, sb);
+  eng->putCurrents(Engine::C1B, sa, sb);
+  size_t routed = 0;
+  auto route = [&]() {  // trapped particles (fast ones, already deposited into c1b on the device)
+    for (const Particle& t : eng->trapped(routed)) {
+      ++routed;
+      ++myTrapped;
+      if (mean) trapped.push_back(t);
+      const int o = beamOwner(t);
+      if (o == r) S.beam.push_back(t);
+      else if (o > r) newForFront.push_back(t);
+      else transferDown.push_back(t);
+    }
+  };
+  auto fetchPreAbs = [&](int n0, int n1) {  // values of the absorber layer before the absorber (mean phase)
+    for (int n = n0; n < n1; ++n)
+      if (eng->preAbsorber(n, preAbs[size_t(n - sa)])) preHave[size_t(n - sa)] = 1;
+  };
+  Engine::BlockMarch bm;
+  bm.a = a;
+  bm.b = b;
+  bm.s1 = s1;
+  if (r > 0) { bm.predBelowR = &predBelowR; bm.predBelowP = &predBelowP; }
+  if (r < P - 1) { bm.predFrontR = &predRfront; bm.predFrontP = &predPfront; }
+  bm.absorbFirst = r == 0;
+  bm.iF = mean ? iF : N + 1;
+  bm.iC = mean ? iC : N;
+  if (r < P - 1) {
+    bm.callAfter = pf + 3;
+    bm.after = [&]() {
+      eng->getFields(1, b - pf - 2, b + 1);
+      eng->getCurrents(Engine::C1B, b - 1, b + 1);
+      eng->getCurrents(Engine::C1S, b - 1, b);
+      if (mean) fetchPreAbs(b - pf - 2, b + 1);
+      route();
+      sendFront(k, newForFront);
+    };
+  }
+  eng->marchBlock(bm);
+  route();
+  eng->getFields(1, a, b + 1);
+  eng->getCurrents(Engine::C1B, sa, sb);
+  eng->getCurrents(Engine::C1S, sa, sb);
+  if (mean) fetchPreAbs(a, b + 1);
 }
 
 // Filter of the beam current (Simulation::filterBeamCurrent) on the own

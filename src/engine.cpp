@@ -35,7 +35,7 @@ using par::Team;
 constexpr int WAITING = STATUS_WAITING;
 
 // counters in device memory
-enum { C_STREAM, C_BORN, C_BEAM, C_TMP, C_PNEXT, C_PPREV, C_OVERFLOW, C_COUNT };
+enum { C_STREAM, C_BORN, C_BEAM, C_TMP, C_PNEXT, C_PPREV, C_OVERFLOW, C_TRAP, C_COUNT };  // C_TRAP: MPI block
 enum { L_RESTREAM, L_TRAPPED, L_COUNT };
 
 // ---------------------------------------------------------------- views
@@ -87,19 +87,26 @@ struct GridV {
   }
 };
 
+// The views take the GLOBAL slice / half-cell index, like Fields / Currents on the host (fields.hpp): the
+// device arrays hold the stored slices [n0, n0 + ns) and half-cells [k0, k0 + nk) in the host layout
+// (the whole window: n0 = 0, ns = Nz + 1; k0 = 0, nk = Nz).
 struct FieldsV {
   int M, Nz, N;
   cplx *Rr, *Lr, *Bz, *Rp, *Lp, *Ez;
-  GEM_HD size_t f(int m, int n, int i) const { return (size_t(m) * (Nz + 1) + n) * (N + 1) + i; }
-  GEM_HD size_t c(int m, int n, int i) const { return (size_t(m) * (Nz + 1) + n) * N + i; }
+  int n0, ns;
+  GEM_HD size_t f(int m, int n, int i) const { return (size_t(m) * ns + (n - n0)) * (N + 1) + i; }
+  GEM_HD size_t c(int m, int n, int i) const { return (size_t(m) * ns + (n - n0)) * N + i; }
 };
 
 struct CurrV {
   int M, Nz, N;
   cplx *jr, *jp, *jz;
   double *rho, *rhoi;
-  GEM_HD size_t f(int m, int k, int i) const { return (size_t(m) * Nz + k) * (N + 1) + i; }
-  GEM_HD size_t c(int m, int k, int i) const { return (size_t(m) * Nz + k) * N + i; }
+  int k0, nk;
+  GEM_HD bool has(int k) const { return k >= k0 && k < k0 + nk; }
+  GEM_HD size_t f(int m, int k, int i) const { return (size_t(m) * nk + (k - k0)) * (N + 1) + i; }
+  GEM_HD size_t c(int m, int k, int i) const { return (size_t(m) * nk + (k - k0)) * N + i; }
+  GEM_HD size_t d(int k, int i) const { return size_t(k - k0) * N + i; }  // rho, rhoi
 };
 
 struct LevelV {
@@ -249,12 +256,12 @@ template <bool Atomic> GEM_HD inline void addTo(double* a, double v) {
   if (Atomic) par::atomicAddD(a, v); else *a += v;
 }
 
-// (Simulation::deposit); k = half-cell index in C (C.Nz = 1 for a buffer of one half-cell),
+// (Simulation::deposit); k = half-cell index in C (k0 = 0, nk = 1 for a buffer of one half-cell),
 // kz = the half-cell in the window (its length h_kz)
 template <bool Atomic>
 GEM_HD inline void deposit(const Params& P, const CurrV& C, int k, int kz, double wk, double x, double y, double vx,
                            double vy, double vz, double Wq, bool ion) {
-  if (k < 0 || k >= C.Nz || wk == 0.0 || Wq == 0.0) return;
+  if (!C.has(k) || wk == 0.0 || Wq == 0.0) return;
   const GridV& g = P.g;
   const int N = g.N;
   const double r = sqrt(x * x + y * y);
@@ -283,7 +290,7 @@ GEM_HD inline void deposit(const Params& P, const CurrV& C, int k, int kz, doubl
     em = em * emi;
   }
   double* dens = ion ? C.rhoi : C.rho;
-  auto addR = [&](int i, double s) { addTo<Atomic>(&dens[size_t(k) * N + i], norm * s / g.Vc[i]); };
+  auto addR = [&](int i, double s) { addTo<Atomic>(&dens[C.d(k, i)], norm * s / g.Vc[i]); };
   if (wc.mode == 0) { addR(wc.a, wc.wa); addR(wc.a + 1, wc.wb); }
   else if (wc.mode == 2) addR(N - 1, 1.0);
   else addR(0, 1.0);
@@ -547,7 +554,7 @@ GEM_HD inline void filterTeam(const Team& t, const FiltV& F, int m, int n, const
   for (int i = 0; i < N; ++i) c.jz[c.c(m, n, i)] = y[i];
   if (m == 0)
     for (int k = 0; k < 2; ++k) {
-      double* d = (k == 0 ? c.rho : c.rhoi) + size_t(n) * N;
+      double* d = (k == 0 ? c.rho : c.rhoi) + c.d(n, 0);
       for (int i = 0; i < N; ++i) y[i] = cplx(d[i]);
       filterScalarDev(F, 0, y, w);
       for (int i = 0; i < N; ++i) d[i] = y[i].re;
@@ -667,6 +674,32 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   });
 }
 
+// (1,2,1) filter of the beam current along zeta over the stored half-cells (Simulation::filterBeamCurrent),
+// one thread per column of jr, jp, jz; zero beyond the ends of the stored range
+inline void filterBeamDev(const CurrV& C, int passes) {
+  if (passes <= 0) return;
+  const int M = C.M, N = C.N, k0 = C.k0, k1 = C.k0 + C.nk;
+  for (int a = 0; a < 3; ++a) {
+    cplx* v = (a == 0) ? C.jr : (a == 1) ? C.jp : C.jz;
+    const int L = (a == 0) ? N + 1 : N;
+    const CurrV c = C;
+    par::forN(long(M + 1) * L, GEM_LAMBDA(long col) {
+      const int m = int(col / L), i = int(col % L);
+      auto at = [&](int k) -> cplx& { return v[(L == N + 1) ? c.f(m, k, i) : c.c(m, k, i)]; };
+      for (int p = 0; p < passes; ++p) {
+        cplx prev;
+        for (int k = k0; k < k1; ++k) {
+          cplx& x = at(k);
+          const cplx cur = x;
+          const cplx next = (k + 1 < k1) ? at(k + 1) : cplx();
+          x = 0.25 * prev + 0.5 * cur + 0.25 * next;
+          prev = cur;
+        }
+      }
+    });
+  }
+}
+
 // ---------------------------------------------------------------- storage
 struct FieldStore {
   par::Array<cplx> Rr, Lr, Bz, Rp, Lp, Ez;
@@ -674,8 +707,8 @@ struct FieldStore {
     for (auto* a : {&Rr, &Lr, &Bz}) a->clear(nf);
     for (auto* a : {&Rp, &Lp, &Ez}) a->clear(nc);
   }
-  FieldsV view(int M, int Nz, int N) {
-    return {M, Nz, N, Rr.data(), Lr.data(), Bz.data(), Rp.data(), Lp.data(), Ez.data()};
+  FieldsV view(int M, int Nz, int N, int n0, int ns) {
+    return {M, Nz, N, Rr.data(), Lr.data(), Bz.data(), Rp.data(), Lp.data(), Ez.data(), n0, ns};
   }
 };
 struct CurrStore {
@@ -690,7 +723,9 @@ struct CurrStore {
     par::zero(jr.data(), nf); par::zero(jp.data(), nc); par::zero(jz.data(), nc);
     par::zero(rho.data(), nd); par::zero(rhoi.data(), nd);
   }
-  CurrV view(int M, int Nz, int N) { return {M, Nz, N, jr.data(), jp.data(), jz.data(), rho.data(), rhoi.data()}; }
+  CurrV view(int M, int Nz, int N, int k0, int nk) {
+    return {M, Nz, N, jr.data(), jp.data(), jz.data(), rho.data(), rhoi.data(), k0, nk};
+  }
 };
 
 }  // namespace dev
@@ -857,6 +892,12 @@ struct EngineState {
   std::vector<dev::CurrStore> local;  // CPU: per-thread currents of one half-cell
   // particles
   par::Array<Particle> stream, backup, born, beam, beamTmp, pnext, pprev;
+  par::Array<Particle> trapList;  // MPI block: particles trapped during the march (C_TRAP)
+  par::Array<cplx> preAbs;        // MPI block: absorber layer before the absorber, per stored slice (preW each)
+  std::vector<char> preHave;
+  size_t preW = 0;
+  int preF = 0, preC = 0;  // first kept face / centre
+  par::Array<cplx> belowR, belowP;  // MPI block: prediction at slice a
   par::Array<Particle> beamSave;  // beam_field = mean: the beam list at s^0
   par::Array<int> beamMap;        // beam_field = mean: index of beamSave[i] in the beam list after the push, or -1
   par::Array<unsigned long long> lcntScratch;
@@ -866,6 +907,11 @@ struct EngineState {
   par::Array<cplx> ffGf, ffGc;  // flying focus: incident field G(r, zeta) (Simulation::ffGf, ffGc)
   par::Array<cplx> incF, incC;  // file lasers with inject = boundary: layer field of the level (Simulation::incF, incC)
   size_t nf = 0, nc = 0, nd = 0;
+  int fn0 = 0, fns = 0;  // stored slices [fn0, fn0 + fns) (Simulation::fold)
+  int ck0 = 0, cnk = 0;  // stored half-cells [ck0, ck0 + cnk) (Simulation::c0b)
+  dev::FieldsV fview(int k) { return F[k].view(P.M, P.Nz, P.N, fn0, fns); }
+  dev::CurrV bview(int k) { return Cb[k].view(P.M, P.Nz, P.N, ck0, cnk); }
+  dev::CurrV sview(int k) { return Cs[k].view(P.M, P.Nz, P.N, ck0, cnk); }
   int zStride = 1, maxSpan = 0;
   // host copies of the counters
   int nBeam = 0, nPprev = 0;
@@ -879,6 +925,14 @@ struct EngineState {
   }
 };
 
+// the zeta march (Engine::march): slices nHi ... nLo
+struct Engine::MarchSpec {
+  int nHi, nLo;
+  double s1;
+  long streamCap, bornCap;
+  const BlockMarch* bm;        // MPI block (null: the whole window)
+  const cplx *belowR, *belowP;  // MPI block with a rank behind: prediction at slice nLo
+};
 bool Engine::gpuBuild() {
 #if defined(GEM_BACKEND_CUDA)
   return true;
@@ -896,8 +950,13 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   if (const char* e = std::getenv("GEMPIC_PROFILE")) E.prof.on = (e[0] == '1');
   const RadialGrid& g = sim.g;
   const int M = sim.M, Nz = sim.Nz, N = g.N;
-  E.nf = size_t(M + 1) * (Nz + 1) * (N + 1);
-  E.nc = size_t(M + 1) * (Nz + 1) * N;
+  // storage as on the host: the whole window, or the block of an MPI rank with its ghosts
+  E.fn0 = sim.fold.n0;
+  E.fns = sim.fold.ns;
+  E.ck0 = sim.c0b.k0;
+  E.cnk = sim.c0b.nk;
+  E.nf = size_t(M + 1) * E.fns * (N + 1);
+  E.nc = size_t(M + 1) * E.fns * N;
   // grid
   E.rho.assign(g.rho.data(), g.rho.size());
   E.c.assign(g.c.data(), g.c.size());
@@ -987,8 +1046,8 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
     E.ffGf.reserve(sim.ffGf.size()); up(E.ffGf, sim.ffGf);
     E.ffGc.reserve(sim.ffGc.size()); up(E.ffGc, sim.ffGc);
   }
-  const size_t cf = size_t(M + 1) * Nz * (N + 1), cc = size_t(M + 1) * Nz * N;
-  E.nd = size_t(Nz) * N;
+  const size_t cf = size_t(M + 1) * E.cnk * (N + 1), cc = size_t(M + 1) * E.cnk * N;
+  E.nd = size_t(E.cnk) * N;
   for (int k = 0; k < 2; ++k) { E.Cb[k].init(cf, cc, E.nd); E.Cs[k].init(cf, cc, E.nd); }
   up(E.Cb[E.iold].jr, sim.c0b.jr); up(E.Cb[E.iold].jp, sim.c0b.jp); up(E.Cb[E.iold].jz, sim.c0b.jz);
   par::upload(E.Cb[E.iold].rho.data(), sim.c0b.rho.data(), E.nd);
@@ -1062,9 +1121,9 @@ void Engine::step() {
   const double s1 = sim.s0 + Delta;
   const int iters = sim.cfg.numerics.iterations;
   const int iold = E.iold, inew = 1 - iold;
-  const FieldsV fo = E.F[iold].view(M, Nz, N), fn = E.F[inew].view(M, Nz, N);
-  const CurrV c0b = E.Cb[iold].view(M, Nz, N), c0s = E.Cs[iold].view(M, Nz, N);
-  const CurrV c1b = E.Cb[inew].view(M, Nz, N), c1s = E.Cs[inew].view(M, Nz, N);
+  const FieldsV fo = E.fview(iold), fn = E.fview(inew);
+  const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
+  const CurrV c1b = E.bview(inew), c1s = E.sview(inew);
   E.Cb[inew].zero();
   E.Cs[inew].zero();
   par::zero(E.freed.data(), E.freed.capacity());
@@ -1158,36 +1217,98 @@ void Engine::step() {
     Particle* beam = E.beam.data();
     par::forDyn(&cnt[C_BEAM], nullptr, E.nBeam, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[i]); });
   }
-  // (1,2,1) filter of the beam current along zeta (Simulation::filterBeamCurrent), one thread per column
-  if (const int passes = sim.cfg.numerics.beam_filter) {
-    const struct { cplx* v; int L; } cols[3] = {{c1b.jr, N + 1}, {c1b.jp, N}, {c1b.jz, N}};
-    for (const auto& cl : cols) {
-      cplx* v = cl.v;
-      const int L = cl.L;
-      par::forN(long(M + 1) * L, GEM_LAMBDA(long col) {
-        const int m = int(col / L), i = int(col % L);
-        for (int p = 0; p < passes; ++p) {
-          cplx prev;
-          for (int k = 0; k < Nz; ++k) {
-            cplx& x = v[(size_t(m) * Nz + k) * L + i];
-            const cplx cur = x;
-            const cplx next = (k + 1 < Nz) ? v[(size_t(m) * Nz + k + 1) * L + i] : cplx();
-            x = 0.25 * prev + 0.5 * cur + 0.25 * next;
-            prev = cur;
-          }
-        }
-      });
-    }
-  }
+  filterBeamDev(c1b, sim.cfg.numerics.beam_filter);
   const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
   par::zero(E.pred[1 - E.ip].data(), npf);
   par::zero(E.predP[1 - E.ip].data(), npc);
   prof.stop(Profile::LOAD);
 
   // ---- 4. zeta march
+  march(MarchSpec{Nz - 1, 0, s1, streamCap, bornCap, nullptr, nullptr, nullptr});
+  Particle* stream = E.stream.data();
+  const int streamCapI = int(streamCap);
+  // ---- 4b. beam_field = mean (Simulation::step): the beam is pushed again from s^0 in (F^0 + F^1)/2 and
+  // its current of s^1 is deposited anew; particles lost or returned to streaming in the first push keep
+  // that outcome, and a particle that the second push would lose keeps its first-push state
+  if (repush) {
+    E.pullCounters();
+    const int nSurv = E.nBeam, nAll = E.hcnt[C_BEAM];
+    E.lcntScratch.clear(dev::L_COUNT);
+    Particle *save = E.beamSave.data(), *beam = E.beam.data();
+    const int* bmap = E.beamMap.data();
+    unsigned long long* lsc = E.lcntScratch.data();
+    par::forN(nBeam0, GEM_LAMBDA(long i) {
+      const int k = bmap[i];
+      if (k < 0) return;
+      Particle q = save[i];
+      pushBeamParticle(P, fo, q, nsubB, dzB, lsc, fn, 0.5);
+      if (q.status == 0) beam[k] = q;
+    });
+    E.Cb[inew].zero();
+    par::forN(nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[i]); });
+    filterBeamDev(c1b, sim.cfg.numerics.beam_filter);
+    // particles trapped during the march: deposited unfiltered, as in the march
+    par::forN(nAll - nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[nSurv + i]); });
+    par::fence();
+  }
+
+  // ---- 5. charge states of the ions leaving the window, absorber
+  double* exitSt = E.exitSt.data();
+  const int zs = E.zStride;
+  par::zero(exitSt, E.exitSt.capacity());
+  par::forDyn(&cnt[C_STREAM], nullptr, streamCapI, GEM_LAMBDA(long i) {
+    const Particle& p = stream[i];
+    if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION)
+      par::atomicAddD(&exitSt[size_t(ionIndex(p.sp)) * zs + p.Zi], p.w);
+  });
+  if (sim.cfg.grid.r_absorber < sim.g.rho[N]) {
+    if (sim.hasIncident) {  // file lasers fed through the layer: incident field of the level s1 (host)
+      sim.prepareIncident(s1, sim.sLo, sim.sHi);
+      E.incF.assign(reinterpret_cast<const cplx*>(sim.incF.data()), sim.incF.size());
+      E.incC.assign(reinterpret_cast<const cplx*>(sim.incC.data()), sim.incC.size());
+    }
+    absorbSlices(sim.sLo, sim.sHi, s1, false);  // the stored slices with data (the whole window: 0 ... Nz-1)
+  }  // ---- 6. counters, swap levels
+  E.pullCounters();
+  E.nBeam = E.hcnt[C_BEAM];
+  // slow trapped particles continue streaming in the next step
+  E.pprev.swap(E.pnext);
+  E.nPprev = E.hcnt[C_PNEXT];
+  E.iold = inew;
+  sim.s0 = s1;
+  ++sim.step_no;
+  prof.stop(Profile::END);
+}
+
+// ----------------------------------------------------------------------------
+//  the zeta march over the slices nHi ... nLo (Simulation::march, PipelineRun::step); E.stream holds the
+//  streaming particles (counters C_STREAM, C_BORN = 0, C_PNEXT), c1b the beam current of the level
+// ----------------------------------------------------------------------------
+
+void Engine::march(const MarchSpec& ms) {
+  using namespace dev;
+  EngineState& E = *st;
+  const Params P = E.P;
+  const int M = P.M, Nz = P.Nz, N = P.N;
+  const double Delta = P.Delta, s1 = ms.s1;
+  const int iters = sim.cfg.numerics.iterations;
+  const int iold = E.iold, inew = 1 - iold;
+  const FieldsV fo = E.fview(iold), fn = E.fview(inew);
+  const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
+  const CurrV c1b = E.bview(inew), c1s = E.sview(inew);
+  int* cnt = E.cnt.data();
+  unsigned long long* lcnt = E.lcnt.data();
+  Profile& prof = E.prof;
+  const long streamCap = ms.streamCap, bornCap = ms.bornCap;
+  const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+  // ---- 4. zeta march
   Particle *stream = E.stream.data(), *backup = E.backup.data(), *born = E.born.data();
-  Particle *beamL = E.beam.data(), *pnext = E.pnext.data();
-  const int beamCap = int(E.beam.capacity()), pnextCap = int(E.pnext.capacity());
+  const bool blockMode = ms.bm != nullptr;
+  Particle *beamL = blockMode ? E.trapList.data() : E.beam.data(), *pnext = E.pnext.data();
+  const int beamCap = int(blockMode ? E.trapList.capacity() : E.beam.capacity()), pnextCap = int(E.pnext.capacity());
+  const int nHi = ms.nHi, nLo = ms.nLo;
+  const cplx *belowR = ms.belowR, *belowP = ms.belowP;
+  int done = 0;
   const int bornCapI = int(bornCap + 1), streamCapI = int(streamCap);
   double* boundPtr = E.bound.data();
   double* freed = E.freed.data();
@@ -1197,7 +1318,7 @@ void Engine::step() {
   const double vz_beam = P.vz_beam;
   const uint64_t keyStep = ionKeyStep(P.seed, sim.step_no);
 
-  for (int n = Nz - 1; n >= 0; --n) {
+  for (int n = nHi; n >= nLo; --n) {
     cplx* predR = E.pred[E.ip].data();
     cplx* predPc = E.predP[E.ip].data();
     const cplx* predRprev = E.pred[1 - E.ip].data();
@@ -1208,14 +1329,16 @@ void Engine::step() {
         if (it == 0) {
           par::teamFor(t, int(npf), [&](int idx) {
             const int m = idx / (N + 1), i = idx % (N + 1);
-            predR[idx] = (n > 0) ? c1b.jr[c1b.f(m, n - 1, i)] + c0s.jr[c0s.f(m, n - 1, i)] : cplx();
+            predR[idx] = (n > 0) ? ((n == nLo && belowR) ? belowR[idx] : c1b.jr[c1b.f(m, n - 1, i)]) + c0s.jr[c0s.f(m, n - 1, i)]
+                                 : cplx();
             fn.Rr[fn.f(m, n, i)] = fo.Rr[fo.f(m, n, i)];
             fn.Lr[fn.f(m, n, i)] = fo.Lr[fo.f(m, n, i)];
             fn.Bz[fn.f(m, n, i)] = fo.Bz[fo.f(m, n, i)];
           });
           par::teamFor(t, int(npc), [&](int idx) {
             const int m = idx / N, i = idx % N;
-            predPc[idx] = (n > 0) ? c1b.jp[c1b.c(m, n - 1, i)] + c0s.jp[c0s.c(m, n - 1, i)] : cplx();
+            predPc[idx] = (n > 0) ? ((n == nLo && belowP) ? belowP[idx] : c1b.jp[c1b.c(m, n - 1, i)]) + c0s.jp[c0s.c(m, n - 1, i)]
+                                  : cplx();
             fn.Rp[fn.c(m, n, i)] = fo.Rp[fo.c(m, n, i)];
             fn.Lp[fn.c(m, n, i)] = fo.Lp[fo.c(m, n, i)];
             fn.Ez[fn.c(m, n, i)] = fo.Ez[fo.c(m, n, i)];
@@ -1231,8 +1354,8 @@ void Engine::step() {
           c1s.jz[c1s.c(m, n, i)] = cplx();
         });
         par::teamFor(t, N, [&](int i) {
-          c1s.rho[size_t(n) * N + i] = 0.0;
-          c1s.rhoi[size_t(n) * N + i] = 0.0;
+          c1s.rho[c1s.d(n, i)] = 0.0;
+          c1s.rhoi[c1s.d(n, i)] = 0.0;
         });
         if (t.leader()) cnt[C_BORN] = 0;
         if (ions) {
@@ -1289,7 +1412,7 @@ void Engine::step() {
           const int tid = 0;
 #endif
           E.local[tid].zero();
-          const CurrV L = E.local[tid].view(M, 1, N);
+          const CurrV L = E.local[tid].view(M, 1, N, 0, 1);
 #if defined(_OPENMP)
 #pragma omp for schedule(static)
 #endif
@@ -1297,7 +1420,7 @@ void Engine::step() {
         }
         const int nused = (ns > 256) ? nt : 1;
         std::vector<CurrV> lv;
-        for (int k = 0; k < nused; ++k) lv.push_back(E.local[k].view(M, 1, N));
+        for (int k = 0; k < nused; ++k) lv.push_back(E.local[k].view(M, 1, N, 0, 1));
         const CurrV* L = lv.data();
         par::forN(long(npf), GEM_LAMBDA(long idx) {
           const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
@@ -1315,8 +1438,8 @@ void Engine::step() {
         par::forN(long(N), GEM_LAMBDA(long i) {
           double a = 0, b = 0;
           for (int k = 0; k < nused; ++k) { a += L[k].rho[i]; b += L[k].rhoi[i]; }
-          c1s.rho[size_t(n) * N + i] += a;
-          c1s.rhoi[size_t(n) * N + i] += b;
+          c1s.rho[c1s.d(n, i)] += a;
+          c1s.rhoi[c1s.d(n, i)] += b;
         });
       }
 #endif
@@ -1356,7 +1479,8 @@ void Engine::step() {
         if (t.sp == SPECIES_PLASMA) t.sp = SPECIES_TRAPPED;
         else if (isIonizationElectron(t.sp)) t.sp = SPECIES_TRAPPED_IONIZED_BASE - ionizedIndex(t.sp);
         else if (isIon(t.sp)) t.sp = SPECIES_TRAPPED_ION;
-        const int j = par::atomicFetchAdd(&cnt[C_BEAM], 1);
+        // whole window: on the beam list; MPI block: to the list of trapped particles (the host routes them)
+        const int j = par::atomicFetchAdd(&cnt[blockMode ? C_TRAP : C_BEAM], 1);
         if (j < beamCap) beamL[j] = t; else cnt[C_OVERFLOW] = 1;
         depositBeam(P, c1b, t);
         par::atomicAddU64(&lcnt[L_TRAPPED], 1ULL);
@@ -1390,131 +1514,266 @@ void Engine::step() {
     });
     prof.stop(Profile::CORR);
     E.ip = 1 - E.ip;
-  }
-
-  // ---- 4b. beam_field = mean (Simulation::step): the beam is pushed again from s^0 in (F^0 + F^1)/2 and
-  // its current of s^1 is deposited anew; particles lost or returned to streaming in the first push keep
-  // that outcome, and a particle that the second push would lose keeps its first-push state
-  if (repush) {
-    E.pullCounters();
-    const int nSurv = E.nBeam, nAll = E.hcnt[C_BEAM];
-    E.lcntScratch.clear(dev::L_COUNT);
-    Particle *save = E.beamSave.data(), *beam = E.beam.data();
-    const int* bmap = E.beamMap.data();
-    unsigned long long* lsc = E.lcntScratch.data();
-    par::forN(nBeam0, GEM_LAMBDA(long i) {
-      const int k = bmap[i];
-      if (k < 0) return;
-      Particle q = save[i];
-      pushBeamParticle(P, fo, q, nsubB, dzB, lsc, fn, 0.5);
-      if (q.status == 0) beam[k] = q;
-    });
-    E.Cb[inew].zero();
-    par::forN(nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[i]); });
-    if (const int passes = sim.cfg.numerics.beam_filter) {
-      const struct { cplx* v; int L; } cols[3] = {{c1b.jr, N + 1}, {c1b.jp, N}, {c1b.jz, N}};
-      for (const auto& cl : cols) {
-        cplx* v = cl.v;
-        const int L = cl.L;
-        par::forN(long(M + 1) * L, GEM_LAMBDA(long col) {
-          const int m = int(col / L), i = int(col % L);
-          for (int p = 0; p < passes; ++p) {
-            cplx prev;
-            for (int k = 0; k < Nz; ++k) {
-              cplx& x = v[(size_t(m) * Nz + k) * L + i];
-              const cplx cur = x;
-              const cplx next = (k + 1 < Nz) ? v[(size_t(m) * Nz + k + 1) * L + i] : cplx();
-              x = 0.25 * prev + 0.5 * cur + 0.25 * next;
-              prev = cur;
-            }
-          }
-        });
+    if (blockMode) {  // MPI block: slice n+1 is final (absorber, as PipelineRun::step); the R message
+      if (n + 1 <= Nz - 1) absorbSlices(n + 1, n + 2, s1, ms.bm->iF + ms.bm->iC <= 2 * N);
+      if (++done == ms.bm->callAfter && ms.bm->after) {
+        E.pullCounters();
+        ms.bm->after();
       }
     }
-    // particles trapped during the march: deposited unfiltered, as in the march
-    par::forN(nAll - nSurv, GEM_LAMBDA(long i) { depositBeam(P, c1b, beam[nSurv + i]); });
-    par::fence();
   }
 
-  // ---- 5. charge states of the ions leaving the window, absorber
-  double* exitSt = E.exitSt.data();
-  const int zs = E.zStride;
-  par::zero(exitSt, E.exitSt.capacity());
-  par::forDyn(&cnt[C_STREAM], nullptr, streamCapI, GEM_LAMBDA(long i) {
-    const Particle& p = stream[i];
-    if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION)
-      par::atomicAddD(&exitSt[size_t(ionIndex(p.sp)) * zs + p.Zi], p.w);
-  });
-  {
-    const double ra = sim.cfg.grid.r_absorber, rm = sim.g.rho[N], str = sim.cfg.grid.absorber_strength;
-    if (ra < rm) {
-      const GridV g = P.g;
-      // flying focus: R relaxes to the incident field Re(G e^{-i kappa s1}) (m = 1), see Simulation::absorber
-      const bool ff = sim.cfg.flying_focus.present;
-      const cplx* Gf = ff ? E.ffGf.data() : nullptr;
-      const cplx* Gc = ff ? E.ffGc.data() : nullptr;
-      const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
-      const double cph = cos(kph), sph = sin(kph);
-      // file lasers fed through the layer: incident field of the level s1, computed on the host
-      const bool hinc = sim.hasIncident;
-      const int iaF = sim.iaF, iaC = sim.iaC, nLF = sim.nLF, nLC = sim.nLC;
-      if (hinc) {
-        sim.prepareIncident(s1, 0, Nz);
-        E.incF.assign(reinterpret_cast<const cplx*>(sim.incF.data()), sim.incF.size());
-        E.incC.assign(reinterpret_cast<const cplx*>(sim.incC.data()), sim.incC.size());
-      }
-      const cplx* iF = hinc ? E.incF.data() : nullptr;
-      const cplx* iC = hinc ? E.incC.data() : nullptr;
-      par::forN(long(M + 1) * Nz * (N + 1), GEM_LAMBDA(long idx) {
-        const int i = int(idx % (N + 1));
-        const long mn = idx / (N + 1);
-        const int m = int(mn / Nz), nn = int(mn % Nz);
-        auto dmp = [&](double r) {
-          if (r <= ra) return 1.0;
-          const double x = (r - ra) / (rm - ra);
-          return fmax(0.0, 1.0 - str * x * x);
-        };
-        const double df = dmp(g.rho[i]);
-        if (df < 1.0) {
-          double inc = 0.0;
-          if (ff && m == 1) { const cplx G = Gf[size_t(nn) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
-          const cplx R = fn.Rr[fn.f(m, nn, i)];
-          if (hinc && i >= iaF) {
-            const cplx c = cplx(inc, 0.0) + iF[(size_t(m) * Nz + nn) * nLF + i - iaF];
-            fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
-          } else {
-            fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
-          }
-        }
-        if (i < N) {
-          const double dc = dmp(g.c[i]);
-          if (dc < 1.0) {
-            double inc = 0.0;  // incident R_phi,1 = i inc
-            if (ff && m == 1) { const cplx G = Gc[size_t(nn) * N + i]; inc = G.re * cph - G.im * sph; }
-            const cplx R = fn.Rp[fn.c(m, nn, i)];
-            if (hinc && i >= iaC) {
-              const cplx c = cplx(0.0, inc) + iC[(size_t(m) * Nz + nn) * nLC + i - iaC];
-              fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
-            } else {
-              fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
-            }
-          }
-        }
-      });
-    }
-  }
-  // ---- 6. counters, swap levels
-  E.pullCounters();
-  E.nBeam = E.hcnt[C_BEAM];
-  // slow trapped particles continue streaming in the next step
-  E.pprev.swap(E.pnext);
-  E.nPprev = E.hcnt[C_PNEXT];
-  E.iold = inew;
-  sim.s0 = s1;
-  ++sim.step_no;
-  prof.stop(Profile::END);
 }
 
+// ----------------------------------------------------------------------------
+//  radial absorber of fnew on the slices [n0, n1) (Simulation::absorber); file lasers fed through the layer:
+//  E.incF / incC hold the incident field of the level (sim.prepareIncident). keep: the values before the
+//  absorber of faces >= iF and centres >= iC go to E.preAbs (MPI block, beam_field = mean)
+// ----------------------------------------------------------------------------
+void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
+  using namespace dev;
+  EngineState& E = *st;
+  const Params P = E.P;
+  const int M = P.M, N = P.N;
+  const double ra = sim.cfg.grid.r_absorber, rm = sim.g.rho[N], str = sim.cfg.grid.absorber_strength;
+  if (ra >= rm || n1 <= n0) return;
+  const FieldsV fn = E.fview(1 - E.iold);
+  const GridV g = P.g;
+  // flying focus: R relaxes to the incident field Re(G e^{-i kappa s1}) (m = 1), see Simulation::absorber
+  const bool ff = sim.cfg.flying_focus.present;
+  const cplx* Gf = ff ? E.ffGf.data() : nullptr;
+  const cplx* Gc = ff ? E.ffGc.data() : nullptr;
+  const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
+  const double cph = cos(kph), sph = sin(kph);
+  const bool hinc = sim.hasIncident;
+  const int iaF = sim.iaF, iaC = sim.iaC, nLF = sim.nLF, nLC = sim.nLC;
+  const cplx* iF = hinc ? E.incF.data() : nullptr;
+  const cplx* iC = hinc ? E.incC.data() : nullptr;
+  const int nS = n1 - n0, ffN0 = sim.ffN0, nLo = sim.nLo, nInc = sim.nInc;
+  // values before the absorber: per slice and mode the faces >= kF, then the centres >= kC
+  cplx* pre = keep ? E.preAbs.data() : nullptr;
+  const int kF = E.preF, kC = E.preC, fn0 = E.fn0;
+  const size_t pw = E.preW, pm = size_t(N + 1 - kF) + size_t(N - kC);
+  if (keep)
+    for (int n = n0; n < n1; ++n) E.preHave[size_t(n - fn0)] = 1;
+  par::forN(long(M + 1) * nS * (N + 1), GEM_LAMBDA(long idx) {
+    const int i = int(idx % (N + 1));
+    const long mn = idx / (N + 1);
+    const int m = int(mn / nS), nn = n0 + int(mn % nS);
+    auto dmp = [&](double r) {
+      if (r <= ra) return 1.0;
+      const double x = (r - ra) / (rm - ra);
+      return fmax(0.0, 1.0 - str * x * x);
+    };
+    cplx* pv = pre ? pre + size_t(nn - fn0) * pw + size_t(m) * pm : nullptr;
+    if (pv && i >= kF) pv[i - kF] = fn.Rr[fn.f(m, nn, i)];
+    if (pv && i < N && i >= kC) pv[size_t(N + 1 - kF) + i - kC] = fn.Rp[fn.c(m, nn, i)];
+    const double df = dmp(g.rho[i]);
+    if (df < 1.0) {
+      double inc = 0.0;
+      if (ff && m == 1) { const cplx G = Gf[size_t(nn - ffN0) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
+      const cplx R = fn.Rr[fn.f(m, nn, i)];
+      if (hinc && i >= iaF) {
+        const cplx c = cplx(inc, 0.0) + iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
+        fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
+      } else {
+        fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
+      }
+    }
+    if (i < N) {
+      const double dc = dmp(g.c[i]);
+      if (dc < 1.0) {
+        double inc = 0.0;  // incident R_phi,1 = i inc
+        if (ff && m == 1) { const cplx G = Gc[size_t(nn - ffN0) * N + i]; inc = G.re * cph - G.im * sph; }
+        const cplx R = fn.Rp[fn.c(m, nn, i)];
+        if (hinc && i >= iaC) {
+          const cplx c = cplx(0.0, inc) + iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
+          fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
+        } else {
+          fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
+        }
+      }
+    }
+  });
+}
+// ============================================================================
+//  MPI pipeline: the march of the block of a rank (see engine.hpp)
+// ============================================================================
+void Engine::putFields(int level, int lo, int hi) {
+  EngineState& E = *st;
+  const Fields& H = level == 0 ? sim.fold : sim.fnew;
+  dev::FieldStore& D = E.F[level == 0 ? E.iold : 1 - E.iold];
+  lo = std::max(lo, H.n0);
+  hi = std::min(hi, H.n0 + H.ns);
+  if (hi <= lo) return;
+  const int N = H.N;
+  for (int m = 0; m <= H.M; ++m) {
+    const size_t of = H.f(m, lo, 0), oc = H.c(m, lo, 0), nf = size_t(hi - lo) * (N + 1), nc = size_t(hi - lo) * N;
+    auto up = [&](par::Array<cplx>& d, const std::vector<cd>& h, size_t o, size_t n) {
+      par::upload(d.data() + o, reinterpret_cast<const cplx*>(h.data()) + o, n);
+    };
+    up(D.Rr, H.Rr, of, nf); up(D.Lr, H.Lr, of, nf); up(D.Bz, H.Bz, of, nf);
+    up(D.Rp, H.Rp, oc, nc); up(D.Lp, H.Lp, oc, nc); up(D.Ez, H.Ez, oc, nc);
+  }
+}
+
+void Engine::getFields(int level, int lo, int hi) {
+  EngineState& E = *st;
+  Fields& H = level == 0 ? sim.fold : sim.fnew;
+  dev::FieldStore& D = E.F[level == 0 ? E.iold : 1 - E.iold];
+  lo = std::max(lo, H.n0);
+  hi = std::min(hi, H.n0 + H.ns);
+  if (hi <= lo) return;
+  par::fence();
+  const int N = H.N;
+  for (int m = 0; m <= H.M; ++m) {
+    const size_t of = H.f(m, lo, 0), oc = H.c(m, lo, 0), nf = size_t(hi - lo) * (N + 1), nc = size_t(hi - lo) * N;
+    auto dn = [&](std::vector<cd>& h, par::Array<cplx>& d, size_t o, size_t n) {
+      par::download(reinterpret_cast<cplx*>(h.data()) + o, d.data() + o, n);
+    };
+    dn(H.Rr, D.Rr, of, nf); dn(H.Lr, D.Lr, of, nf); dn(H.Bz, D.Bz, of, nf);
+    dn(H.Rp, D.Rp, oc, nc); dn(H.Lp, D.Lp, oc, nc); dn(H.Ez, D.Ez, oc, nc);
+  }
+}
+
+namespace {
+// copies of the half-cells [lo, hi) between host and device currents (same layout)
+void moveCurrents(Currents& H, dev::CurrStore& D, int lo, int hi, bool up) {
+  lo = std::max(lo, H.k0);
+  hi = std::min(hi, H.k0 + H.nk);
+  if (hi <= lo) return;
+  if (!up) par::fence();
+  const int N = H.N;
+  auto mv = [&](std::vector<cd>& h, par::Array<cplx>& d, size_t o, size_t n) {
+    cplx* hp = reinterpret_cast<cplx*>(h.data()) + o;
+    if (up) par::upload(d.data() + o, hp, n); else par::download(hp, d.data() + o, n);
+  };
+  auto mvd = [&](std::vector<double>& h, par::Array<double>& d, size_t o, size_t n) {
+    if (up) par::upload(d.data() + o, h.data() + o, n); else par::download(h.data() + o, d.data() + o, n);
+  };
+  for (int m = 0; m <= H.M; ++m) {
+    const size_t nf = size_t(hi - lo) * (N + 1), nc = size_t(hi - lo) * N;
+    mv(H.jr, D.jr, H.f(m, lo, 0), nf);
+    mv(H.jp, D.jp, H.c(m, lo, 0), nc);
+    mv(H.jz, D.jz, H.c(m, lo, 0), nc);
+  }
+  mvd(H.rho, D.rho, H.d(lo, 0), size_t(hi - lo) * N);
+  mvd(H.rhoi, D.rhoi, H.d(lo, 0), size_t(hi - lo) * N);
+}
+}  // namespace
+
+void Engine::putCurrents(Curr which, int lo, int hi) {
+  EngineState& E = *st;
+  const int k = (which == C0B || which == C0S) ? E.iold : 1 - E.iold;
+  Currents& H = which == C0B ? sim.c0b : which == C0S ? sim.c0s : which == C1B ? sim.c1b : sim.c1s;
+  moveCurrents(H, (which == C0B || which == C1B) ? E.Cb[k] : E.Cs[k], lo, hi, true);
+}
+
+void Engine::getCurrents(Curr which, int lo, int hi) {
+  EngineState& E = *st;
+  const int k = (which == C0B || which == C0S) ? E.iold : 1 - E.iold;
+  Currents& H = which == C0B ? sim.c0b : which == C0S ? sim.c0s : which == C1B ? sim.c1b : sim.c1s;
+  moveCurrents(H, (which == C0B || which == C1B) ? E.Cb[k] : E.Cs[k], lo, hi, false);
+}
+
+void Engine::swapLevels() { st->iold = 1 - st->iold; }
+
+std::vector<Particle> Engine::trapped(size_t from) {
+  EngineState& E = *st;
+  E.pullCounters();
+  const size_t n = size_t(E.hcnt[dev::C_TRAP]);
+  std::vector<Particle> v(from < n ? n - from : 0);
+  par::download(v.data(), E.trapList.data() + from, v.size());
+  return v;
+}
+
+bool Engine::preAbsorber(int n, std::vector<cd>& out) {
+  EngineState& E = *st;
+  const size_t j = size_t(n - E.fn0);
+  if (n < E.fn0 || j >= E.preHave.size() || !E.preHave[j]) return false;
+  par::fence();
+  out.resize(E.preW);
+  par::download(reinterpret_cast<cplx*>(out.data()), E.preAbs.data() + j * E.preW, E.preW);
+  return true;
+}
+
+void Engine::marchBlock(const BlockMarch& bm) {
+  using namespace dev;
+  EngineState& E = *st;
+  const int M = sim.M, N = sim.g.N;
+  // parameters of the step (Simulation::beginStep has run on the host)
+  E.P.Delta = sim.Delta;
+  E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
+  E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.theta = sim.cfg.numerics.theta;
+  if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, M);
+  E.prof.start();
+  E.Cs[1 - E.iold].zero();
+  par::zero(E.freed.data(), E.freed.capacity());
+  // streaming particles (received, fresh, waiting) and the room for freed electrons
+  const size_t ns = sim.stream.size();
+  long bornCap = 0;
+  for (const Particle& p : sim.stream)
+    if (isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) {
+      const auto& I = sim.cfg.ions[ionIndex(p.sp)];
+      if (I.ionization) bornCap += std::max(0, I.Zmax - p.Zi);
+    }
+  const long streamCap = long(ns) + bornCap + 1;
+  E.stream.reserve(streamCap);
+  if (sim.cfg.numerics.iterations > 1) E.backup.reserve(streamCap);
+  E.born.reserve(bornCap + 1);
+  E.pnext.reserve(streamCap);
+  E.trapList.reserve(streamCap);
+  par::upload(E.stream.data(), sim.stream.data(), ns);
+  E.hcnt[C_STREAM] = int(ns);
+  E.hcnt[C_BORN] = 0;
+  E.hcnt[C_PNEXT] = 0;
+  E.hcnt[C_TRAP] = 0;
+  E.pushCounters();
+  // predictions: at slice a (rank behind), and the front rank's at slice b (start of the R correction)
+  const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+  const cplx *belowR = nullptr, *belowP = nullptr;
+  if (bm.predBelowR) {
+    E.belowR.assign(reinterpret_cast<const cplx*>(bm.predBelowR->data()), npf);
+    E.belowP.assign(reinterpret_cast<const cplx*>(bm.predBelowP->data()), npc);
+    belowR = E.belowR.data();
+    belowP = E.belowP.data();
+  }
+  if (bm.predFrontR) {
+    par::upload(E.pred[1 - E.ip].data(), reinterpret_cast<const cplx*>(bm.predFrontR->data()), npf);
+    par::upload(E.predP[1 - E.ip].data(), reinterpret_cast<const cplx*>(bm.predFrontP->data()), npc);
+  } else {
+    par::zero(E.pred[1 - E.ip].data(), npf);
+    par::zero(E.predP[1 - E.ip].data(), npc);
+  }
+  // absorber: incident field of the layer (prepared by the host), values before it (beam_field = mean)
+  if (sim.hasIncident) {
+    E.incF.assign(reinterpret_cast<const cplx*>(sim.incF.data()), sim.incF.size());
+    E.incC.assign(reinterpret_cast<const cplx*>(sim.incC.data()), sim.incC.size());
+  }
+  const bool keep = bm.iF + bm.iC <= 2 * N;
+  if (keep) {
+    E.preF = bm.iF;
+    E.preC = bm.iC;
+    E.preW = size_t(M + 1) * (size_t(N + 1 - bm.iF) + size_t(N - bm.iC));
+    E.preAbs.reserve(size_t(E.fns) * E.preW);
+    E.preHave.assign(size_t(E.fns), 0);
+  }
+  march(MarchSpec{bm.b - 1, bm.a, bm.s1, streamCap, bornCap, &bm, belowR, belowP});
+  if (bm.absorbFirst) absorbSlices(bm.a, bm.a + 1, bm.s1, keep);
+  // results for the host
+  E.pullCounters();
+  std::vector<Particle> all(size_t(E.hcnt[C_STREAM]));
+  par::download(all.data(), E.stream.data(), all.size());
+  sim.stream.clear();
+  for (const Particle& p : all)
+    if (p.status == 0 || p.status == WAITING) sim.stream.push_back(p);
+  sim.pendingNext.resize(size_t(E.hcnt[C_PNEXT]));
+  par::download(sim.pendingNext.data(), E.pnext.data(), sim.pendingNext.size());
+  par::download(reinterpret_cast<cplx*>(sim.predRprev.data()), E.pred[1 - E.ip].data(), npf);
+  par::download(reinterpret_cast<cplx*>(sim.predPprev.data()), E.predP[1 - E.ip].data(), npc);
+  if (!sim.freedCharge.empty()) par::download(sim.freedCharge.data(), E.freed.data(), sim.freedCharge.size());
+}
 // ----------------------------------------------------------------------------
 void Engine::downloadFull() {
   download();

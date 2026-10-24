@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -226,6 +227,14 @@ inline void initDevice() {
   if (e != cudaSuccess || n == 0)
     throw std::runtime_error(std::string("no usable CUDA device: ") +
                              (e != cudaSuccess ? cudaGetErrorString(e) : "the driver reports 0 GPUs"));
+  // several MPI ranks on a node that sees several GPUs: one GPU per rank, by the node-local rank of the
+  // launcher (with one GPU per task, e.g. srun --gpus-per-task=1, every rank sees just its own)
+  if (n > 1)
+    for (const char* v : {"OMPI_COMM_WORLD_LOCAL_RANK", "SLURM_LOCALID", "MPI_LOCALRANKID", "MV2_COMM_WORLD_LOCAL_RANK"})
+      if (const char* s = std::getenv(v)) {
+        check(cudaSetDevice(std::atoi(s) % n), "cudaSetDevice");
+        break;
+      }
   // kernels for this GPU in the binary? (a missing architecture shows up at the first launch)
 }
 

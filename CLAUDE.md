@@ -13,6 +13,9 @@ Read this first. README.md is the user documentation; docs/ holds the details.
 - Every new feature gets a test (ctest) against an independent reference and an entry in docs/ and README.md.
 - Testing aids: `-DCMAKE_CXX_FLAGS=-DGEMPIC_RANGE_CHECK` (every field/current access checked against the stored
   slices), an AddressSanitizer build, and `tests/mpi.sh <exe> <compare_columns> mpirun` for 2-4 ranks.
+- Compile-check the CUDA build after every engine change, also without a GPU (nvcc catches what g++ does not,
+  e.g. device lambdas in private member functions): `-DGEMPIC_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90
+  -DCMAKE_CUDA_COMPILER=<nvcc>` (nvcc from tools/install_cuda_pip.sh).
 - Ongoing work:
   - **FEL** (separate paper): draft, notes and handoff are in the PRIVATE repository AlexMPukhov/CLAUDE-notes
     (`gem-pic-rz/`); read them there if that repository is in the session. Benchmarks here:
@@ -44,7 +47,14 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        Merged (PR #2). dE/E in bunches.txt is now accumulated centred (Moments::gmean, gM2; branch
        centred-energy-spread): the old sum gamma^2 - (sum gamma)^2 / Q was 27 % low at dE/E = 4e-6, gamma = 1000,
        and differed between rank counts; ctest energy_spread checks it against the particle data.
-    5. next: the GPU engine on a block (march over [a, b), the pipeline exchanges staged through the host, later
+    5. in progress (branch engine-block-storage): 5a device arrays in the host layout with slice offsets
+       (FieldsV n0/ns, CurrV k0/nk; whole window bit-identical); 5b the zeta march of a block on the device
+       (Engine::marchBlock, Engine::march shared with step(), absorbSlices per final slice with pre-absorber
+       values for the mean phase; PipelineRun::deviceMarch stages the state through the host; backend = cuda,
+       or GEMPIC_PIPELINE_ENGINE=1 with backend = openmp for testing; one GPU per rank from the node-local
+       rank). Emulation = serial on all tests/mpi.sh decks. Still on the host: beam push + bookkeeping + filter,
+       mean phase (5c, 5d); transfers per step: the whole block of fold, c0b, c0s, c1b up and fnew, c1b, c1s down
+       (5e: only the changed parts / CUDA-aware MPI). Then: (march over [a, b), the pipeline exchanges staged through the host, later
        CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
     6. then: real-GPU tests (`ctest -R lasy`, regression_cuda, physics_cuda) and a scaling series (1, 4, 16, 64
        ranks/GPUs) on JUWELS/JUPITER, run by a group member.

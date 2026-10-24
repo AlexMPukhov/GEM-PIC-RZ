@@ -138,11 +138,6 @@ int run(int argc, char** argv) {
   const int nranks = gem::comm::size();
   const char* forcePipe = std::getenv("GEMPIC_PIPELINE");  // pipelined step also on one rank (testing)
   const bool pipeline = nranks > 1 || (forcePipe && forcePipe[0] == '1');
-  if (pipeline && cfg.numerics.backend == gem::NumericsConfig::Backend::Cuda) {
-    std::fprintf(stderr, "error: MPI runs with several ranks need numerics.backend = serial or openmp (the GPU "
-                         "engine is not yet combined with MPI)\n");
-    return 1;
-  }
 
   // keep a record of the run
   if (gem::comm::rank() == 0) {
