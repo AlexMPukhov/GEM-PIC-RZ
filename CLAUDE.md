@@ -36,8 +36,15 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     3. done: block-wise output (Simulation::beginOutput / outputBlock / endOutput with one sink per format, HDF5
        hyperslabs); the pipeline streams the blocks of the ranks through rank 0 (at most two blocks there). Files
        of 3 ranks = serial files (h5diff: only date / input_deck differ).
-    4. next: mean-field beam push (`beam_field = mean`) in MPI (needed for undulators / XFEL).
-    5. then: the GPU engine on a block (march over [a, b), the pipeline exchanges staged through the host, later
+    4. done (branch `mpi-mean-field`): mean-field beam push (`beam_field = mean`) in MPI: `PipelineRun::meanPhase`
+       does the second push of step k at the start of step k+1 (F^1 below the block from the R message, the front
+       rank's results in the F message); tags in Particle::id pair the two pushes across ranks; F^1 of the absorber
+       layer is used before the absorber, as serially. tests/mpi.sh: 1 rank pipelined = serial (exact), 2-4 ranks
+       and a 3 -> 2 restart = serial; planar undulator at lambda_u/16 on 3 ranks: eps_nx 0.0067 um as serial.
+       Known: dE/E in bunches.txt differs by up to 0.4 % between rank counts at gamma = 1000 (cancellation in
+       <g^2> - <g>^2; also with level and on main) - a centred variance would fix it (owner's decision: it changes
+       printed serial values in the last digits).
+    5. next: the GPU engine on a block (march over [a, b), the pipeline exchanges staged through the host, later
        CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
     6. then: real-GPU tests (`ctest -R lasy`, regression_cuda, physics_cuda) and a scaling series (1, 4, 16, 64
        ranks/GPUs) on JUWELS/JUPITER, run by a group member.
