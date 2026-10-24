@@ -176,7 +176,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
-| `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial; restarts across rank counts; wall-time stop |
+| `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
 | `tools/compare_columns.cpp` | numeric comparison of ASCII tables (used by the regression test) |
@@ -232,6 +232,14 @@ a pipeline: rank q computes step k while rank q+1 already computes step k+1.
 
 - **Halo copies:** the receiving rank pushes these copies of the rear rank's beam particles itself, a small redundant computation, so that its prediction of the beam current below its block is complete.
 - **Beam ownership:** a beam particle belongs to the rank of the upper half-cell of its deposition.
+- **Mean-field beam push** (`numerics.beam_field = mean`, the default with undulators): the second push of the beam
+  in (F⁰ + F¹)/2 needs F¹ below the block, which the rank behind computes later. Each rank therefore does the second
+  push of step k at the start of step k+1, after the exchanges above have brought F¹ below its block (rear → front)
+  and the second-push results of the rank in front (front → rear, with the next end-of-step message). It runs from
+  the front to the rear like the first push, with the same halo copies and continuation on the rank behind; a tag
+  on every beam particle pairs its two pushes across ranks, so that the rule of the serial code holds (a particle
+  the second push would lose keeps its first-push state). The output of step k follows its second push; the last
+  step takes one extra exchange.
 
 **Speed.** The ionization-injection example (20 steps) runs 1.90× faster on 2 ranks / 2 cores than serially: 51.2 s vs 97.2 s, as predicted by 2 × 20/21. The results are identical.
 
@@ -255,6 +263,13 @@ code 3).
 - **One rank:** the pipelined step (`GEMPIC_PIPELINE=1`) is identical to the serial step.
 - **2, 3, 4 ranks:** agree with the serial run to rounding (1e-6 relative). In practice they agree to all printed digits on the regression deck, including a bunch centred on a block boundary.
 - **Restarts:** checkpoint on 3 ranks → restart on 2 ranks → continuation serially; wall-time stop and `--restart latest` on 3 ranks.
+- **Mean-field beam push:** the pipelined step on one rank is identical to the serial step; 2, 3, 4 ranks and a
+  checkpoint on 3 ranks continued on 2 agree with the serial run to all printed digits (regression deck with
+  `beam_field = mean` and beam filter 2: wake, trapping, absorber). The 4 kA beam in a planar undulator at λ_u/16
+  (`tests/planar_step.sh` settings, 5 cm, the beam spans the 3 blocks): ε_nx = 0.0067 µm on 3 ranks as serially
+  (`level`: 0.118 µm); `fel.txt` and `bunches.txt` agree except dE/E. That column (and the same one with `level`, and
+  before this change) differs by up to 0.4 % between rank counts: at γ = 1000, dE/E ~ 1e-5, the variance
+  ⟨γ²⟩ − ⟨γ⟩² is ~1e-11 of ⟨γ²⟩ and depends on the order of the sums over the ranks.
 - **Hard case:** the ionization-injection example at a0 = 2.5 on 3 ranks (13 steps: trapping, re-streaming of 1936 particles, field ionization). `bunches.txt` and `ionization.txt` are identical to the serial run, and the axis fields agree to rounding.
 
 **Current limits:**

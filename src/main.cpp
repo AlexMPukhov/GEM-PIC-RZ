@@ -144,18 +144,6 @@ int run(int argc, char** argv) {
     return 1;
   }
 
-  if (pipeline && cfg.numerics.beam_field == gem::BEAM_FIELD_MEAN) {
-    if (!cfg.numerics.beam_field_auto) {
-      std::fprintf(stderr, "error: numerics.beam_field = mean is not yet available in MPI runs; run on one rank "
-                           "(numerics.backend = openmp or cuda) or set numerics.beam_field = level\n");
-      return 1;
-    }
-    cfg.numerics.beam_field = gem::BEAM_FIELD_LEVEL;
-    if (gem::comm::rank() == 0)
-      std::fprintf(stderr, "warning: MPI run: the beam is pushed in the fields of s^0 (numerics.beam_field = "
-                           "level); planar undulators then need dz <= lambda_u/32\n");
-  }
-
   // keep a record of the run
   if (gem::comm::rank() == 0) {
     std::filesystem::create_directories(cfg.output.dir);

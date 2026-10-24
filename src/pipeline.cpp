@@ -27,6 +27,16 @@
 //  checkpoints (same files as a serial run). Storage: every rank keeps only the slices and
 //  half-cells [a - G, b + G) (G = beam_filter + 4); rank 0 assembles the whole window for output steps.
 //  With one rank the pipelined step is identical to Simulation::step().
+//
+//  numerics.beam_field = mean (Simulation::remeanBeam): the second push of the beam of step k, in
+//  (F^0 + F^1)/2, needs F^1 below the block, which the rank behind computes later. It is done at the start
+//  of step k+1 ("mean phase", meanPhase), when the R message of step k has brought F^1 below the block
+//  and the F message of step k+1 the results of the mean phase of the rank in front. The mean phase runs
+//  from the front to the rear like the first push: particles below lowZ continue on the rank behind, the
+//  halo copies complete the current below the block, and the raw current of the rank in front completes
+//  the filter. The beam particles of s^0 carry a tag (Particle::id, unused on the beam list); the rank where
+//  the second push of a particle ends decides with its first-push outcome, as Simulation::remeanBeam. The
+//  output of step k follows its mean phase; after the last step one more exchange does its mean phase.
 // ============================================================================
 #include "pipeline.hpp"
 
@@ -38,6 +48,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "comm.hpp"
@@ -52,6 +63,11 @@ namespace gem {
 namespace {
 enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103, TAG_BLOCK = 104 };
 constexpr int MIN_SLICES = 4;  // per rank without beam filter (the R message needs 3 processed slices)
+// beam_field = mean: tag of a beam particle of s^0 in Particle::id (streaming ids stay below 2^63)
+constexpr unsigned long long TAG_BIT = 1ULL << 63;
+inline bool tagged(const Particle& p) { return (p.id & TAG_BIT) != 0; }
+// first-push outcome of a tag (status of a record in fpKnow)
+enum { FP_BELOW = 0, FP_LOST = 2, FP_RESTREAMED = 3, FP_UNKNOWN = 4, FP_CARRIED = 5 };
 }  // namespace
 
 class PipelineRun {
@@ -82,6 +98,38 @@ class PipelineRun {
   std::chrono::steady_clock::time_point t0;
   int stepsDone = 0;
 
+  // ---- numerics.beam_field = mean (see the header): state kept from step k for its mean phase
+  bool mean = false;
+  std::vector<Particle> beamSave;          // own beam list at s^0 (tagged)
+  std::vector<Particle> haloSave, haloFp;  // halo copies at s^0 and their first push (status FP_UNKNOWN: continued)
+  std::unordered_map<unsigned long long, Particle> fpKnow;  // first-push outcomes by tag (status FP_*), except
+                                                            // those on the own beam list
+  std::vector<Particle> fpBackOut;  // first-push outcomes of the particles continued here from the front rank
+  std::vector<Particle> trapped;    // particles trapped here during the march, in order
+  Buffer trStash;                   // trapped deposits of the front rank into b-1, b-2
+  Buffer rearT;                     // trapped deposits of the rank behind into a-1, a
+  Currents Tq;                      // scratch: trapped deposits of this rank
+  Buffer meanOut;                   // results of the mean phase for the rank behind (sent with the F message)
+  bool meanReady = false;           // meanOut holds the results of a mean phase
+  bool frontMean = false;           // the received F message has a mean section
+  long long meanGuessed = 0;  // second pushes decided without the first-push outcome (it ended two ranks behind)
+  // F^1 of the absorber layer before the radial absorber (the second push uses it, as Simulation::step)
+  int iF = 0, iC = 0;               // first absorbed face / centre
+  std::vector<std::vector<cd>> preAbs;  // per stored slice n - sa: R_r of faces >= iF, R_phi of centres >= iC
+  std::vector<char> preHave;
+  void absorb(int n, double s);  // absorbSlice of fnew, keeping the values before it (mean)
+  void putPreAbs(Buffer& B, int n0, int n1) const;
+  void getPreAbs(Buffer& B, int n0, int n1);
+  void swapPreAbs();  // fold <-> values before the absorber (twice: unchanged)
+  // the beam push (Simulation::pushBeamParticle) from sub-step p.sub; F1 != null: the second push in
+  // (F0 + F1)/2. Returns true if the push must continue on the rank behind (zeta < lowZ).
+  int nsub = 1;
+  double pdz = 0, lowZ = -1e300;
+  void beamPushSetup();
+  bool pushBeamParticle(Particle& p, const Fields& F0, const Fields* F1, bool count);
+  Buffer recvFront(int k);
+  void meanPhase(Buffer* F);
+
   int kh(const Particle& p) const { return S.zv.nearest(p.zeta); }
   // half-cells of the rank behind whose beam current this rank needs (filter reach)
   bool inHalo(int k) const { return r > 0 && k >= a - pf - 1 && k <= a - 1; }
@@ -103,7 +151,8 @@ class PipelineRun {
   }
 
   void partition();
-  void step();
+  void step(Buffer& F);
+  void filterRaw(Currents& C, bool belowIntoC);
   void filterBeam();
   void sendFront(int k, const std::vector<Particle>& newForFront);
   void recvRear();
@@ -291,6 +340,17 @@ void PipelineRun::partition() {
   if (S.fold.n0 != std::max(0, sa) || S.c0b.k0 != std::max(0, sa))
     throw std::runtime_error("MPI pipeline: the simulation was not built for the block of this rank");
   for (auto* C : {&H, &Tr, &Rw, &Snap}) C->initRange(M, Nz, N, sa, sb);
+  mean = S.cfg.numerics.beam_field == BEAM_FIELD_MEAN;
+  if (mean) {
+    Tq.initRange(M, Nz, N, sa, sb);
+    const double ra = S.cfg.grid.r_absorber;
+    iF = S.g.N + 1;
+    iC = S.g.N;
+    for (int i = S.g.N; i >= 0 && S.g.rho[i] > ra; --i) iF = i;
+    for (int i = S.g.N - 1; i >= 0 && S.g.c[i] > ra; --i) iC = i;
+    preAbs.assign(size_t(sb - sa + 1), {});
+    preHave.assign(size_t(sb - sa + 1), 0);
+  }
   predBelowR.assign(S.predR.size(), cd(0.0));
   predBelowP.assign(S.predP.size(), cd(0.0));
   predRfront.assign(S.predR.size(), cd(0.0));
@@ -326,6 +386,49 @@ void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
   }
 }
 
+void PipelineRun::absorb(int n, double s) {
+  if (mean && iF + iC <= 2 * S.g.N) {
+    const int nf = S.g.N + 1 - iF, nc = S.g.N - iC;
+    std::vector<cd>& v = preAbs[size_t(n - sa)];
+    v.resize(size_t(S.M + 1) * (nf + nc));
+    for (int m = 0; m <= S.M; ++m) {
+      std::copy_n(&S.fnew.Rr[S.fnew.f(m, n, iF)], nf, &v[size_t(m) * (nf + nc)]);
+      std::copy_n(&S.fnew.Rp[S.fnew.c(m, n, iC)], nc, &v[size_t(m) * (nf + nc) + nf]);
+    }
+    preHave[size_t(n - sa)] = 1;
+  }
+  absorbSlice(S.fnew, n, s);
+}
+
+void PipelineRun::putPreAbs(Buffer& B, int n0, int n1) const {
+  for (int n = n0; n <= n1; ++n) {
+    const bool h = preHave[size_t(n - sa)] != 0;
+    B.put<int>(h ? 1 : 0);
+    if (h) B.putVec(preAbs[size_t(n - sa)]);
+  }
+}
+
+void PipelineRun::getPreAbs(Buffer& B, int n0, int n1) {
+  for (int n = n0; n <= n1; ++n) {
+    const bool h = B.get<int>() != 0;
+    preHave[size_t(n - sa)] = h ? 1 : 0;
+    if (h) preAbs[size_t(n - sa)] = B.getVec<cd>();
+  }
+}
+
+void PipelineRun::swapPreAbs() {
+  const int nf = S.g.N + 1 - iF, nc = S.g.N - iC;
+  for (int n = std::max(0, sa); n <= std::min(sb, S.Nz); ++n) {
+    if (!preHave[size_t(n - sa)]) continue;
+    std::vector<cd>& v = preAbs[size_t(n - sa)];
+    for (int m = 0; m <= S.M; ++m) {
+      std::swap_ranges(&v[size_t(m) * (nf + nc)], &v[size_t(m) * (nf + nc)] + nf, &S.fold.Rr[S.fold.f(m, n, iF)]);
+      std::swap_ranges(&v[size_t(m) * (nf + nc) + nf], &v[size_t(m) * (nf + nc) + nf] + nc,
+                       &S.fold.Rp[S.fold.c(m, n, iC)]);
+    }
+  }
+}
+
 bool PipelineRun::finiteOwn() const {
   for (int m = 0; m <= S.M; ++m)
     for (int n = a; n < b; ++n) {
@@ -342,9 +445,64 @@ bool PipelineRun::finiteOwn() const {
 }
 
 // ----------------------------------------------------------------------------
-// one step s^0 -> s^1 on the slices [a, b) (port of Simulation::step)
+// beam push of one particle (Simulation::pushBeamParticle)
 // ----------------------------------------------------------------------------
-void PipelineRun::step() {
+void PipelineRun::beamPushSetup() {
+  nsub = std::max(1, int(std::ceil(S.Delta / S.cfg.numerics.beam_dz_max)));
+  pdz = S.Delta / nsub;
+  // lowest zeta whose current this rank needs: centre of half-cell a-pf-2
+  lowZ = (r > 0 && a - pf - 2 >= -1) ? S.zv.centre(a - pf - 2) : -1e300;
+}
+
+bool PipelineRun::pushBeamParticle(Particle& p, const Fields& F0, const Fields* F1, bool count) {
+  const auto& num = S.cfg.numerics;
+  const double rmax = S.g.rho[S.g.N];
+  for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
+    if (p.zeta < lowZ) { p.sub = sub; return true; }
+    double gm = gammaOf(p);
+    const double vz = p.uz / gm;
+    if (vz < num.vz_min) { p.status = 3; if (count) ++myRestreamed; break; }
+    const double dt = pdz / vz;
+    double w;
+    const int na = S.zv.cell(p.zeta, w);
+    if (na < 0 || na >= S.Nz) { p.status = 2; break; }
+    EB f = S.gather(F0, na, 1.0 - w, na + 1, w, p.x, p.y);
+    if (F1) {  // numerics.beam_field = mean, second push: (F^0 + F^1)/2 (as Simulation::pushBeamParticle)
+      const double wNew = 0.5;
+      const EB f1 = S.gather(*F1, na, 1.0 - w, na + 1, w, p.x, p.y);
+      const double bo = 1.0 - wNew;
+      f = {bo * f.Ex + wNew * f1.Ex, bo * f.Ey + wNew * f1.Ey, bo * f.Ez + wNew * f1.Ez,
+           bo * f.Bx + wNew * f1.Bx, bo * f.By + wNew * f1.By, bo * f.Bz + wNew * f1.Bz};
+    }
+    addExternal(S.ext, p.x, p.y, p.z, f, pdz);
+    if (num.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
+    else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+    gm = gammaOf(p);
+    p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
+    p.zeta += (p.uz / gm - 1.0) * dt;
+    p.z += pdz;
+    if (p.zeta < 0.0 || std::hypot(p.x, p.y) >= rmax) p.status = 2;
+  }
+  p.sub = 0;
+  return false;
+}
+
+// F message of step k from the front rank: header (step, last step, wall-time stop); the rest is read by
+// meanPhase and step
+Buffer PipelineRun::recvFront(int k) {
+  Buffer B = comm::recv(r + 1, TAG_F);
+  if (B.get<int>() != k) throw std::runtime_error("MPI pipeline: step mismatch (F)");
+  lastStep = std::min(lastStep, B.get<int>());
+  wallStop = wallStop || B.get<int>() != 0;
+  frontMean = mean && B.get<int>() != 0;  // the message has a mean section (not in the first step)
+  return B;
+}
+
+// ----------------------------------------------------------------------------
+// one step s^0 -> s^1 on the slices [a, b) (port of Simulation::step); F: the F message of the front rank
+// (header and mean section read)
+// ----------------------------------------------------------------------------
+void PipelineRun::step(Buffer& F) {
   const int N = S.g.N, M = S.M, Nz = S.Nz;
   S.beginStep();
   const double Delta = S.Delta;
@@ -360,15 +518,20 @@ void PipelineRun::step() {
   S.pendingNext.clear();
   if (r > 0)
     for (int k = std::max(0, a - pf - 2); k <= a - 1; ++k) H.zeroHalf(k);
+  if (mean) {  // tags of the beam particles of s^0; the state for the mean phase of this step
+    for (size_t i = 0; i < S.beam.size(); ++i) S.beam[i].id = TAG_BIT | ((unsigned long long)r << 40) | i;
+    beamSave = S.beam;
+    fpKnow.clear();
+    fpBackOut.clear();
+    trapped.clear();
+    std::fill(preHave.begin(), preHave.end(), 0);
+  }
 
   // ---- from the front rank: slice b, its prediction, currents, particles
   S.stream.clear();
   inContinue.clear(); inFinished.clear(); inTransfer.clear();
   if (r < P - 1) {
-    Buffer B = comm::recv(r + 1, TAG_F);
-    if (B.get<int>() != k) throw std::runtime_error("MPI pipeline: step mismatch (F)");
-    lastStep = std::min(lastStep, B.get<int>());
-    wallStop = wallStop || B.get<int>() != 0;
+    Buffer& B = F;
     getSlice(B, S.fnew, b);
     predRfront = B.getVec<cd>();
     predPfront = B.getVec<cd>();
@@ -376,6 +539,11 @@ void PipelineRun::step() {
     getHalf(B, S.c1b, b - 2, true);
     getHalf(B, Tr, b - 1, false);     // its trapped deposits (added after the filter)
     getHalf(B, Tr, b - 2, false);
+    if (mean) {  // kept for the mean phase of this step
+      trStash = Buffer();
+      putHalf(trStash, Tr, b - 1);
+      putHalf(trStash, Tr, b - 2);
+    }
     for (int k = b; k < b + pf; ++k) getHalf(B, Rw, k, false);  // its raw beam current above b
     S.stream = B.getVec<Particle>();
     inContinue = B.getVec<Particle>();
@@ -384,42 +552,38 @@ void PipelineRun::step() {
   }
 
   // ---- beam push (fields of s^0; slices a-2 ... b are available)
-  const int nsub = std::max(1, int(std::ceil(Delta / num.beam_dz_max)));
-  const double dz = Delta / nsub;
-  const double rmax = S.g.rho[N];
-  // lowest zeta whose current this rank needs: centre of half-cell a-pf-2
-  const double lowZ = (r > 0 && a - pf - 2 >= -1) ? zv.centre(a - pf - 2) : -1e300;
+  beamPushSetup();
   // returns true if the push must continue on the rank behind (zeta < lowZ)
-  auto push = [&](Particle& p, bool count) {
-    for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
-      if (p.zeta < lowZ) { p.sub = sub; return true; }
-      double gm = gammaOf(p);
-      const double vz = p.uz / gm;
-      if (vz < num.vz_min) { p.status = 3; if (count) ++myRestreamed; break; }
-      const double dt = dz / vz;
-      double w;
-      const int na = zv.cell(p.zeta, w);
-      if (na < 0 || na >= Nz) { p.status = 2; break; }
-      EB f = S.gather(S.fold, na, 1.0 - w, na + 1, w, p.x, p.y);
-      addExternal(S.ext, p.x, p.y, p.z, f, dz);
-      if (num.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
-      else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
-      gm = gammaOf(p);
-      p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
-      p.zeta += (p.uz / gm - 1.0) * dt;
-      p.z += dz;
-      if (p.zeta < 0.0 || std::hypot(p.x, p.y) >= rmax) p.status = 2;
-    }
-    p.sub = 0;
-    return false;
-  };
+  auto push = [&](Particle& p, bool count) { return pushBeamParticle(p, S.fold, nullptr, count); };
   std::vector<Particle> newBeam, handCont, handFin, transferDown;
-  auto afterPush = [&](Particle& p) {
-    if (p.status == 3) { Particle q = p; q.status = 0; S.pending.push_back(q); return; }
-    if (p.status != 0) return;
-    if (beamOwner(p) == r) { newBeam.push_back(p); return; }
+  // beam_field = mean: the first-push outcome of a tag that does not stay on this rank's list (fpKnow), and
+  // for particles continued here from the front rank also in the report to it (fpBackOut)
+  auto record = [&](const Particle& p, int st, bool fromFront) {
+    if (!mean) return;
+    Particle o = p;
+    o.status = st;
+    fpKnow[p.id] = o;
+    if (fromFront) fpBackOut.push_back(o);
+  };
+  auto afterPush = [&](Particle& p, bool fromFront) {
+    if (p.status == 3) {
+      Particle q = p; q.status = 0; S.pending.push_back(q);
+      record(p, FP_RESTREAMED, fromFront);
+      return;
+    }
+    if (p.status != 0) { record(p, FP_LOST, fromFront); return; }
+    if (beamOwner(p) == r) {
+      newBeam.push_back(p);
+      if (mean && fromFront) { Particle o = p; o.status = FP_BELOW; fpBackOut.push_back(o); }
+      return;
+    }
     if (inHalo(kh(p))) S.depositBeamParticle(H, p);  // completes the current below the block
     handFin.push_back(p);
+    record(p, FP_BELOW, fromFront);
+  };
+  auto continued = [&](const Particle& p, bool fromFront) {
+    handCont.push_back(p);
+    if (mean && fromFront) { Particle o = p; o.status = FP_UNKNOWN; fpBackOut.push_back(o); }
   };
   if (threads > 1) {
     // the push of every particle is independent; the bookkeeping follows in the serial order
@@ -435,33 +599,43 @@ void PipelineRun::step() {
     }
     myRestreamed += restreamed;
     for (size_t i = 0; i < S.beam.size(); ++i) {
-      if (cont[i]) handCont.push_back(S.beam[i]);
-      else afterPush(S.beam[i]);
+      if (cont[i]) continued(S.beam[i], false);
+      else afterPush(S.beam[i], false);
     }
     for (auto& p : inContinue) {
-      if (push(p, true)) handCont.push_back(p);
-      else afterPush(p);
+      if (push(p, true)) continued(p, true);
+      else afterPush(p, true);
     }
   } else {
-    for (auto* list : {&S.beam, &inContinue})
-      for (auto& p : *list) {
-        if (push(p, true)) handCont.push_back(p);
-        else afterPush(p);
-      }
+    for (auto& p : S.beam) {
+      if (push(p, true)) continued(p, false);
+      else afterPush(p, false);
+    }
+    for (auto& p : inContinue) {
+      if (push(p, true)) continued(p, true);
+      else afterPush(p, true);
+    }
   }
   for (const auto& p : newBeam) S.depositBeamParticle(S.c1b, p);
   for (const auto& p : inFinished) {  // pushed by a rank in front
     if (beamOwner(p) == r) { S.depositBeamParticle(S.c1b, p); newBeam.push_back(p); }
-    else { if (inHalo(kh(p))) S.depositBeamParticle(H, p); handFin.push_back(p); }
+    else {
+      if (inHalo(kh(p))) S.depositBeamParticle(H, p);
+      handFin.push_back(p);
+      record(p, FP_BELOW, false);
+    }
   }
   for (const auto& p : inTransfer) {  // trapped elsewhere, already deposited
     if (beamOwner(p) == r) newBeam.push_back(p);
     else transferDown.push_back(p);
   }
   S.beam.swap(newBeam);
+  if (mean) { haloSave = halo; haloFp.clear(); }
   for (const auto& p0 : halo) {  // copies of rank r-1's particles near the boundary
     Particle q = p0;
-    if (!push(q, false) && q.status == 0 && inHalo(kh(q))) S.depositBeamParticle(H, q);
+    const bool c = push(q, false);
+    if (mean) { haloFp.push_back(q); if (c) haloFp.back().status = FP_UNKNOWN; }
+    if (!c && q.status == 0 && inHalo(kh(q))) S.depositBeamParticle(H, q);
   }
   filterBeam();
 
@@ -563,6 +737,7 @@ void PipelineRun::step() {
         else if (isIon(t.sp)) t.sp = SPECIES_TRAPPED_ION;
         S.depositBeamParticle(S.c1b, t);
         ++myTrapped;
+        if (mean) trapped.push_back(t);  // deposited again after the second push (Simulation::remeanBeam)
         const int o = beamOwner(t);
         if (o == r) S.beam.push_back(t);
         else if (o > r) newForFront.push_back(t);
@@ -586,13 +761,13 @@ void PipelineRun::step() {
           S.fnew.Rp[S.fnew.c(m, n + 1, i)] -= q * (jt - S.predPprev[m * N + i]);
         }
       }
-      absorbSlice(S.fnew, n + 1, s1);  // slice n+1 is final
+      absorb(n + 1, s1);  // slice n+1 is final
     }
     S.predRprev.swap(S.predR);
     S.predPprev.swap(S.predP);
     if (++done == pf + 3 && r < P - 1) sendFront(k, newForFront);
   }
-  if (r == 0) absorbSlice(S.fnew, 0, s1);
+  if (r == 0) absorb(0, s1);
   for (auto& v : S.exitStates) std::fill(v.begin(), v.end(), 0.0);
   if (r == 0)
     for (const auto& p : S.stream)
@@ -614,6 +789,10 @@ void PipelineRun::step() {
     B.put<int>(k);
     B.put<int>(lastStep);
     B.put<int>(wallStop ? 1 : 0);
+    if (mean) {  // results of the mean phase of the previous step
+      B.put<int>(meanReady ? 1 : 0);
+      if (meanReady) B.putRaw(meanOut.data.data(), meanOut.data.size());
+    }
     putSlice(B, S.fnew, a);
     B.putVec(S.predRprev);  // = prediction made at slice a
     B.putVec(S.predPprev);
@@ -643,20 +822,47 @@ void PipelineRun::step() {
 // [a, a+pf-1] are kept for the rear rank (Snap); c1b below a is reset and then
 // collects only the deposits of particles trapped during the march.
 void PipelineRun::filterBeam() {
+  const int N = S.g.N, M = S.M;
+  filterRaw(S.c1b, false);
+  if (r > 0) {  // from now on: only the deposits of trapped particles below the block
+    S.c1b.zeroHalf(a - 1);
+    S.c1b.zeroHalf(a - 2);
+  }
+  // deposits of the particles trapped at the lowest slices of the front rank
+  if (r < P - 1)
+    for (int k = b - 2; k <= b - 1; ++k) {
+      for (int m = 0; m <= M; ++m) {
+        for (int i = 0; i <= N; ++i) S.c1b.jr[S.c1b.f(m, k, i)] += Tr.jr[Tr.f(m, k, i)];
+        for (int i = 0; i < N; ++i) {
+          S.c1b.jp[S.c1b.c(m, k, i)] += Tr.jp[Tr.c(m, k, i)];
+          S.c1b.jz[S.c1b.c(m, k, i)] += Tr.jz[Tr.c(m, k, i)];
+        }
+      }
+      for (int i = 0; i < N; ++i) {
+        S.c1b.rho[S.c1b.d(k, i)] += Tr.rho[Tr.d(k, i)];
+        S.c1b.rhoi[S.c1b.d(k, i)] += Tr.rhoi[Tr.d(k, i)];
+      }
+    }
+}
+
+// The filter itself on the raw current C (own deposits): the raw current of [a-2, a+pf-1] is kept in Snap;
+// the filtered current of half-cell a-1 goes to predBelowR / predBelowP (the prediction at slice a), or with
+// belowIntoC into C itself (all components: the mean phase builds the final current of s^1 there).
+void PipelineRun::filterRaw(Currents& C, bool belowIntoC) {
   const int N = S.g.N, M = S.M, Nz = S.Nz;
   const int k0 = (r > 0) ? a - 2 : a, k1 = std::min(b - 1, a + pf - 1);
   for (int k = k0; k <= k1; ++k) {
     Snap.zeroHalf(k);
     for (int m = 0; m <= M; ++m) {
-      for (int i = 0; i <= N; ++i) Snap.jr[Snap.f(m, k, i)] = S.c1b.jr[S.c1b.f(m, k, i)];
+      for (int i = 0; i <= N; ++i) Snap.jr[Snap.f(m, k, i)] = C.jr[C.f(m, k, i)];
       for (int i = 0; i < N; ++i) {
-        Snap.jp[Snap.c(m, k, i)] = S.c1b.jp[S.c1b.c(m, k, i)];
-        Snap.jz[Snap.c(m, k, i)] = S.c1b.jz[S.c1b.c(m, k, i)];
+        Snap.jp[Snap.c(m, k, i)] = C.jp[C.c(m, k, i)];
+        Snap.jz[Snap.c(m, k, i)] = C.jz[C.c(m, k, i)];
       }
     }
     for (int i = 0; i < N; ++i) {
-      Snap.rho[Snap.d(k, i)] = S.c1b.rho[S.c1b.d(k, i)];
-      Snap.rhoi[Snap.d(k, i)] = S.c1b.rhoi[S.c1b.d(k, i)];
+      Snap.rho[Snap.d(k, i)] = C.rho[C.d(k, i)];
+      Snap.rhoi[Snap.d(k, i)] = C.rhoi[C.d(k, i)];
     }
   }
   const int klo = std::max(0, (r > 0) ? a - pf - 1 : a), khi = std::min(Nz - 1, b + pf - 1);
@@ -681,33 +887,178 @@ void PipelineRun::filterBeam() {
           }
         }
         for (int k = a; k < b; ++k) own[idx(m, k, i)] = col[k - klo];
-        if (below && r > 0) (*below)[size_t(m) * L + i] = col[a - 1 - klo];
-      }
-  };
-  auto fi = [&](int m, int k, int i) { return S.c1b.f(m, k, i); };
-  auto ci = [&](int m, int k, int i) { return S.c1b.c(m, k, i); };
-  run(S.c1b.jr, H.jr, Rw.jr, &predBelowR, N + 1, fi);
-  run(S.c1b.jp, H.jp, Rw.jp, &predBelowP, N, ci);
-  run(S.c1b.jz, H.jz, Rw.jz, nullptr, N, ci);
-  if (r > 0) {  // from now on: only the deposits of trapped particles below the block
-    S.c1b.zeroHalf(a - 1);
-    S.c1b.zeroHalf(a - 2);
-  }
-  // deposits of the particles trapped at the lowest slices of the front rank
-  if (r < P - 1)
-    for (int k = b - 2; k <= b - 1; ++k) {
-      for (int m = 0; m <= M; ++m) {
-        for (int i = 0; i <= N; ++i) S.c1b.jr[S.c1b.f(m, k, i)] += Tr.jr[Tr.f(m, k, i)];
-        for (int i = 0; i < N; ++i) {
-          S.c1b.jp[S.c1b.c(m, k, i)] += Tr.jp[Tr.c(m, k, i)];
-          S.c1b.jz[S.c1b.c(m, k, i)] += Tr.jz[Tr.c(m, k, i)];
+        if (r > 0) {
+          if (belowIntoC) own[idx(m, a - 1, i)] = col[a - 1 - klo];
+          else if (below) (*below)[size_t(m) * L + i] = col[a - 1 - klo];
         }
       }
-      for (int i = 0; i < N; ++i) {
-        S.c1b.rho[S.c1b.d(k, i)] += Tr.rho[Tr.d(k, i)];
-        S.c1b.rhoi[S.c1b.d(k, i)] += Tr.rhoi[Tr.d(k, i)];
-      }
+  };
+  auto fi = [&](int m, int k, int i) { return C.f(m, k, i); };
+  auto ci = [&](int m, int k, int i) { return C.c(m, k, i); };
+  run(C.jr, H.jr, Rw.jr, &predBelowR, N + 1, fi);
+  run(C.jp, H.jp, Rw.jp, &predBelowP, N, ci);
+  run(C.jz, H.jz, Rw.jz, nullptr, N, ci);
+}
+
+// ----------------------------------------------------------------------------
+// numerics.beam_field = mean: the second push of the step that just ended (fold = F^1, fnew = F^0, the beam
+// list = the first-push results and the trapped particles; see the header). F: the F message of the next
+// step with its mean section (null: the front rank). The results for the rank behind go to meanOut.
+// ----------------------------------------------------------------------------
+void PipelineRun::meanPhase(Buffer* F) {
+  using u64 = unsigned long long;
+  swapPreAbs();  // F^1 before the absorber, as Simulation::step pushes before absorber()
+  beamPushSetup();
+  const Fields& F0 = S.fnew;
+  const Fields& F1 = S.fold;
+  if (r > 0)
+    for (int k = std::max(0, a - pf - 2); k <= a - 1; ++k) H.zeroHalf(k);
+  S.c0b.zero();  // the beam current of s^1, deposited anew
+  std::vector<Particle> inFin, inCont, inCarry;
+  std::vector<u64> inDrop;
+  if (F && frontMean) {
+    getHalf(*F, S.c0b, b - 1, true);  // raw deposits of the front rank's particles below its block
+    getHalf(*F, S.c0b, b - 2, true);
+    for (int kk = b; kk < b + pf; ++kk) getHalf(*F, Rw, kk, false);  // its raw current above b
+    inFin = F->getVec<Particle>();
+    inCont = F->getVec<Particle>();
+    inCarry = F->getVec<Particle>();
+    inDrop = F->getVec<u64>();
+  }
+  for (const auto& c : inCarry) fpKnow[c.id] = c;
+
+  // the beam list: first-push results (tagged), particles trapped in the step (no tag)
+  std::vector<Particle>& L = S.beam;
+  std::unordered_map<u64, size_t> at;
+  for (size_t i = 0; i < L.size(); ++i)
+    if (tagged(L[i])) at[L[i].id] = i;
+  std::vector<char> erased(L.size(), 0), fin(L.size(), 0);
+  std::vector<Particle> outFin, outCont, outCarry, newHalo;
+  std::vector<u64> outDrop;
+  auto held = [&](u64 t) -> long long {
+    const auto it = at.find(t);
+    return (it != at.end() && !erased[it->second]) ? (long long)it->second : -1;
+  };
+  auto eraseHere = [&](u64 t) {
+    const long long i = held(t);
+    if (i < 0 || fin[size_t(i)]) return false;
+    erased[size_t(i)] = 1;
+    return true;
+  };
+  // the final state X of a particle: on the own list (in place of its first-push state), or towards its owner
+  auto route = [&](Particle X) {
+    X.status = 0;
+    X.sub = 0;
+    if (beamOwner(X) == r) {
+      const long long i = held(X.id);
+      if (i >= 0) { L[size_t(i)] = X; fin[size_t(i)] = 1; }
+      else { at[X.id] = L.size(); L.push_back(X); erased.push_back(0); fin.push_back(1); }
+      return;
     }
+    eraseHere(X.id);
+    outFin.push_back(X);
+    if (inHalo(kh(X))) { S.depositBeamParticle(H, X); newHalo.push_back(X); }  // completes the current below
+  };
+  // Simulation::remeanBeam: the second-push state s if it survived, else the first-push state; nothing if the
+  // first push lost the particle or returned it to streaming
+  auto decide = [&](const Particle& s) {
+    const u64 t = s.id;
+    int where = FP_UNKNOWN;
+    Particle fp{};
+    if (held(t) >= 0) where = -1;  // on the own list
+    else if (const auto k = fpKnow.find(t); k != fpKnow.end()) { fp = k->second; where = fp.status; }
+    if (where == FP_LOST || where == FP_RESTREAMED) return;
+    if (s.status == 0) {
+      if (where == FP_BELOW || where == FP_UNKNOWN) outDrop.push_back(t);  // the first-push state is elsewhere
+      if (where == FP_UNKNOWN) ++meanGuessed;  // (assumed to have survived)
+      route(s);
+    } else if (where == FP_CARRIED) {
+      route(fp);
+    }
+  };
+  // a second push that continues on the rank behind takes the first-push outcome along if it is known here
+  auto carry = [&](const Particle& s) {
+    const long long i = held(s.id);
+    if (i >= 0) {
+      Particle c = L[size_t(i)];
+      c.status = FP_CARRIED;
+      outCarry.push_back(c);
+      erased[size_t(i)] = 1;
+    } else if (const auto k = fpKnow.find(s.id); k != fpKnow.end() && k->second.status != FP_BELOW &&
+                                                   k->second.status != FP_UNKNOWN) {
+      outCarry.push_back(k->second);
+    }
+  };
+
+  // ---- final states decided by the ranks in front
+  for (const auto& X : inFin) route(X);
+  // ---- second push of the own beam of s^0 and of the pushes continued from the front rank
+  std::vector<Particle>* lists[2] = {&beamSave, &inCont};
+  for (auto* list : lists) {
+    std::vector<char> cont(list->size());
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(threads) schedule(static) if (threads > 1)
+#endif
+    for (long long i = 0; i < (long long)list->size(); ++i)
+      cont[size_t(i)] = pushBeamParticle((*list)[size_t(i)], F0, &F1, false) ? 1 : 0;
+    for (size_t i = 0; i < list->size(); ++i) {
+      const Particle& s = (*list)[i];
+      if (cont[i]) { outCont.push_back(s); carry(s); }
+      else decide(s);
+    }
+  }
+  // ---- first-push states to remove (their particle was decided elsewhere)
+  for (const u64 t : inDrop)
+    if (!eraseHere(t) && r > 0) outDrop.push_back(t);
+  // ---- the halo copies (particles of the rank behind near the boundary), as decide()
+  for (size_t i = 0; i < haloSave.size(); ++i) {
+    Particle s = haloSave[i];
+    if (pushBeamParticle(s, F0, &F1, false)) continue;
+    const Particle& fp = haloFp[i];
+    if (fp.status == FP_LOST || fp.status == FP_RESTREAMED) continue;
+    Particle X = (s.status == 0) ? s : fp;
+    if (X.status != 0) continue;
+    X.sub = 0;
+    if (inHalo(kh(X))) { S.depositBeamParticle(H, X); newHalo.push_back(X); }
+  }
+  if (r > 0) halo.insert(halo.end(), newHalo.begin(), newHalo.end());  // + the trapped ones (R message)
+  // ---- the new list
+  {
+    std::vector<Particle> nl;
+    nl.reserve(L.size());
+    for (size_t i = 0; i < L.size(); ++i)
+      if (!erased[i]) nl.push_back(L[i]);
+    L.swap(nl);
+  }
+  // ---- the beam current of s^1: the particles of the first push filtered, the trapped ones added unfiltered
+  for (const auto& p : L)
+    if (tagged(p)) S.depositBeamParticle(S.c0b, p);
+  filterRaw(S.c0b, true);
+  if (r < P - 1) {
+    trStash.pos = 0;
+    getHalf(trStash, S.c0b, b - 1, true);
+    getHalf(trStash, S.c0b, b - 2, true);
+  }
+  for (const auto& t : trapped) S.depositBeamParticle(S.c0b, t);
+  if (r > 0) {
+    rearT.pos = 0;
+    getHalf(rearT, S.c0b, a - 1, true);
+    getHalf(rearT, S.c0b, a, true);
+  }
+  swapPreAbs();  // back to F^1 after the absorber
+  // ---- for the rank behind (with the F message of the next step)
+  meanOut = Buffer();
+  if (r > 0) {
+    putHalf(meanOut, Snap, a - 1);  // raw deposits below the block
+    putHalf(meanOut, Snap, a - 2);
+    for (int kk = a; kk < a + pf; ++kk) putHalf(meanOut, Snap, kk);  // raw current for its filter
+    meanOut.putVec(outFin);
+    meanOut.putVec(outCont);
+    meanOut.putVec(outCarry);
+    meanOut.putVec(outDrop);
+  }
+  meanReady = true;
+  fpKnow.clear();
 }
 
 // after the first pf+3 slices: what the front rank needs for its next step
@@ -719,11 +1070,21 @@ void PipelineRun::sendFront(int k, const std::vector<Particle>& newForFront) {
   putHalf(B, S.c1b, b - 1);
   putHalf(B, S.c1s, b - 1);
   putHalf(B, S.c1b, b);  // deposits of the particles trapped at slice b-1
+  // halo copies for the front rank. beam_field = mean: only the particles trapped in this step (final); the
+  // front rank pushes its own copies of s^0 a second time (meanPhase)
   std::vector<Particle> window;
   for (const auto& p : S.beam)
-    if (kh(p) >= b - pf - 1 && kh(p) <= b - 1) window.push_back(p);
+    if (kh(p) >= b - pf - 1 && kh(p) <= b - 1 && !(mean && tagged(p))) window.push_back(p);
   B.putVec(window);
   B.putVec(newForFront);
+  if (mean) {
+    putPreAbs(B, b - pf - 2, b);  // F^1 of the absorber layer before the absorber
+    // deposits of the particles trapped here so far into half-cell b-1 (alone)
+    Tq.zero();
+    for (const auto& t : trapped) S.depositBeamParticle(Tq, t);
+    putHalf(B, Tq, b - 1);
+    B.putVec(fpBackOut);  // first-push outcomes of the particles the front rank continued here
+  }
   comm::send(r + 1, TAG_R, std::move(B));
 }
 
@@ -735,10 +1096,19 @@ void PipelineRun::recvRear() {
   getSliceR(B, S.fold, a);
   getHalf(B, S.c0b, a - 1, false);
   getHalf(B, S.c0s, a - 1, false);
-  getHalf(B, S.c0b, a, true);
+  if (mean) getHalf(B, Tq, a, false);  // the mean phase builds c0b anew (rearT)
+  else getHalf(B, S.c0b, a, true);
   halo = B.getVec<Particle>();
   const std::vector<Particle> nb = B.getVec<Particle>();
   S.beam.insert(S.beam.end(), nb.begin(), nb.end());
+  if (mean) {
+    getPreAbs(B, a - pf - 2, a);
+    getHalf(B, Tq, a - 1, false);
+    rearT = Buffer();
+    putHalf(rearT, Tq, a - 1);
+    putHalf(rearT, Tq, a);
+    for (const auto& o : B.getVec<Particle>()) fpKnow[o.id] = o;  // outcomes of the particles continued there
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -914,20 +1284,45 @@ int PipelineRun::run() {
     for (int k = k0 + 1; k <= lastStep; ++k) {
       if (k > k0 + 1 && r > 0) {
         recvRear();
-        sendDiag(k - 1);
+        if (!mean) sendDiag(k - 1);
       }
-      step();
+      Buffer F;
+      if (r < P - 1) F = recvFront(k);
+      if (k > k0 + 1 && mean) {  // the second push of step k-1, then its output
+        meanPhase(r < P - 1 ? &F : nullptr);
+        if (r > 0) sendDiag(k - 1);
+        else reportStep(k - 1);
+      }
+      step(F);
       if (!finiteOwn()) {
         std::fprintf(stderr, "non-finite field at step %d on rank %d\n", S.step_no, r);
         comm::abort(2);
       }
-      if (r == 0) reportStep(k);
+      if (r == 0 && !mean) reportStep(k);
     }
-    if (r > 0 && lastStep > k0) {
-      recvRear();
-      sendDiag(lastStep);
+    if (lastStep > k0) {
+      if (r > 0) recvRear();
+      if (mean) {  // the second push of the last step: one more exchange from the front to the rear
+        Buffer F;
+        if (r < P - 1) F = recvFront(lastStep + 1);
+        meanPhase(r < P - 1 ? &F : nullptr);
+        if (r > 0) {
+          Buffer B;
+          B.put<int>(lastStep + 1);
+          B.put<int>(lastStep);
+          B.put<int>(wallStop ? 1 : 0);
+          B.put<int>(1);
+          B.putRaw(meanOut.data.data(), meanOut.data.size());
+          comm::send(r - 1, TAG_F, std::move(B));
+        }
+      }
+      if (r > 0) sendDiag(lastStep);
+      else if (mean) reportStep(lastStep);
     }
     comm::waitAll();
+    if (meanGuessed > 0)
+      std::printf("rank %d, beam_field = mean: %lld second pushes ended where the first push of the particle was "
+                  "not known (it had continued two ranks behind); taken as survived\n", r, meanGuessed);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "error on rank %d: %s\n", r, e.what());
     std::fflush(stderr);
