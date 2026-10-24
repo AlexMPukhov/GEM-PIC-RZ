@@ -247,6 +247,7 @@ void Simulation::report(const DiagSums& D, bool files) {
   if (files && cfg.output.text) writeFiles();
   if (files && cfg.output.hdf5) writeHdf5();
   if (files && cfg.output.openpmd) writeOpenPMD();
+  if (lasyDue(step_no, s0 >= cfg.grid.z_end - cfg.grid.endTol())) std::printf("LASY file: %s\n", writeLasy().c_str());
 }
 
 // After a restart from step N the tables may hold lines of steps > N from the

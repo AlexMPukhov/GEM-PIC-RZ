@@ -138,6 +138,30 @@ class Simulation {
     const cd G = face ? ffGf[size_t(n) * (g.N + 1) + i] : ffGc[size_t(n) * g.N + i];
     return (G * std::polar(1.0, -cfg.flying_focus.kappa() * s)).real();
   }
+  // lasers from LASY / openPMD envelope files (laser.file): field evaluators (null for the other lasers)
+  std::vector<std::unique_ptr<LaserFileField>> fileFields;
+  // inject = boundary: incident field of the absorber layer at level incS, prepared for the slices [incN0, incN1):
+  // incF[(m * Nz + n) * nLF + i - iaF] (faces i = iaF..N, R_r), incC[(m * Nz + n) * nLC + i - iaC] (centres, R_phi)
+  bool hasIncident = false;
+  int iaF = 0, iaC = 0, nLF = 0, nLC = 0, incN0 = 0, incN1 = 0;
+  std::vector<cd> incF, incC;
+  double incS = 0.0;
+  void prepareIncident(double s, int n0, int n1);
+  cd incidentF(int m, int n, int i) const {
+    return (hasIncident && i >= iaF) ? incF[(size_t(m) * Nz + n) * nLF + i - iaF] : cd(0.0);
+  }
+  cd incidentC(int m, int n, int i) const {
+    return (hasIncident && i >= iaC) ? incC[(size_t(m) * Nz + n) * nLC + i - iaC] : cd(0.0);
+  }
+  // LASY output (output.lasy): lab time of slice zeta at level s is s - zeta + lasyTref (the time base of the
+  // first file laser, else 0)
+  double lasyTref = 0.0;
+ public:
+  bool lasyDue(int step, bool last) const {
+    return cfg.output.lasy && ((cfg.output.lasy_every > 0 && step % cfg.output.lasy_every == 0) || last);
+  }
+  std::string writeLasy();  // output_hdf5.cpp: <dir>/lasy/laser_NNNNN.h5, returns the path
+ private:
   void initBunches();
   void initBunchFields();
   void addBeamFields(double sign, bool deckGamma);  // co-moving self-fields of the beam list

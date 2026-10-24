@@ -121,9 +121,10 @@ Analysis (`benchmarks/flying_focus/`):
    k_⊥² = ω² − ω_p² − (ω/v_f − κ)², and the pattern moves at v_f relative to the window. Code: `setupFlyingFocus`
    and `ffInc`, where the s-phase becomes frequency dependent, so G(r, ζ, s) must be summed per step in the layer.
    Then study v_f slightly above c (to compensate for the wake phase velocity).
-6. **Finite flying focus from a real optic** (axiparabola + echelon or chirp): compute R_inc by propagating the field
-   behind the optic with a Hankel transform per frequency. Only the layer and the initial box are needed. The
-   boundary method stays the same.
+6. **Finite flying focus from a real optic** (axiparabola + echelon or chirp): now possible with a LASY file and
+   `laser { file = ...; inject = boundary }` (branch `lasy`, docs/input_deck.md "Lasers from LASY files"): LASY models
+   the optic, GEM-PIC-RZ propagates the file exactly (Hankel + FFT) into the box and the layer at every step. Checked
+   against the built-in luminal Bessel pulse (ctest `lasy`).
 7. **Radial polarization** (m = 0, strong on-axis E_z) as an option.
 8. Write a validation section and a figure for the README, as for the other benchmarks.
 

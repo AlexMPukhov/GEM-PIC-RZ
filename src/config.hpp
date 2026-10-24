@@ -18,9 +18,11 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "deck.hpp"
+#include "laser_file.hpp"
 #include "expr.hpp"
 #include "mapping.hpp"
 #include "units.hpp"
@@ -96,6 +98,24 @@ struct LaserConfig {
   double pol_angle = 0;    // linear: angle of E to the x axis [rad]
   int helicity = 1;        // circular: +1 or -1
   double zR() const { return 0.5 * omega * waist * waist; }
+  // laser from a LASY / openPMD envelope file (laser.file; see laser_file.hpp): the envelope at the plane
+  // z = file_z, its time t_center at zeta_center; inject: box (initial field only) or boundary (also fed through
+  // the radial absorber layer at every step, total-field / scattered-field, like the flying focus)
+  std::shared_ptr<const LaserFileData> file;
+  double file_scale = 1.0;   // factor on the file's envelope (laser.a0 given: peak |E| = a0 omega_L)
+  double t_center = 0.0;     // [1/omega0], lab time at the file's plane
+  double file_z = 0.0;
+  bool boundary = false;
+  double background = 0.0;   // omega_p^2 [n_c] of the uniform medium of the propagation
+  int n_theta = 0;           // cartesian files: azimuthal samples (0: automatic)
+  int time_padding = 2;
+  double file_mode_loss = 0.0;  // energy fraction in envelope modes beyond m_max + 1 (summary)
+  LaserFileField::Params fileParams() const {
+    LaserFileField::Params p;
+    p.scale = file_scale; p.zeta_center = zeta_center; p.t_center = t_center; p.file_z = file_z;
+    p.background = background; p.n_theta = n_theta; p.padding = time_padding;
+    return p;
+  }
 };
 
 // ---------------------------------------------------------------- flying focus
@@ -283,6 +303,13 @@ struct OutputConfig {
   int checkpoint_every = 0;     // every N steps, and at the end of the run (0: none)
   int checkpoint_keep = 2;      // keep the newest N checkpoint files (0: all)
   double walltime_hours = 0.0;  // stop with a checkpoint after this wall-clock time (0: no limit)
+  // LASY envelope files of the laser (<dir>/lasy/laser_NNNNN.h5, laser_file.hpp): the forward field R/2 at the
+  // plane z = s, demodulated at lasy_omega, for LASY and other codes
+  bool lasy = false;
+  int lasy_every = 0;           // every N steps (0: only at the end of the run)
+  double lasy_dr = 0.0, lasy_dt = 0.0, lasy_r_max = 0.0;  // output grid (0: smallest steps; r_absorber)
+  double lasy_omega = 0.0;      // carrier frequency of the envelope (0: laser[0], else omega0)
+  double lasy_band = 0.5;       // kept spectrum |omega - omega_L| < lasy_band omega_L
 };
 
 enum { BEAM_FIELD_LEVEL = 0, BEAM_FIELD_MEAN = 1 };

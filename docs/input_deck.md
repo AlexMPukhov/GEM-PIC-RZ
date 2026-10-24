@@ -214,6 +214,66 @@ z_end         = 0.5 mm
 The field at z = 0 is the paraxial Gaussian beam
 `E = a0 ω/q · exp(−r²/(w0² q)) · exp(−(ζ−ζc)²/L²) · exp(i(ω(ζ−ζc) + cep))`, with `q = 1 + i(0 − z_focus)/zR` and `zR = ω w0²/2`. The pulses of all laser blocks are added.
 
+### Lasers from LASY / openPMD envelope files (`file`)
+
+`laser { file = laser_00000.h5; zeta_center = 30 um }` takes the pulse from an envelope file written by
+[LASY](https://github.com/LASY-org/lasy) (or by any code that follows its layout, including GEM-PIC-RZ's own
+`output.lasy`): the openPMD mesh `laserEnvelope`, the complex envelope of the transverse electric field at a plane
+z = const versus time, E_x,y = Re[p_x,y env e^{−iω_L t}], in `thetaMode` (axes t, r; any number of azimuthal
+modes) or `cartesian` (axes t, y, x) geometry, with the attributes `angularFrequency`, `polarization` and
+`envelopeField` (`electric_field` or `normalized_vector_potential`). Any spatio-temporal structure is kept: chirps,
+pulse-front tilt in mode 1, aberrations, axiparabola or flying-focus fields, Laguerre–Gauss modes, … .
+
+Why it fits: a level s of the code is the plane z = s and its slice ζ the time t = s − ζ at which the field passes
+that plane (GT2). An envelope file at a plane is therefore a level of the code; no conversion from time to space and
+no assumption about the propagation are needed. The time t_center of the file is put at `zeta_center`, i.e. the slice ζ
+holds the file's time τ = t_center + zeta_center − ζ. The carrier keeps its absolute phase e^{−iω_L τ} (the CEP of the file).
+
+- **At the file's plane** (`file_z` = 0, the default): the envelope is interpolated linearly in r and t to the nodes,
+  and R = 2E⊥, L = 0 (forward wave) is set in all modes m = 0 … `m_max`. A cartesian file is first resampled on
+  rings around the axis (`n_theta` angles) and decomposed into azimuthal modes.
+- **At another plane** (`file_z` ≠ 0): the field at z = 0 is computed by the exact propagation of every plane wave,
+  per azimuthal mode a Hankel transform and in time an FFT, k_z = (ω² − ω_p² − k⊥²)^{1/2}, without paraxial
+  approximation. E.g. a file at the focus with `file_z = 1 mm` starts the pulse 1 mm before its focus. The forward
+  transform integrates the interpolant exactly (no quadrature error at the axis).
+- **Through the boundary** (`inject = boundary`): as for the `flying_focus` block, the field is also fed through
+  the radial absorber layer at every step (total field / scattered field): in r_absorber < r < r_max, R relaxes to the
+  incident field of the level, computed with the same propagator (in vacuum or in `background_density`). This brings
+  converging (axicon, axiparabola, flying-focus) waves in from the side over any distance. Use
+  `grid.absorber_strength = 1`, and a file that reaches beyond r_max (the incident field is zero outside the file).
+
+| key | kind | default | meaning |
+|-----|------|---------|---------|
+| `file` | string | — | the envelope file (HDF5; relative to the working directory or to the deck) |
+| `file_mesh` | string | `laserEnvelope` | name of the mesh record |
+| `file_iteration` | integer | the last | iteration of the file |
+| `zeta_center` | length | — | window position of the file's time `t_center` |
+| `t_center` | time | intensity centroid | time of the file put at `zeta_center` (in the file's time base, which includes LASY's position/c) |
+| `file_z` | length | 0 | plane of the file in the coordinates of the simulation (z = 0: its start) |
+| `inject` | `box` \| `boundary` | `box` | `box`: initial field only; `boundary`: also fed through the absorber layer at every step |
+| `background_density` | density | 0 | uniform plasma of the propagation (`file_z` ≠ 0 and `inject = boundary`); the layer must hold this plasma |
+| `a0` | number | from the file | rescales the field so that the peak of \|env\| is a0 ω_L (for circular polarization each component then has a0/√2) |
+| `n_theta` | integer | max(32, 4 m_max + 8) | cartesian files: angles of the resampling on rings |
+| `time_padding` | integer | 2 | length of the FFT window / length of the file's time axis (the propagated pulse must stay inside it) |
+
+The keys of the built-in pulse (`waist`, `tau_fwhm`, `polarization`, …) are given by the file and not allowed.
+Messages: the summary lists the file, its grid, ω_L, polarization and the placement; the run reports whether the
+field was interpolated or propagated, the band and grid of the propagator, the share of the energy in azimuthal modes
+beyond `m_max` + 1 (an envelope mode k contributes to the code's modes |k ± 1|), and a warning if the envelope is not
+small at the edge of the file. The time span of the file must fit into the window at `zeta_center` (warning).
+
+Continuing a GEM-PIC-RZ run from its own `output.lasy` file: the exported times are t = s − ζ + T, with T = t_center +
+zeta_center − file_z of the first file laser of that run (else 0). With the same `zeta_center` and `file_z = 0`, set
+`t_center` = (T + s − zeta_center)/c to put every slice back where it was (for a run without a file laser:
+t_center = (s − zeta_center)/c).
+
+Checks (`tests/lasy.sh`, ctest `lasy`): a Gaussian at focus from a thetaMode file equals the built-in Gaussian to
+1.2·10⁻⁴ of the peak (cartesian file 1·10⁻³, circular polarization 1.2·10⁻⁴); propagated from its focus at 0.3 mm
+back to z = 0, its peak agrees with the paraxial Gaussian started before focus to 0.1 %; the exported level read back
+gives the same field to 7·10⁻⁴; the luminal Bessel pulse of the `flying_focus` block written as a file and fed with
+`inject = boundary` reproduces the built-in flying focus after 0.3 mm (peak 0.25 %, rms of the on-axis E_x
+difference 1.3·10⁻³, 0.5 mm: 0.3 % / 1.4·10⁻³). Serial, OpenMP, the emulated GPU and the MPI pipeline give the same fields.
+
 ## `flying_focus` (0 or 1 block)
 
 A luminal Bessel pulse (focus-wave mode): a converging conical wave whose intensity peak moves with the window at c,
@@ -499,6 +559,12 @@ all particles, like the undulators; the field solver does not see them. Several 
 | `checkpoint_every` | integer | 0 | write a checkpoint `checkpoint_NNNNN.h5` every N steps and at the end of the run (0: none; needs HDF5) |
 | `checkpoint_keep` | integer | 2 | keep only the newest N checkpoints (0: all) |
 | `walltime_hours` | number | 0 | stop with a checkpoint (exit code 3) before this wall-clock time is exceeded (0: no limit) |
+| `lasy` | true/false | false | write LASY envelope files `lasy/laser_NNNNN.h5` of the laser (see [LASY files](#lasy-files)) |
+| `lasy_every` | integer | 0 | every N steps (0: only at the end of the run) |
+| `lasy_dr`, `lasy_dt` | length, time | smallest dr, dzeta | uniform r and t grid of the file |
+| `lasy_r_max` | length | `r_absorber` (r_max without absorber) | outer radius of the file |
+| `lasy_wavelength` | length | wavelength of `laser[0]` (else `lambda0`) | carrier of the envelope |
+| `lasy_bandwidth` | number 0 … 1 | 0.5 | spectrum kept: \|ω − ω_L\| < `lasy_bandwidth` ω_L (removes the wake, harmonics) |
 
 Every run writes:
 
@@ -534,6 +600,30 @@ z, uz, w = ts.get_particle(['z', 'uz', 'w'], species='witness', iteration=100)
 - **Particles:** one species per bunch (its `name`), `trapped` (self-injected plasma electrons) and `inj_<ion>` (electrons from field ionization), if present: `position`, `positionOffset`, `momentum` (per real particle), `weighting` (real particles per macroparticle), constant `charge` and `mass`, and a `particlePatches` bounding box.
 - **Precision and compression:** `hdf5_precision` and `hdf5_compression` apply to these files too.
 - **Check:** the files pass the openPMD validator (`openPMD_check_h5`) without errors or warnings; the `openpmd` test also compares the fields rebuilt from the thetaMode data with the code's own reconstruction.
+
+### LASY files
+
+`output { lasy = true }` writes the laser at the plane z = s of a level as a LASY envelope file
+`<dir>/lasy/laser_NNNNN.h5` (iteration NNNNN = step), at the end of the run (z_end, so the plane where the next stage
+starts) or every `lasy_every` steps. The file can be read by LASY (`lasy.profiles.FromOpenPMDProfile(path,
+"laserEnvelope")`), propagated, analysed or handed on to FBPIC, WarpX, HiPACE++, Wake-T, QUARZ, or back to
+GEM-PIC-RZ (`laser.file`):
+
+```python
+from lasy.laser import Laser
+from lasy.profiles.from_openpmd_profile import FromOpenPMDProfile
+p = FromOpenPMDProfile("diag/lasy/laser_00200.h5", "laserEnvelope")
+```
+
+- **Field:** the forward field R/2 (the laser; the backward field L of the plasma is left out), interpolated as in
+  the particle gather to r_j = j `lasy_dr` and to the times t_l = s − ζ + T (T: see the file lasers above), at 2 m_max + 4
+  angles, demodulated at ω_L (analytic signal, spectrum |ω − ω_L| < `lasy_bandwidth` ω_L: the wake and the low
+  frequencies drop out), and projected on the dominant polarization (eigenvector of the coherence matrix of E_x, E_y;
+  the console line gives the share of the energy it captures, also stored in the root attribute `comment`).
+- **Layout:** as LASY writes it: mesh `laserEnvelope`, complex, thetaMode components [2(m_max + 1) + 1][t][r] (the
+  envelope modes |k| ≤ m_max + 1 that the code's modes 0 … m_max make), axes (t, r), SI units, attributes
+  `angularFrequency`, `polarization` (real, or complex for elliptic polarization), `envelopeField = electric_field`.
+- **MPI:** the fields are collected on rank 0 at these steps as for the other output files.
 
 ### HDF5 files
 

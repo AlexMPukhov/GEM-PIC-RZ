@@ -8,6 +8,7 @@
 #include "rng.hpp"
 
 #include <algorithm>
+#include <limits>
 #if defined(_OPENMP)
 #include <omp.h>
 #endif
@@ -71,6 +72,34 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
     if (I.ionization) adk[s].setup(I.ip_eV, I.Z, I.Zmax, cfg.units, 2.0 * zv.node(Nz));
   }
   if (cfg.flying_focus.present) setupFlyingFocus();
+  // lasers from files
+  fileFields.resize(cfg.lasers.size());
+  bool tref = false;
+  for (size_t k = 0; k < cfg.lasers.size(); ++k) {
+    const auto& L = cfg.lasers[k];
+    if (!L.file) continue;
+    fileFields[k] = std::make_unique<LaserFileField>(*L.file, L.fileParams(), M, g.rho[g.N]);
+    if (fileFields[k]->modeLoss > 1e-4)
+      std::printf("WARNING: laser[%zu]: %.3g %% of the energy of the file is in azimuthal modes beyond m_max + 1 "
+                  "(not kept)\n", k, 100 * fileFields[k]->modeLoss);
+    if (fileFields[k]->edgeField > 1e-2)
+      std::printf("WARNING: laser[%zu]: the envelope reaches %.3g of its peak at the edge of the file (outer radius "
+                  "or ends of the time axis)\n", k, fileFields[k]->edgeField);
+    if (L.boundary) hasIncident = true;
+    if (!tref) { lasyTref = L.t_center + L.zeta_center - L.file_z; tref = true; }
+  }
+  if (hasIncident) {
+    const double ra = cfg.grid.r_absorber;
+    iaF = 1;
+    while (iaF <= g.N && g.rho[iaF] <= ra) ++iaF;
+    iaC = 0;
+    while (iaC < g.N && g.c[iaC] <= ra) ++iaC;
+    nLF = g.N + 1 - iaF;
+    nLC = g.N - iaC;
+    incF.assign(size_t(M + 1) * Nz * std::max(nLF, 0), cd(0.0));
+    incC.assign(size_t(M + 1) * Nz * std::max(nLC, 0), cd(0.0));
+    incS = std::numeric_limits<double>::quiet_NaN();
+  }
   if (restartFile.empty()) {
     initLasers();
     if (cfg.flying_focus.present)  // the incident field of level s0 in the whole box
@@ -106,7 +135,28 @@ std::string Simulation::backendInfo() const {
 // Linear polarization: P = Re(E) e^{i theta};  circular: P = E or conj(E).
 // ----------------------------------------------------------------------------
 void Simulation::initLasers() {
+  // lasers from files: the field of level s0, interpolated at the file's plane, else propagated to s0
+  for (size_t k = 0; k < cfg.lasers.size(); ++k) {
+    if (!fileFields[k]) continue;
+    const LaserFileField& F = *fileFields[k];
+    const bool direct = F.atFilePlane(s0);
+    std::vector<double> zeta(Nz), rf(g.rho.begin() + 1, g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
+    for (int n = 0; n < Nz; ++n) zeta[n] = zv.node(n);
+    std::vector<cd> out;
+    F.field(s0, rf, zeta, 0, out, direct);
+    for (int i = 1; i <= g.N; ++i)
+      for (int n = 0; n < Nz; ++n)
+        for (int m = 0; m <= M; ++m) fold.Rr[fold.f(m, n, i)] += out[(size_t(i - 1) * Nz + n) * (M + 1) + m];
+    F.field(s0, rc, zeta, 1, out, direct);
+    for (int i = 0; i < g.N; ++i)
+      for (int n = 0; n < Nz; ++n)
+        for (int m = 0; m <= M; ++m) fold.Rp[fold.c(m, n, i)] += out[(size_t(i) * Nz + n) * (M + 1) + m];
+    std::printf("laser[%zu]: field of the file %s at z = %.6g mm\n", k,
+                direct ? "interpolated" : "propagated from its plane", s0 * cfg.units.k0inv_um() * 1e-3);
+    for (const auto& l : F.info) std::printf("          %s\n", l.c_str());
+  }
   for (const auto& L : cfg.lasers) {
+    if (L.file) continue;
     const double zd = 0.0 - L.z_focus;  // distance from focus at the start
     const double amp = L.a0 * L.omega;  // field in units m c omega0 / e
     const bool atFocus = (zd == 0.0);
@@ -1096,6 +1146,7 @@ void Simulation::step() {
   for (auto& v : exitStates) std::fill(v.begin(), v.end(), 0.0);
   for (const auto& p : stream)
     if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) exitStates[ionIndex(p.sp)][p.Zi] += p.w;
+  prepareIncident(s1, 0, Nz);
   absorber(s1);
   std::swap(fold, fnew);
   std::swap(c0b, c1b);
@@ -1249,18 +1300,47 @@ void Simulation::absorber(double s) {
       for (int i = 0; i <= g.N; ++i) {
         const double d = damp(g.rho[i]);
         if (d == 1.0) continue;
-        const cd inc = (ff && m == 1) ? cd(ffInc(true, n, i, s)) : cd(0.0);
+        const cd inc = ((ff && m == 1) ? cd(ffInc(true, n, i, s)) : cd(0.0)) + incidentF(m, n, i);
         cd& R = fnew.Rr[fnew.f(m, n, i)];
         R = inc + d * (R - inc);
       }
       for (int i = 0; i < g.N; ++i) {
         const double d = damp(g.c[i]);
         if (d == 1.0) continue;
-        const cd inc = (ff && m == 1) ? I1 * ffInc(false, n, i, s) : cd(0.0);
+        const cd inc = ((ff && m == 1) ? I1 * ffInc(false, n, i, s) : cd(0.0)) + incidentC(m, n, i);
         cd& R = fnew.Rp[fnew.c(m, n, i)];
         R = inc + d * (R - inc);
       }
     }
+}
+
+// inject = boundary: incident field of the file lasers in the absorber layer at level s, slices [n0, n1)
+void Simulation::prepareIncident(double s, int n0, int n1) {
+  if (!hasIncident) return;
+  n0 = std::max(0, n0);
+  n1 = std::min(Nz, n1);
+  if (s == incS && n0 >= incN0 && n1 <= incN1) return;
+  std::fill(incF.begin(), incF.end(), cd(0.0));
+  std::fill(incC.begin(), incC.end(), cd(0.0));
+  std::vector<double> zeta(n1 - n0), rf(g.rho.begin() + iaF, g.rho.begin() + g.N + 1),
+      rc(g.c.begin() + iaC, g.c.begin() + g.N);
+  for (int n = n0; n < n1; ++n) zeta[n - n0] = zv.node(n);
+  std::vector<cd> out;
+  const int nz = n1 - n0;
+  for (size_t k = 0; k < cfg.lasers.size(); ++k) {
+    if (!fileFields[k] || !cfg.lasers[k].boundary) continue;
+    fileFields[k]->field(s, rf, zeta, 0, out, false);
+    for (int i = 0; i < nLF; ++i)
+      for (int n = 0; n < nz; ++n)
+        for (int m = 0; m <= M; ++m) incF[(size_t(m) * Nz + n0 + n) * nLF + i] += out[(size_t(i) * nz + n) * (M + 1) + m];
+    fileFields[k]->field(s, rc, zeta, 1, out, false);
+    for (int i = 0; i < nLC; ++i)
+      for (int n = 0; n < nz; ++n)
+        for (int m = 0; m <= M; ++m) incC[(size_t(m) * Nz + n0 + n) * nLC + i] += out[(size_t(i) * nz + n) * (M + 1) + m];
+  }
+  incS = s;
+  incN0 = n0;
+  incN1 = n1;
 }
 
 // incident field of the flying focus at s = 0: G(r, zeta) = sum_j c_j J0(k_j r) e^{i w_j (zeta - zeta_c) + i cep},
