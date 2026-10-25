@@ -47,7 +47,10 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        Merged (PR #2). dE/E in bunches.txt is now accumulated centred (Moments::gmean, gM2; branch
        centred-energy-spread): the old sum gamma^2 - (sum gamma)^2 / Q was 27 % low at dE/E = 4e-6, gamma = 1000,
        and differed between rank counts; ctest energy_spread checks it against the particle data.
-    5. in progress. 5c (branch engine-beam-push): beam push of the own list, the continued pushes and the halo
+    5. in progress. 5d (branch engine-mean-push): the mean phase on the device (pushBeams with wMean = 0.5 after
+       uploading F^1 with the pre-absorber values, deviceBeamCurrent(C0B, ..., meanPhase = true), trapped and
+       rear-trapped deposits added on the device; host bookkeeping unchanged). Next: 5e fewer host transfers.
+       Merged (PR #5): 5c beam push of the own list, the continued pushes and the halo
        copies on the device (Engine::pushBeams, host bookkeeping on the returned states), deposits into c1b and
        the halo array H on the device (depositBeams), the filter across the block edges on the device
        (PipelineRun::deviceBeamCurrent = filterBeam with Engine::combine/filter/zero/addCurrents, AUX_H / AUX_RW
