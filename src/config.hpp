@@ -330,6 +330,10 @@ struct NumericsConfig {
   double trap_gamma = 0.0;       // ... and only if its gamma is at least this (0: any gamma)
   double trap_advance = 1.0;     // a streaming particle leaves its level after advancing this many steps in z
   double theta = 0.5;            // implicitness of the R update in s (0.5: trapezoid)
+  double theta_stiff = 0.0;      // per-mode implicitness theta_k -> 1 for c h dz |lambda_k| >> 1 (FieldSolver); 0: off
+  // beam sources consistent with the slice equations: (1/4,1/2,1/4) of the beam currents in the half-cell equations
+  // (E_z, L_r, L_phi) and the charge-conserving radial flux (mode 0) in the R update
+  bool beam_consistent = false;
   int beam_field = -1;       // fields of the beam push: BEAM_FIELD_LEVEL (s^0), BEAM_FIELD_MEAN; -1 = auto
   bool beam_field_auto = true;  // beam_field chosen by the code (mean with undulators, else level)
   bool beam_vay = true;      // beam list pushed with the Vay pusher (false: Boris)

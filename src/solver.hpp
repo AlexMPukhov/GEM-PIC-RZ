@@ -7,6 +7,7 @@
 
 #include "fields.hpp"
 #include "grid.hpp"
+#include "smoothing.hpp"
 #include "zgrid.hpp"
 
 namespace gem {
@@ -35,6 +36,14 @@ class FieldSolver {
   bool prepare(double D, const ZetaGrid& zg);
   // implicitness of the R update in s: R^1 = R^0 + D[(1-theta) F^0 + theta F^1] (0.5: trapezoid)
   double theta = 0.5;
+  // numerics.theta_stiff = c: the fields E_z, B_z enter the R update with an implicitness per radial eigenmode,
+  //     theta_k = (theta + mu_k) / (1 + mu_k),   mu_k = -a lambda_k,   a = c h Delta,
+  // lambda_k < 0 the eigenvalues of the radial Laplacian of E_z (centres) or B_z (faces) of the mode: theta for the
+  // modes the step resolves (c h Delta |lambda| << 1, all radiation), -> 1 (L-stable) for the stiff near-field modes
+  // of thin beam structures. As operators, Theta = S^-1 (theta - a Lap) with S = 1 - a Lap; the implicit matrices
+  // become S (16 - h^2 Lap) - 4 h Delta Lap (theta - a Lap) (pentadiagonal). 0: off (scalar theta).
+  double thetaStiff = 0.0;
+  bool stiff() const { return thetaStiff > 0.0; }
   int classes() const { return nCls; }
   int version() const { return ver; }  // increases whenever the matrices change
   int classOf(int n) const { return cls[n]; }
@@ -72,6 +81,20 @@ class FieldSolver {
   std::vector<Tridiag> Tf, Tc;  // per class and mode (index cls * (M+1) + m): faces (B_z), centres (E_z)
   std::vector<Tridiag> Tp;      // per mode: -Lap^c_m (Poisson problem)
   std::vector<cd> Er1, Ep1, Bp1, Br1, Pr, Pp, Qr, Qp, tf1, tf2, tc1, tc2, rf, rc;
+  // thetaStiff: per mode the radial Laplacians (unfactorized, rows as Tc, Tf); per class and mode a = c h Delta,
+  // the factorized implicit matrices (Bc centres, Bf faces) and S = 1 - a Lap (Sc, Sf)
+  std::vector<Tridiag> Lc, Lf;
+  struct Stiff {
+    double a = 0.0;
+    Banded5 Bc, Bf;
+    Tridiag Sc, Sf;
+  };
+  std::vector<Stiff> St;
+  std::vector<cd> e0t, b0t, et, bt, sx;
+  void lapRows(const Tridiag& L, const cd* x, cd* y) const;  // y = Lap x on the rows of L (absolute indices)
+  // y = Theta x (one = false) or (1 - Theta) x (one = true) on the rows of L; other entries of y are zero
+  void thetaApply(Stiff& S, bool faces, int m, bool one, const cd* x, cd* y);
+  void stiffSolve(Stiff& S, bool faces, int m, const cd* rhs, cd* x);  // the pentadiagonal implicit solve
 
   // discrete operators (Section 5.2)
   void opG(const cd* e, cd* out) const;                            // centres -> faces

@@ -1,0 +1,38 @@
+# Thin, intense, low-gamma ring (tests/thin_ring.sh): electrons on matched circular orbits in a plasma lens,
+# gamma 50, ring radius 0.754 um, rms width 20 nm (half a radial cell), 10 kA flat-top over 1 um (33.4 pC).
+# The self-forces cancel to 1/gamma^2; the ring must keep its radius. The test switches the lens and the rotation
+# off for the expanding-ring case (plasma_lens.gradient = 0, ux/uy_function = 0).
+constants { Kw = 0.71; Rw = 0.754 um }
+grid {
+  lambda0       = 0.8 um
+  m_max         = 1
+  radial_grid   = table
+  r_points      = 0, 2, 5, 20, 60 um
+  dr_points     = 0.04, 0.04, 0.1, 0.3, 0.5 um
+  r_max         = 60 um
+  dzeta         = 0.1 um
+  window_length = 16 um
+  dz            = 20 um
+  z_end         = 0.5 mm
+  r_absorber    = 50 um
+}
+output { dir = ring; every = 25; maps = false; particles = true; format = text }
+numerics { iterations = 2; trap_gamma = 60; beam_field = mean; beam_dz_max = 5 um
+           beam_consistent = true; theta_stiff = 1 }
+bunch {
+  name           = ring
+  charge         = 33.4 pC
+  gamma          = 50
+  distribution_z = flattop
+  length         = 1 um
+  zeta_center    = 8 um
+  distribution_r = function
+  profile_r      = "gauss(r - Rw, 20 nm)"
+  r_extent       = 1.0 um
+  ux_function    = "-Kw * y / Rw"     # rigid rotation u_phi = Kw r / Rw: matched to the lens
+  uy_function    = "Kw * x / Rw"
+  macroparticles = 50000
+  shot_noise     = fawley
+  noise_wavelength = 100 nm
+}
+plasma_lens { z_start = 0 mm; length = 10 mm; gradient = 3.0e7 T/m }

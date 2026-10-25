@@ -238,6 +238,17 @@ if(GEMPIC_HAVE_HDF5)
   # lasers from and to LASY envelope files: import, exact propagation, boundary injection, export
   add_test(NAME lasy COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lasy.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(lasy PROPERTIES SKIP_RETURN_CODE 77)
+  # self-fields of a thin, intense, low-gamma ring (numerics.beam_consistent, theta_stiff) against exact
+  # field relations and a long-beam shell model, per backend
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME thin_ring_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/thin_ring.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(thin_ring_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME thin_ring_gpu_emulation
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/thin_ring.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
+    set_tests_properties(thin_ring_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
   # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
   add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(energy_spread PROPERTIES SKIP_RETURN_CODE 77)

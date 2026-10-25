@@ -134,10 +134,23 @@ struct TriV {
   const double *r, *fc, *qa, *qc, *cs, *al, *ga, *fbi;
 };
 
+// numerics.theta_stiff (FieldSolver::thetaStiff), per matrix class and mode T: a = c h Delta, the LU factors of the
+// pentadiagonal implicit matrices (5 N per T, Banded5 layout) and the Thomas factors of S = 1 - a Lap (N per T);
+// per mode the radial Laplacians (sub, diagonal, super; N per mode). Centres: rows 0..N-1; faces: rows i0..N-1.
+struct StiffV {
+  int on;
+  const double* a;
+  const cplx *bc, *bf;
+  const double *sca, *sccp, *scden, *sfa, *sfcp, *sfden;
+  const double *lca, *lcb, *lcc, *lfa, *lfb, *lfc;
+};
+
 struct Params {
   int M, Nz, N;
   double Delta;  // step of the current s^0 -> s^1
   double theta;      // implicitness of the R update (numerics.theta)
+  StiffV stiff;      // numerics.theta_stiff
+  int consistent;    // numerics.beam_consistent
   double trapExtra;  // (trap_advance - 1) * Delta: advance in z beyond s^1 before a particle leaves the level
   double trapGamma;  // and only if its gamma is at least this (numerics.trap_gamma; 0: any)
   ZetaView zv;   // longitudinal grid
@@ -546,7 +559,70 @@ GEM_HD inline void triSolveTeam(const Team& t, const TriV& T, const cplx* rhs, c
   t.barrier();
 }
 
-constexpr int SOLVE_SCRATCH = 15;  // arrays of N+1 per mode
+constexpr int SOLVE_SCRATCH = 20;  // arrays of N+1 per mode
+
+// numerics.theta_stiff (FieldSolver::lapRows, thetaApply, stiffSolve), run by one thread
+GEM_HD inline void lapRowsDev(const double* la, const double* lb, const double* lc, int i0, int n, const cplx* x,
+                              cplx* y) {
+  for (int r = 0; r < n; ++r) {
+    const int i = i0 + r;
+    cplx s = lb[r] * x[i];
+    if (r > 0) s = s + la[r] * x[i - 1];
+    if (r + 1 < n) s = s + lc[r] * x[i + 1];
+    y[i] = s;
+  }
+}
+GEM_HD inline void thomasRaw(const double* a, const double* cp, const double* den, int i0, int n, const cplx* rhs,
+                             cplx* x, cplx* dp) {
+  dp[0] = rhs[i0] * den[0];
+  for (int i = 1; i < n; ++i) dp[i] = (rhs[i0 + i] - a[i] * dp[i - 1]) * den[i];
+  x[i0 + n - 1] = dp[n - 1];
+  for (int i = n - 2; i >= 0; --i) x[i0 + i] = dp[i] - cp[i] * x[i0 + i + 1];
+}
+GEM_HD inline void band5Dev(const cplx* A, int n, cplx* x) {  // Banded5::solve
+  for (int i = 0; i < n; ++i)
+    for (int p = -2; p <= -1; ++p)
+      if (i + p >= 0) x[i] -= A[size_t(i) * 5 + size_t(p + 2)] * x[i + p];
+  for (int i = n - 1; i >= 0; --i) {
+    for (int k = 1; k <= 2; ++k)
+      if (i + k < n) x[i] -= A[size_t(i) * 5 + size_t(k + 2)] * x[i + k];
+    x[i] = x[i] * A[size_t(i) * 5 + 2];
+  }
+}
+
+// numerics.beam_consistent (Simulation::beamFlux): the change of the j_z deposit of one beam particle between the
+// positions a (start of the radial flux) and b (first push of s^1), zeta weights averaged over both
+GEM_HD inline void fluxDeposit(const Params& P, const CurrV& D, const Particle& a, const Particle& b) {
+  const GridV& g = P.g;
+  const int N = g.N;
+  double fa, fb;
+  const int ja = P.zv.beamCell(a.zeta, fa), jb = P.zv.beamCell(b.zeta, fb);
+  const int ks[4] = {ja - 1, ja, jb - 1, jb};
+  const double wk[4] = {0.5 * (1.0 - fa), 0.5 * fa, 0.5 * (1.0 - fb), 0.5 * fb};
+  const double ra = sqrt(a.x * a.x + a.y * a.y), rb = sqrt(b.x * b.x + b.y * b.y);
+  const cplx ea = (ra > 0.0) ? cplx(a.x / ra, -a.y / ra) : cplx(1.0, 0.0);
+  const cplx eb = (rb > 0.0) ? cplx(b.x / rb, -b.y / rb) : cplx(1.0, 0.0);
+  const W wa = g.locC(ra), wb = g.locC(rb);
+  cplx pa(1.0, 0.0), pb(1.0, 0.0);
+  for (int m = 0; m <= P.M; ++m) {
+    auto add = [&](int c, cplx v) {
+      for (int t = 0; t < 4; ++t) {
+        const int k = ks[t];
+        if (k < 0 || k >= P.Nz || !D.has(k) || wk[t] == 0.0) continue;
+        par::atomicAddC(&D.jz[D.c(m, k, c)], (b.q * wk[t] / (2.0 * PI * P.zv.len(k) * g.Vc[c])) * v);
+      }
+    };
+    auto both = [&](const W& w, double r, cplx ph, double sign) {
+      if (w.mode == 0) { add(w.a, (sign * w.wa) * ph); add(w.a + 1, (sign * w.wb) * ph); }
+      else if (w.mode == 2) add(N - 1, sign * ph);
+      else add(0, (sign * ((m == 0) ? 1.0 : pow(r / g.c[0], double(m)))) * ph);
+    };
+    both(wb, rb, pb, 1.0);
+    both(wa, ra, pa, -1.0);
+    pa = pa * ea;
+    pb = pb * eb;
+  }
+}
 
 // plasma.smooth_length (SourceFilter, smoothing.cpp): factorized filters per mode
 struct FiltV {
@@ -600,7 +676,7 @@ GEM_HD inline void filterTeam(const Team& t, const FiltV& F, int m, int n, const
 GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, const FieldsV& fo, const FieldsV& fn,
                                   const CurrV& c0b, const CurrV& c0s, const CurrV& c1b, const CurrV& c1s,
                                   const cplx* predR, const cplx* predP, const TriV* Tf, const TriV* Tc,
-                                  cplx* scratch) {
+                                  cplx* scratch, const CurrV fl) {
   const int N = P.N;
   const GridV& g = P.g;
   const double D = P.Delta, h = P.zv.len(n);
@@ -620,17 +696,35 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   cplx *tf1 = scratch + 8 * L, *tc1 = scratch + 9 * L, *rf = scratch + 10 * L, *rc = scratch + 11 * L;
   cplx* dp = scratch + 12 * L;
   cplx *pu = scratch + 13 * L, *pv = scratch + 14 * L;  // partition: reduced system (2P <= L/4 entries)
+  cplx *e0t = scratch + 15 * L, *b0t = scratch + 16 * L, *et = scratch + 17 * L, *bt = scratch + 18 * L;
+  cplx* sx = scratch + 19 * L;
 
   // four-point current sums and j^1 (Simulation::step), weighted by the
   // interpolation to slice n (last slice n = 0: half-cell -1 := half-cell 0)
   const int nm = (n > 0) ? n - 1 : 0;
   const double wl = P.zv.wLo(n), wh = P.zv.wHi(n);
   const double th1 = 2.0 * P.theta, th0 = 2.0 - th1;  // 1, 1 for the trapezoid
+  // numerics.beam_consistent (Simulation::march): beam currents of half-cell k as the R update uses them, and their
+  // mean over the slices n, n+1 for the half-cell equations
+  const bool cons = P.consistent != 0;
+  auto inK = [&](int k) { return k >= 0 && k < P.Nz && c1b.has(k); };
+  auto bjr = [&](int k, int i) -> cplx { return inK(k) ? fl.jr[fl.f(m, k, i)] : cplx(); };
+  auto bjp = [&](int k, int i) -> cplx {
+    return inK(k) ? 0.5 * (th0 * c0b.jp[c0b.c(m, k, i)] + th1 * c1b.jp[c1b.c(m, k, i)]) : cplx();
+  };
+  auto bjz = [&](int k, int i) -> cplx { return inK(k) ? c1b.jz[c1b.c(m, k, i)] : cplx(); };
+  const double s0w = 0.25 * P.zv.wLo(n), s1w = 0.25 * (P.zv.wHi(n) + (n + 1 < P.Nz ? P.zv.wLo(n + 1) : 1.0)),
+               s2w = 0.25 * (n + 1 < P.Nz ? P.zv.wHi(n + 1) : 0.0);
   auto Jr = [&](int i) {
     const cplx a = c0b.jr[c0b.f(m, nm, i)] + c0s.jr[c0s.f(m, nm, i)];
     const cplx pr = (n > 0) ? predR[m * (N + 1) + i] : c1b.jr[c1b.f(m, 0, i)] + c1s.jr[c1s.f(m, 0, i)];
-    return th0 * (wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)]) +
-           th1 * (wl * pr + wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)]);
+    cplx s = th0 * (wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)]) +
+             th1 * (wl * pr + wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)]);
+    if (cons)  // beam part: the charge-conserving flux of the step
+      s = s + 2.0 * (wl * bjr(nm, i) + wh * bjr(n, i)) -
+          th0 * (wl * c0b.jr[c0b.f(m, nm, i)] + wh * c0b.jr[c0b.f(m, n, i)]) -
+          th1 * (wl * c1b.jr[c1b.f(m, nm, i)] + wh * c1b.jr[c1b.f(m, n, i)]);
+    return s;
   };
   auto Jp = [&](int i) {
     const cplx a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
@@ -638,9 +732,44 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     return th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
            th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
   };
-  auto jr1 = [&](int i) { return c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)]; };
-  auto jp1 = [&](int i) { return c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)]; };
-  auto jz1 = [&](int i) { return c1b.jz[c1b.c(m, n, i)] + c1s.jz[c1s.c(m, n, i)]; };
+  auto jr1 = [&](int i) {
+    const cplx b = cons ? s0w * bjr(n - 1, i) + s1w * bjr(n, i) + s2w * bjr(n + 1, i) : c1b.jr[c1b.f(m, n, i)];
+    return b + c1s.jr[c1s.f(m, n, i)];
+  };
+  auto jp1 = [&](int i) {
+    const cplx b = cons ? s0w * bjp(n - 1, i) + s1w * bjp(n, i) + s2w * bjp(n + 1, i) : c1b.jp[c1b.c(m, n, i)];
+    return b + c1s.jp[c1s.c(m, n, i)];
+  };
+  auto jz1 = [&](int i) {
+    const cplx b = cons ? s0w * bjz(n - 1, i) + s1w * bjz(n, i) + s2w * bjz(n + 1, i) : c1b.jz[c1b.c(m, n, i)];
+    return b + c1s.jz[c1s.c(m, n, i)];
+  };
+  // numerics.theta_stiff (FieldSolver::thetaApply, stiffSolve), by the team leader
+  const StiffV& S = P.stiff;
+  const bool stiff = S.on != 0;
+  const int fi0 = (m == 0) ? 0 : 1, fnr = N - fi0;
+  auto thetaApply = [&](bool faces, bool one, const cplx* x, cplx* y) {
+    const int i0 = faces ? fi0 : 0, nr = faces ? fnr : N, len = faces ? N + 1 : N;
+    const size_t lm = size_t(m) * N, tn = size_t(T) * N;
+    if (one) {
+      for (int r = 0; r < nr; ++r) sx[i0 + r] = (1.0 - P.theta) * x[i0 + r];
+    } else {
+      lapRowsDev((faces ? S.lfa : S.lca) + lm, (faces ? S.lfb : S.lcb) + lm, (faces ? S.lfc : S.lcc) + lm, i0, nr, x,
+                 sx);
+      for (int r = 0; r < nr; ++r) sx[i0 + r] = P.theta * x[i0 + r] - S.a[T] * sx[i0 + r];
+    }
+    for (int i = 0; i < len; ++i) y[i] = cplx();
+    thomasRaw((faces ? S.sfa : S.sca) + tn, (faces ? S.sfcp : S.sccp) + tn, (faces ? S.sfden : S.scden) + tn, i0, nr,
+              sx, y, dp);
+  };
+  auto stiffSolve = [&](bool faces, const cplx* rhs, cplx* x) {
+    const int i0 = faces ? fi0 : 0, nr = faces ? fnr : N;
+    const size_t lm = size_t(m) * N;
+    lapRowsDev((faces ? S.lfa : S.lca) + lm, (faces ? S.lfb : S.lcb) + lm, (faces ? S.lfc : S.lcc) + lm, i0, nr, rhs,
+               sx);
+    for (int r = 0; r < nr; ++r) x[i0 + r] = rhs[i0 + r] - S.a[T] * sx[i0 + r];
+    band5Dev((faces ? S.bf : S.bc) + size_t(T) * 5 * N, nr, x + i0);
+  };
 
   // discrete operators (FieldSolver::opG ... opCB), one entry each
   auto opG = [&](const cplx* x, int i) -> cplx {
@@ -665,14 +794,24 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
 
   par::teamFor(t, N + 1, [&](int i) { Er1[i] = 0.5 * (Rr1[i] + Lr1[i]); Bp1[i] = 0.5 * (Rr1[i] - Lr1[i]); });
   par::teamFor(t, N, [&](int i) { Ep1[i] = 0.5 * (Rp1[i] + Lp1[i]); Br1[i] = 0.5 * (Lp1[i] - Rp1[i]); });
-  // known parts P (level s^0) and Q (from zeta_1)
+  // known parts P (level s^0) and Q (from zeta_1); theta_stiff: with (1 - Theta) e0, (1 - Theta) b0
+  const cplx *e0u = e0, *b0u = b0;
+  double w0 = 1.0 - P.theta;
+  if (stiff) {
+    if (t.leader()) {
+      thetaApply(false, true, e0, e0t);
+      thetaApply(true, true, b0, b0t);
+    }
+    t.barrier();
+    e0u = e0t; b0u = b0t; w0 = 1.0;
+  }
   par::teamFor(t, N + 1, [&](int i) {
     if (i == 0) { Pr[0] = cplx(); Qr[0] = cplx(); return; }
-    Pr[i] = Rr0[i] + (1.0 - P.theta) * D * (opG(e0, i) + opMf(b0, i)) - 0.25 * D * Jr(i);
+    Pr[i] = Rr0[i] + w0 * D * (opG(e0u, i) + opMf(b0u, i)) - 0.25 * D * Jr(i);
     Qr[i] = Lr1[i] - 0.25 * h * (opG(e1, i) - opMf(b1, i)) - 0.5 * h * jr1(i);
   });
   par::teamFor(t, N, [&](int i) {
-    Pp[i] = Rp0[i] + (1.0 - P.theta) * D * ((im / g.c[i]) * e0[i] - opg(b0, i)) - 0.25 * D * Jp(i);
+    Pp[i] = Rp0[i] + w0 * D * ((im / g.c[i]) * e0u[i] - opg(b0u, i)) - 0.25 * D * Jp(i);
     Qp[i] = Lp1[i] - 0.25 * h * ((im / g.c[i]) * e1[i] + opg(b1, i)) - 0.5 * h * jp1(i);
   });
   t.barrier();
@@ -684,7 +823,12 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   t.barrier();
   par::teamFor(t, N + 1, [&](int i) { b[i] = cplx(); });
   t.barrier();
-  triSolveTeam(t, Tf[T], rf, b, dp, pu, pv);
+  if (stiff) {
+    if (t.leader()) stiffSolve(true, rf, b);
+    t.barrier();
+  } else {
+    triSolveTeam(t, Tf[T], rf, b, dp, pu, pv);
+  }
   // E_z
   par::teamFor(t, N + 1, [&](int i) { tf1[i] = 0.5 * (Pr[i] - Qr[i]); });
   par::teamFor(t, N, [&](int i) { tc1[i] = 0.5 * (Qp[i] - Pp[i]); });
@@ -693,17 +837,32 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     rc[i] = 16.0 * e1[i] + 8.0 * h * (opCB(Bp1, Br1, i) + opCB(tf1, tc1, i)) - 16.0 * h * jz1(i);
   });
   t.barrier();
-  triSolveTeam(t, Tc[T], rc, e, dp, pu, pv);
-  // explicit transverse update
+  if (stiff) {
+    if (t.leader()) stiffSolve(false, rc, e);
+    t.barrier();
+  } else {
+    triSolveTeam(t, Tc[T], rc, e, dp, pu, pv);
+  }
+  // explicit transverse update (theta_stiff: R with Theta e, Theta b)
+  const cplx *eR = e, *bR = b;
+  double w1 = P.theta;
+  if (stiff) {
+    if (t.leader()) {
+      thetaApply(false, false, e, et);
+      thetaApply(true, false, b, bt);
+    }
+    t.barrier();
+    eR = et; bR = bt; w1 = 1.0;
+  }
   par::teamFor(t, N + 1, [&](int i) {
     if (i == 0) { Rr[0] = cplx(); Lr[0] = cplx(); return; }
     const cplx G = opG(e, i), Mf = opMf(b, i);
-    Rr[i] = Pr[i] + P.theta * D * (G + Mf);
+    Rr[i] = Pr[i] + w1 * D * (opG(eR, i) + opMf(bR, i));
     Lr[i] = Qr[i] - 0.25 * h * (G - Mf);
   });
   par::teamFor(t, N, [&](int i) {
     const cplx gg = opg(b, i), ie = (im / g.c[i]) * e[i];
-    Rp[i] = Pp[i] + P.theta * D * (ie - gg);
+    Rp[i] = Pp[i] + w1 * D * ((im / g.c[i]) * eR[i] - opg(bR, i));
     Lp[i] = Qp[i] - 0.25 * h * (ie + gg);
   });
 }
@@ -911,7 +1070,53 @@ struct EngineState {
       if (!pd.empty()) par::upload(partData.data(), pd.data(), pd.size());
     }
     triVersion = fs.version();
+    // numerics.theta_stiff: a, the pentadiagonal LU factors, the factors of S and the Laplacians (StiffV)
+    P.stiff = dev::StiffV{0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                          nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    if (fs.stiff()) {
+      const int N = fs.N;
+      std::vector<double> av(nT), s(size_t(nT) * N * 6, 0.0), l(size_t(M + 1) * N * 6, 0.0);
+      std::vector<cplx> bc(size_t(nT) * 5 * N), bf(size_t(nT) * 5 * N);
+      for (int t = 0; t < nT; ++t) {
+        const FieldSolver::Stiff& S = fs.St[t];
+        av[t] = S.a;
+        for (int k = 0; k < 2; ++k) {
+          const Tridiag& T = k ? S.Sf : S.Sc;
+          double* o = s.data() + (size_t(3 * k) * nT + t) * N;  // blocks: sca, sccp, scden, sfa, sfcp, sfden
+          for (int r = 0; r < T.n; ++r) {
+            o[r] = T.a[r];
+            o[size_t(nT) * N + r] = T.cp[r];
+            o[2 * size_t(nT) * N + r] = T.den[r];
+          }
+          const Banded5& B = k ? S.Bf : S.Bc;
+          cplx* bo = (k ? bf.data() : bc.data()) + size_t(t) * 5 * N;
+          for (size_t j = 0; j < B.A.size(); ++j) bo[j] = cplx(B.A[j].real(), B.A[j].imag());
+        }
+      }
+      for (int m = 0; m <= M; ++m)
+        for (int k = 0; k < 2; ++k) {
+          const Tridiag& L = k ? fs.Lf[m] : fs.Lc[m];
+          double* o = l.data() + (size_t(3 * k) * (M + 1) + m) * N;  // blocks: lca, lcb, lcc, lfa, lfb, lfc
+          for (int r = 0; r < L.n; ++r) {
+            o[r] = L.a[r];
+            o[size_t(M + 1) * N + r] = L.b[r];
+            o[2 * size_t(M + 1) * N + r] = L.cc[r];
+          }
+        }
+      stiffA.assign(av.data(), av.size());
+      stiffS.assign(s.data(), s.size());
+      stiffL.assign(l.data(), l.size());
+      stiffBc.assign(bc.data(), bc.size());
+      stiffBf.assign(bf.data(), bf.size());
+      const double* sp = stiffS.data();
+      const double* lp = stiffL.data();
+      const size_t ts = size_t(nT) * N, ls = size_t(M + 1) * N;
+      P.stiff = dev::StiffV{1, stiffA.data(), stiffBc.data(), stiffBf.data(), sp, sp + ts, sp + 2 * ts, sp + 3 * ts,
+                            sp + 4 * ts, sp + 5 * ts, lp, lp + ls, lp + 2 * ls, lp + 3 * ls, lp + 4 * ls, lp + 5 * ls};
+    }
   }
+  par::Array<double> stiffA, stiffS, stiffL;
+  par::Array<cplx> stiffBc, stiffBf;
   dev::Params P{};
   // fields and currents: index 0/1 swap every step
   dev::FieldStore F[2];
@@ -941,6 +1146,12 @@ struct EngineState {
   bool auxReady = false;
   par::Array<Particle> plist;       // MPI block: particles of pushBeams / depositBeams
   par::Array<int> pflag;
+  // numerics.beam_consistent: radial flux of the step (jz: the change of the deposit, jr: the flux), the first-push
+  // states of the last step (start of the next flux with beam_field = mean; nCc of them, 0: none)
+  dev::CurrStore Fl;
+  par::Array<Particle> ccStart;
+  int nCc = 0;
+  dev::CurrV flview() { return Fl.view(P.M, P.Nz, P.N, ck0, cnk); }
   par::Array<Particle> beamSave;  // beam_field = mean: the beam list at s^0
   par::Array<int> beamMap;        // beam_field = mean: index of beamSave[i] in the beam list after the push, or -1
   par::Array<unsigned long long> lcntScratch;
@@ -1092,6 +1303,8 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   const size_t cf = size_t(M + 1) * E.cnk * (N + 1), cc = size_t(M + 1) * E.cnk * N;
   E.nd = size_t(E.cnk) * N;
   for (int k = 0; k < 2; ++k) { E.Cb[k].init(cf, cc, E.nd); E.Cs[k].init(cf, cc, E.nd); }
+  P.consistent = sim.cfg.numerics.beam_consistent ? 1 : 0;
+  E.Fl.init(P.consistent ? cf : 1, P.consistent ? cc : 1, P.consistent ? E.nd : 1);
   up(E.Cb[E.iold].jr, sim.c0b.jr); up(E.Cb[E.iold].jp, sim.c0b.jp); up(E.Cb[E.iold].jz, sim.c0b.jz);
   par::upload(E.Cb[E.iold].rho.data(), sim.c0b.rho.data(), E.nd);
   par::upload(E.Cb[E.iold].rhoi.data(), sim.c0b.rhoi.data(), E.nd);
@@ -1184,15 +1397,16 @@ void Engine::step() {
   const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
   const CurrV c1b = E.bview(inew), c1s = E.sview(inew);
   // numerics.beam_smooth_length: radial smoothing of the beam current, every half-cell (Simulation::smoothBeamRadially)
-  auto smoothBeam = [&]() {
+  auto smoothCurrent = [&](const CurrV cv) {
     if (!E.bfilt.on) return;
     const dev::FiltV BV = E.bfilt;
     cplx* fs = E.bfiltScratch.data();
-    for (int n = c1b.k0; n < c1b.k0 + c1b.nk; ++n)
+    for (int n = cv.k0; n < cv.k0 + cv.nk; ++n)
       par::teams(M + 1, GEM_LAMBDA(const Team& t) {
-        filterTeam(t, BV, t.league, n, c1b, fs + size_t(t.league) * (4 * size_t(N) + 1));
+        filterTeam(t, BV, t.league, n, cv, fs + size_t(t.league) * (4 * size_t(N) + 1));
       });
   };
+  auto smoothBeam = [&]() { smoothCurrent(c1b); };
   E.Cb[inew].zero();
   E.Cs[inew].zero();
   par::zero(E.freed.data(), E.freed.capacity());
@@ -1206,7 +1420,8 @@ void Engine::step() {
   const int nBeam0 = E.nBeam;
   const int nsubB = std::max(1, int(std::ceil(Delta / sim.cfg.numerics.beam_dz_max)));
   const double dzB = Delta / nsubB;
-  if (repush) {
+  const bool cons = P.consistent != 0;  // numerics.beam_consistent: the radial flux needs the map too
+  if (repush || cons) {
     E.beamSave.reserve(std::max(1, nBeam0));
     E.beamMap.reserve(std::max(1, nBeam0));
     par::copy(E.beamSave.data(), E.beam.data(), size_t(nBeam0));
@@ -1224,7 +1439,7 @@ void Engine::step() {
     E.hcnt[C_PPREV] = E.nPprev;
     E.pushCounters();
     Particle *beam = E.beam.data(), *tmp = E.beamTmp.data(), *pprev = E.pprev.data();
-    int* bmap = repush ? E.beamMap.data() : nullptr;
+    int* bmap = (repush || cons) ? E.beamMap.data() : nullptr;
     par::forDyn(&cnt[C_BEAM], nullptr, E.nBeam, GEM_LAMBDA(long i) {
       const Particle& p = beam[i];
       if (bmap) bmap[i] = -1;
@@ -1288,6 +1503,35 @@ void Engine::step() {
   }
   filterBeamDev(c1b, sim.cfg.numerics.beam_filter);
   smoothBeam();
+  if (cons) {  // charge-conserving radial flux of the step (Simulation::beamFlux)
+    const CurrV fl = E.flview();
+    E.Fl.zero();
+    const Particle* start = (repush && E.nCc == nBeam0) ? E.ccStart.data() : E.beamSave.data();
+    const Particle* beam = E.beam.data();
+    const int* bmap = E.beamMap.data();
+    par::forN(nBeam0, GEM_LAMBDA(long i) {
+      const int k = bmap[i];
+      if (k >= 0) fluxDeposit(P, fl, start[i], beam[k]);
+    });
+    filterBeamDev(fl, sim.cfg.numerics.beam_filter);
+    smoothCurrent(fl);
+    const int ck0 = E.ck0, cnk = E.cnk;
+    const double th1 = 2.0 * P.theta, th0 = 2.0 - th1;
+    par::forN(long(M + 1) * cnk, GEM_LAMBDA(long col) {
+      const int m = int(col / cnk), k = ck0 + int(col % cnk);
+      const cplx im(0.0, double(m));
+      cplx cum;
+      fl.jr[fl.f(m, k, 0)] = cplx();
+      for (int j = 1; j <= N; ++j) {
+        const int c = j - 1;
+        cplx src = fl.jz[fl.c(m, k, c)] / Delta;
+        if (m > 0) src = src + (im / P.g.c[c]) * (0.5 * (th0 * c0b.jp[c0b.c(m, k, c)] + th1 * c1b.jp[c1b.c(m, k, c)]));
+        cum = cum + P.g.Ac[c] * src;
+        fl.jr[fl.f(m, k, j)] = cum * (-1.0 / P.g.rho[j]);
+      }
+    });
+    par::fence();
+  }
   const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
   par::zero(E.pred[1 - E.ip].data(), npf);
   par::zero(E.predP[1 - E.ip].data(), npc);
@@ -1307,6 +1551,11 @@ void Engine::step() {
     Particle *save = E.beamSave.data(), *beam = E.beam.data();
     const int* bmap = E.beamMap.data();
     unsigned long long* lsc = E.lcntScratch.data();
+    if (cons) {  // the first-push states: start of the next radial flux (Simulation::remeanBeam)
+      E.ccStart.reserve(std::max(1, nAll));
+      par::copy(E.ccStart.data(), E.beam.data(), size_t(nAll));
+      E.nCc = nAll;
+    }
     par::forN(nBeam0, GEM_LAMBDA(long i) {
       const int k = bmap[i];
       if (k < 0) return;
@@ -1367,6 +1616,7 @@ void Engine::march(const MarchSpec& ms) {
   const FieldsV fo = E.fview(iold), fn = E.fview(inew);
   const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
   const CurrV c1b = E.bview(inew), c1s = E.sview(inew);
+  const CurrV fl = E.flview();
   int* cnt = E.cnt.data();
   unsigned long long* lcnt = E.lcnt.data();
   Profile& prof = E.prof;
@@ -1526,7 +1776,7 @@ void Engine::march(const MarchSpec& ms) {
       par::teams(M + 1, GEM_LAMBDA(const Team& t) {
         const int m = t.league;
         solveSliceTeam(t, P, m, n, fo, fn, c0b, c0s, c1b, c1s, predR, predPc, Tf, Tc,
-                       scratch + size_t(m) * SOLVE_SCRATCH * (N + 1));
+                       scratch + size_t(m) * SOLVE_SCRATCH * (N + 1), fl);
       });
       prof.stop(Profile::SOLVE);
     }

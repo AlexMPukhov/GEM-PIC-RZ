@@ -228,6 +228,12 @@ class Simulation {
   // (it has omega = 0 there for every k_perp: numerical Cherenkov)
   void filterBeamCurrent(Currents& C) const;
   void smoothBeamRadially(Currents& C) const;
+  // numerics.beam_consistent: charge-conserving radial flux (mode 0) of the beam list from the positions `start`
+  // (index i of the list at s^0) to the positions of the first push (beamMap), into bflux.jr, filtered as the beam
+  // current; ccStart: the first-push states of the last step (beam_field = mean)
+  void beamFlux(const std::vector<Particle>& start);
+  Currents bflux;
+  std::vector<Particle> ccStart;
 
   void pushBeam();
   void march(double s1);
