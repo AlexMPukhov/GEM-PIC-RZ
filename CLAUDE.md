@@ -47,22 +47,18 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        Merged (PR #2). dE/E in bunches.txt is now accumulated centred (Moments::gmean, gM2; branch
        centred-energy-spread): the old sum gamma^2 - (sum gamma)^2 / Q was 27 % low at dE/E = 4e-6, gamma = 1000,
        and differed between rank counts; ctest energy_spread checks it against the particle data.
-    5. in progress. 5d (branch engine-mean-push): the mean phase on the device (pushBeams with wMean = 0.5 after
-       uploading F^1 with the pre-absorber values, deviceBeamCurrent(C0B, ..., meanPhase = true), trapped and
-       rear-trapped deposits added on the device; host bookkeeping unchanged). Next: 5e fewer host transfers.
-       Merged (PR #5): 5c beam push of the own list, the continued pushes and the halo
-       copies on the device (Engine::pushBeams, host bookkeeping on the returned states), deposits into c1b and
-       the halo array H on the device (depositBeams), the filter across the block edges on the device
-       (PipelineRun::deviceBeamCurrent = filterBeam with Engine::combine/filter/zero/addCurrents, AUX_H / AUX_RW
-       device arrays); c1b no longer uploaded. Merged before (PR #4): 5a device arrays in the host layout with slice offsets
-       (FieldsV n0/ns, CurrV k0/nk; whole window bit-identical); 5b the zeta march of a block on the device
-       (Engine::marchBlock, Engine::march shared with step(), absorbSlices per final slice with pre-absorber
-       values for the mean phase; PipelineRun::deviceMarch stages the state through the host; backend = cuda,
-       or GEMPIC_PIPELINE_ENGINE=1 with backend = openmp for testing; one GPU per rank from the node-local
-       rank). Emulation = serial on all tests/mpi.sh decks. Still on the host: beam push + bookkeeping + filter,
-       mean phase (5c, 5d); transfers per step: the whole block of fold, c0b, c0s, c1b up and fnew, c1b, c1s down
-       (5e: only the changed parts / CUDA-aware MPI). Then: (march over [a, b), the pipeline exchanges staged through the host, later
-       CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
+    5. done (PRs #4-#6, merged 2026-10-24/25): the GPU engine on the block of an MPI rank, backend = cuda (or
+       GEMPIC_PIPELINE_ENGINE=1 with backend = openmp, the GPU emulation build, for testing); one GPU per rank
+       from the node-local rank. 5a device arrays in the host layout with slice offsets (FieldsV n0/ns, CurrV
+       k0/nk; whole window bit-identical). 5b the zeta march of a block (Engine::marchBlock, Engine::march shared
+       with step(), absorbSlices per final slice with pre-absorber values; PipelineRun::deviceMarch). 5c the beam
+       push of the own list, the continued pushes and the halo copies (Engine::pushBeams; host bookkeeping on the
+       returned states), deposits into c1b / H and the filter across the block edges (deviceBeamCurrent with
+       Engine::combine/filter/zero/addCurrents, AUX_H / AUX_RW). 5d the mean phase (pushBeams with wMean = 0.5
+       after uploading F^1 with the pre-absorber values; deviceBeamCurrent(C0B, ..., meanPhase = true)).
+       Emulation = serial on all tests/mpi.sh decks; CUDA build compiles (nvcc 13.4, sm_90). Open, 5e: transfers
+       per step are still whole blocks (fold, c0b, c0s up; fnew, c1b, c1s down; the beam list up and down) and
+       the MPI messages go through the host (CUDA-aware MPI later) - decide after the first JUPITER timings.
     6. real-GPU tests and the scaling series (1, 4, 16, 64 GPUs) on JUPITER / JUWELS Booster, run by Thomas
        Wilson: scripts in benchmarks/jupiter/ (README there: build.sh, check.sbatch = GPU vs serial on 1-4 GPUs,
        submit_scaling.sh + scaling.sbatch + cpu_reference.sbatch, collect.sh = table). Dry-run in WSL with
