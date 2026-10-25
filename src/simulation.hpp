@@ -212,7 +212,8 @@ class Simulation {
                                                                        // 3 checkpoint)
   void initBunches();
   void initBunchFields();
-  void addBeamFields(double sign, bool deckGamma);  // co-moving self-fields of the beam list
+  void addBeamFields(double sign, bool deckGamma);
+  void addAzimuthalFields(const Currents& C, double sign, double beta);  // co-moving self-fields of the beam list
   void applyChicanes(double za, double zb);          // thin chicanes passed in (za, zb]
 
   EB gather(const Fields& F, int n1, double w1, int n2, double w2, double x, double y) const;
@@ -226,6 +227,13 @@ class Simulation {
   // removes the zeta-Nyquist component, which the scheme radiates resonantly
   // (it has omega = 0 there for every k_perp: numerical Cherenkov)
   void filterBeamCurrent(Currents& C) const;
+  void smoothBeamRadially(Currents& C) const;
+  // numerics.beam_consistent: charge-conserving radial flux (mode 0) of the beam list from the positions `start`
+  // (index i of the list at s^0) to the positions of the first push (beamMap), into bflux.jr, filtered as the beam
+  // current; ccStart: the first-push states of the last step (beam_field = mean)
+  void beamFlux(const std::vector<Particle>& start);
+  Currents bflux;
+  std::vector<Particle> ccStart;
 
   void pushBeam();
   void march(double s1);
@@ -240,6 +248,7 @@ class Simulation {
   // plasma.smooth_length: radial smoothing of the streaming-plasma sources of half-cell n
   void smoothStream(Currents& C, int n);
   SourceFilter sfilter;
+  mutable SourceFilter bfilter;  // numerics.beam_smooth_length: radial smoothing of the beam current
   // the same, depositing into half-cell kc of C and collecting freed electrons in bornOut
   void pushStreamParticle(Particle& p, int n, double s1, Currents& C, int kc, std::vector<Particle>& bornOut);
   // all streaming particles through half-cell n (threads > 1: OpenMP, per-thread buffers)

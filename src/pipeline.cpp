@@ -294,6 +294,10 @@ StorageBlock pipelineBlock(const Config& cfg, int P, int r) {
   // from its ends
   const int G = 2 * pf + 6;
   const int minSlices = std::max(MIN_SLICES + pf, G);
+  if (P > 1 && cfg.numerics.beam_smooth_length > 0.0)
+    throw std::runtime_error("MPI: numerics.beam_smooth_length is not available with more than one rank yet");
+  if (cfg.numerics.beam_consistent)
+    throw std::runtime_error("MPI pipeline: numerics.beam_consistent is not available in the pipelined step yet");
   for (int q = 0; q < P; ++q) {
     const int lq = int((long long)Nz * q / P), hq = int((long long)Nz * (q + 1) / P);
     if (hq - lq < minSlices && P > 1)

@@ -63,8 +63,11 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   for (auto* C : {&c0b, &c0s, &c1b, &c1s}) C->initRange(M, Nz, g.N, blk.sa, blk.sb);
   solver.setup(g, M);
   solver.theta = cfg.numerics.theta;
+  solver.thetaStiff = cfg.numerics.theta_stiff;
+  if (cfg.numerics.beam_consistent) bflux.initRange(M, Nz, g.N, blk.sa, blk.sb);
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
                 cfg.plasma.present ? cfg.plasma.smooth_length_m0 : 0.0);
+  bfilter.setup(g, solver, M, cfg.numerics.beam_smooth_length);
   const size_t nf = size_t(M + 1) * (g.N + 1), nc = size_t(M + 1) * g.N;
   predR.assign(nf, 0.0); predRprev.assign(nf, 0.0);
   predP.assign(nc, 0.0); predPprev.assign(nc, 0.0);
@@ -404,9 +407,10 @@ void Simulation::initBunches() {
     }
     // Fawley (PRST-AB 5, 070701, 2002): M copies at phases theta_j = 2 pi j / M (zero bunching),
     // displaced by dtheta_j = sum_h a_h cos(h theta_j) + b_h sin(h theta_j), h < M/2, with Gaussian
-    // a_h, b_h of variance 2 / (h^2 N_e): the bunching <|b_h|^2> = 1/N_e of N_e electrons at random
+    // a_h, b_h of variance 2 / (h^2 N_e): the bunching <|b_h|^2> = 1/N_e of N_e electrons at random.
+    // shot_noise = quiet: no displacements (quiet start, zero bunching for h < M)
     const double k = 2.0 * PI / B.noise_wavelength;
-    const int H = (M - 1) / 2;
+    const int H = B.quiet ? 0 : (M - 1) / 2;
     for (const auto& c : cent) {
       const double Ne = std::fabs(c.q) / Qe;  // electrons in the beamlet
       double a[16] = {0}, bb[16] = {0};
@@ -637,7 +641,55 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
           }
         }
       }
+      if (m == 0 && cfg.numerics.beam_consistent) addAzimuthalFields(C, sign, beta);
     }
+  }
+}
+
+// Co-moving field of the azimuthal current j_phi (mode 0) of a bunch, e.g. a beam rotating on helical orbits
+// (bunch.ux_function, uy_function): the field of a magnetized ring moving with beta -> 1. With the vector
+// potential A_phi(zeta, r) of the current,
+//     B_z = curl_z A,  dB_z/dr = -j_phi (Ampere),  E_phi = d_zeta A_phi,  B_r = -beta E_phi,
+// i.e. R_phi = (1 + beta) E_phi, L_phi = (1 - beta) E_phi. Discretized with the operators of the field update so
+// that the field is steady in s for a source at rest in the window: the R_phi update needs g(b) = -j_phi
+// (b on the faces, b = 0 at the wall), and the B_z update (Faraday, d_zeta b = CE(E)) gives E_phi = d_zeta A with
+// CE(A) = b. Without this field the beam would start with B_z = 0 and get a spurious kick in the first steps.
+// The B_z update relates the mean of E_phi at the slices n, n+1 to the difference of A across half-cell n; with
+// b and A of the half-cells (from j_phi of the half-cell) and their slice values the means of the two half-cells
+// at the slice (as j_phi of the R_phi update), E_phi(n) = (A_n - A_{n-1}) / (zeta distance of the half-cells) is the
+// steady field of the scheme (the central difference of the slice values would be its (1,2,1) average).
+void Simulation::addAzimuthalFields(const Currents& C, double sign, double beta) {
+  // the stored slices [sLo, sHi) (whole window, or an MPI block with ghosts; the slices are independent except for
+  // d_zeta A, whose values at the outermost ghost slices are not used)
+  const int N = g.N, nS = sHi - sLo;
+  std::vector<cd> A(size_t(nS) * N, 0.0), b(size_t(nS) * (N + 1), 0.0);  // half-cells k = sLo ...
+  bool any = false;
+  for (int k = sLo; k < sHi; ++k) {
+    if (!C.has(k)) continue;
+    cd* bk = &b[size_t(k - sLo) * (N + 1)];
+    bk[N] = 0.0;
+    for (int i = N - 1; i >= 0; --i) {
+      const cd jp = C.jp[C.c(0, k, i)];
+      if (jp != cd(0.0)) any = true;
+      bk[i] = bk[i + 1] + jp * (g.rho[i + 1] - g.rho[i]);
+    }
+    // A on the centres from CE(A) = b: c_0 A_0 = Af_0 b_0, c_i A_i = c_{i-1} A_{i-1} + Af_i b_i
+    cd* ak = &A[size_t(k - sLo) * N];
+    ak[0] = g.Af[0] * bk[0] / g.c[0];
+    for (int i = 1; i < N; ++i) ak[i] = (g.c[i - 1] * ak[i - 1] + g.Af[i] * bk[i]) / g.c[i];
+  }
+  if (!any) return;
+  auto hb = [&](int k, int i) { return (k >= sLo && k < sHi && C.has(k)) ? b[size_t(k - sLo) * (N + 1) + i] : cd(0.0); };
+  auto ha = [&](int k, int i) { return (k >= sLo && k < sHi && C.has(k)) ? A[size_t(k - sLo) * N + i] : cd(0.0); };
+  for (int n = sLo; n < sHi; ++n) {
+    const double hm = (n > 0) ? zv.len(n - 1) : zv.len(0), hp = zv.len(n);
+    for (int i = 0; i < N; ++i) {
+      const cd Ep = (ha(n, i) - ha(n - 1, i)) / (0.5 * (hm + hp));
+      fold.Rp[fold.c(0, n, i)] += sign * ((1.0 + beta) * Ep);
+      fold.Lp[fold.c(0, n, i)] += sign * ((1.0 - beta) * Ep);
+    }
+    for (int i = 0; i <= N; ++i)
+      fold.Bz[fold.f(0, n, i)] += sign * 0.5 * (zv.wLo(n) * hb(n - 1, i) + zv.wHi(n) * hb(n, i));
   }
 }
 
@@ -789,7 +841,7 @@ void Simulation::smoothStream(Currents& C, int n) {
 // (response cos^2(kappa h/2)); zero beyond the ends of the window.
 void Simulation::filterBeamCurrent(Currents& C) const {
   const int passes = cfg.numerics.beam_filter;
-  if (passes <= 0) return;
+  if (passes <= 0) { smoothBeamRadially(C); return; }
   // over the stored half-cells [k0, k0 + nk): the whole window, or an MPI block with ghosts (the values within
   // `passes` of the ends of a block are then not used)
   const int k0 = C.k0, k1 = C.k0 + C.nk;
@@ -810,6 +862,98 @@ void Simulation::filterBeamCurrent(Currents& C) const {
   column(C.jr, g.N + 1);
   column(C.jp, g.N);
   column(C.jz, g.N);
+  smoothBeamRadially(C);
+}
+
+// numerics.beam_smooth_length: the beam current of every half-cell smoothed in r as the plasma sources
+// (SourceFilter, charge-conserving), so that thin, intense rings or sheets of beam current have a width of at least
+// a. A beam structure of width w and length L has a near field that changes along s on the scale w^2 / L; a step
+// Delta >> w^2 / L makes that response stiff (the field at the current sheet does not follow the moving beam).
+void Simulation::smoothBeamRadially(Currents& C) const {
+  if (!bfilter.on()) return;
+  const int N = g.N;
+  std::vector<cd> jr(size_t(N) + 1, cd(0.0)), jp(size_t(N), cd(0.0)), jz(size_t(N), cd(0.0));
+  for (int n = C.k0; n < C.k0 + C.nk; ++n) {
+    for (int m = 0; m <= M; ++m) {
+      bool any = false;
+      for (int i = 0; i <= N; ++i) { jr[i] = C.jr[C.f(m, n, i)]; any = any || jr[i] != cd(0.0); }
+      for (int i = 0; i < N; ++i) {
+        jp[i] = C.jp[C.c(m, n, i)]; jz[i] = C.jz[C.c(m, n, i)];
+        any = any || jp[i] != cd(0.0) || jz[i] != cd(0.0);
+      }
+      if (!any) continue;
+      bfilter.vector(m, jr.data(), jp.data());
+      bfilter.scalar(m, jz.data());
+      for (int i = 1; i <= N; ++i) C.jr[C.f(m, n, i)] = jr[i];
+      for (int i = 0; i < N; ++i) { C.jp[C.c(m, n, i)] = jp[i]; C.jz[C.c(m, n, i)] = jz[i]; }
+    }
+    bfilter.scalar0(&C.rho[C.d(n, 0)]);
+  }
+}
+
+// Charge-conserving radial flux of the beam over the step. R follows the beam through -int j_r ds; with j_r and j_z
+// deposited separately (linear weights on faces and centres) the discrete continuity equation does not hold, and a
+// sheet thinner than a cell leaves a Gauss-law error behind wherever it moves. Here every particle contributes the
+// change of its centre weights (times e^{-i m phi}, as in deposit) between the two positions (zeta weights averaged
+// over both, so that the slow slip in zeta does not appear as radial flux), and the flux through face j of mode m
+// follows from continuity with the divergence of the field solver (opCB) and the j_phi of the R_phi update:
+//     rho_j F_j = -sum_{i<j} A^c_i [dj_z,i / Delta + (i m / c_i) jbar_phi,i],
+//     jbar_phi = (th0 j_phi(s^0) + th1 j_phi(s^1)) / 2   (beam current; th0 = th1 = 1 for the trapezoid).
+void Simulation::beamFlux(const std::vector<Particle>& start) {
+  const int N = g.N;
+  Currents& D = bflux;
+  D.zero();
+  // centre weights of the j_z deposit of mode m at radius r (Simulation::deposit): up to two centres
+  auto centres = [&](double r, int m, int* idx, double* w) {
+    const RadialGrid::W wc = g.locC(r);
+    if (wc.mode == 0) { idx[0] = wc.a; w[0] = wc.wa; idx[1] = wc.a + 1; w[1] = wc.wb; return 2; }
+    if (wc.mode == 2) { idx[0] = N - 1; w[0] = 1.0; return 1; }
+    idx[0] = 0; w[0] = (m == 0) ? 1.0 : std::pow(r / g.c[0], m);
+    return 1;
+  };
+  for (size_t i = 0; i < start.size() && i < beamMap.size(); ++i) {
+    if (beamMap[i] < 0) continue;
+    const Particle &a = start[i], &b = beam[size_t(beamMap[i])];
+    double fa, fb;
+    const int ja = zv.beamCell(a.zeta, fa), jb = zv.beamCell(b.zeta, fb);
+    const int ks[4] = {ja - 1, ja, jb - 1, jb};
+    const double wk[4] = {0.5 * (1.0 - fa), 0.5 * fa, 0.5 * (1.0 - fb), 0.5 * fb};
+    const double ra = std::hypot(a.x, a.y), rb = std::hypot(b.x, b.y);
+    const cd ea = (ra > 0.0) ? cd(a.x / ra, -a.y / ra) : cd(1.0), eb = (rb > 0.0) ? cd(b.x / rb, -b.y / rb) : cd(1.0);
+    cd pa(1.0), pb(1.0);  // e^{-i m phi}
+    for (int m = 0; m <= M; ++m) {
+      int ia[2], ib[2];
+      double wa[2], wb[2];
+      const int na = centres(ra, m, ia, wa), nb = centres(rb, m, ib, wb);
+      auto add = [&](int c, cd v) {
+        for (int t = 0; t < 4; ++t) {
+          const int k = ks[t];
+          if (k < 0 || k >= Nz || !D.has(k) || wk[t] == 0.0) continue;
+          D.jz[D.c(m, k, c)] += b.q * wk[t] * v / (2.0 * PI * zv.len(k) * g.Vc[c]);
+        }
+      };
+      for (int q = 0; q < nb; ++q) add(ib[q], wb[q] * pb);
+      for (int q = 0; q < na; ++q) add(ia[q], -wa[q] * pa);
+      pa *= ea;
+      pb *= eb;
+    }
+  }
+  filterBeamCurrent(D);  // dj_z as the beam current
+  const double th1 = 2.0 * cfg.numerics.theta, th0 = 2.0 - th1;
+  for (int m = 0; m <= M; ++m) {
+    const cd im(0.0, double(m));
+    for (int k = D.k0; k < D.k0 + D.nk; ++k) {
+      cd cum = 0.0;
+      D.jr[D.f(m, k, 0)] = 0.0;
+      for (int j = 1; j <= N; ++j) {
+        const int c = j - 1;
+        cd src = D.jz[D.c(m, k, c)] / Delta;
+        if (m > 0) src += (im / g.c[c]) * 0.5 * (th0 * c0b.jp[c0b.c(m, k, c)] + th1 * c1b.jp[c1b.c(m, k, c)]);
+        cum += g.Ac[c] * src;
+        D.jr[D.f(m, k, j)] = -cum / g.rho[j];
+      }
+    }
+  }
 }
 
 // beam-type deposit (current at level s^1): W = q / v_z, linear in zeta
@@ -863,6 +1007,7 @@ void Simulation::pushBeam() {
 void Simulation::remeanBeam() {
   size_t n = 0;
   for (int k : beamMap) if (k >= 0) ++n;
+  if (cfg.numerics.beam_consistent) ccStart = beam;  // the first-push states (start of the next radial flux)
   wNew = 0.5;
   for (size_t i = 0; i < beamSave.size(); ++i) {
     if (beamMap[i] < 0) continue;
@@ -1182,6 +1327,7 @@ void Simulation::applyChicanes(double za, double zb) {
   for (const auto& C : cfg.chicanes) {
     if (!(za < C.z && C.z <= zb)) continue;
     if (engine) engine->downloadFull();
+    ccStart.clear();  // the next radial flux starts from the moved particles
     addBeamFields(-1.0, false);
     double sh = 0.0, sh2 = 0.0, w = 0.0;
     const double top = zv.node(Nz);
@@ -1240,9 +1386,16 @@ void Simulation::march(double s1) {
   std::fill(freedCharge.begin(), freedCharge.end(), 0.0);
   pending.swap(pendingNext);  // particles that reached s^0 in the last step with v_z < vz_beam
   pendingNext.clear();
+  // numerics.beam_consistent: the beam positions where the radial flux of this step starts (with beam_field = mean
+  // the first-push positions of the last step, with which R and the charge of s^0 agree)
+  const bool consistent = cfg.numerics.beam_consistent;
+  std::vector<Particle> fluxStart;
+  if (consistent)
+    fluxStart = (cfg.numerics.beam_field == BEAM_FIELD_MEAN && ccStart.size() == beam.size()) ? ccStart : beam;
   pushBeam();                 // adds beam particles that became slower than vz_min
   for (const auto& p : beam) depositBeamParticle(c1b, p);
   filterBeamCurrent(c1b);  // (particles trapped during the march are deposited unfiltered)
+  if (consistent) beamFlux(fluxStart);
   loadFresh();
   // particles joining the march at their zeta wait in the streaming list
   for (const auto& p : pending) {
@@ -1288,11 +1441,29 @@ void Simulation::march(double s1) {
         const int nm = (n > 0) ? n - 1 : 0;
         const double wl = zv.wLo(n), wh = zv.wHi(n);
         const double th1 = 2.0 * cfg.numerics.theta, th0 = 2.0 - th1;  // 1, 1 for the trapezoid
+        // numerics.beam_consistent: the beam current of half-cell k as the R update uses it (the mean of s^0 and s^1;
+        // j_r: the charge-conserving flux of the step); the half-cell equations (E_z, L_r, L_phi) get the mean of its
+        // slice values at n and n+1, as the discrete Ampere law relates div B of the slices to the half-cell
+        auto bjr = [&](int k, int i) -> cd {
+          return (k < 0 || k >= Nz || !c1b.has(k)) ? cd(0.0) : bflux.jr[bflux.f(m, k, i)];
+        };
+        auto bjp = [&](int k, int i) -> cd {
+          if (k < 0 || k >= Nz || !c1b.has(k)) return 0.0;
+          return 0.5 * (th0 * c0b.jp[c0b.c(m, k, i)] + th1 * c1b.jp[c1b.c(m, k, i)]);
+        };
+        auto bjz = [&](int k, int i) -> cd { return (k < 0 || k >= Nz || !c1b.has(k)) ? cd(0.0) : c1b.jz[c1b.c(m, k, i)]; };
+        const double s0w = 0.25 * zv.wLo(n), s1w = 0.25 * (zv.wHi(n) + (n + 1 < Nz ? zv.wLo(n + 1) : 1.0)),
+                     s2w = 0.25 * (n + 1 < Nz ? zv.wHi(n + 1) : 0.0);
+        auto half = [&](auto f, int i) { return s0w * f(n - 1, i) + s1w * f(n, i) + s2w * f(n + 1, i); };
         for (int i = 0; i <= N; ++i) {
           const cd a = c0b.jr[c0b.f(m, nm, i)] + c0s.jr[c0s.f(m, nm, i)];
           const cd pr = (n > 0) ? predR[m * (N + 1) + i] : c1b.jr[c1b.f(m, 0, i)] + c1s.jr[c1s.f(m, 0, i)];
           Jr[i] = th0 * (wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)]) +
                   th1 * (wl * pr + wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)]);
+          if (consistent)  // beam part: the flux of the step
+            Jr[i] += 2.0 * (wl * bjr(nm, i) + wh * bjr(n, i)) -
+                     th0 * (wl * c0b.jr[c0b.f(m, nm, i)] + wh * c0b.jr[c0b.f(m, n, i)]) -
+                     th1 * (wl * c1b.jr[c1b.f(m, nm, i)] + wh * c1b.jr[c1b.f(m, n, i)]);
         }
         for (int i = 0; i < N; ++i) {
           const cd a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
@@ -1301,10 +1472,11 @@ void Simulation::march(double s1) {
                   th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
         }
         // j^1 at half-cell n = beam + streaming
-        for (int i = 0; i <= N; ++i) jr1[i] = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
+        for (int i = 0; i <= N; ++i)
+          jr1[i] = (consistent ? half(bjr, i) : c1b.jr[c1b.f(m, n, i)]) + c1s.jr[c1s.f(m, n, i)];
         for (int i = 0; i < N; ++i) {
-          jp1[i] = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
-          jz1[i] = c1b.jz[c1b.c(m, n, i)] + c1s.jz[c1s.c(m, n, i)];
+          jp1[i] = (consistent ? half(bjp, i) : c1b.jp[c1b.c(m, n, i)]) + c1s.jp[c1s.c(m, n, i)];
+          jz1[i] = (consistent ? half(bjz, i) : c1b.jz[c1b.c(m, n, i)]) + c1s.jz[c1s.c(m, n, i)];
         }
         solver.solveSlice(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)], &fold.Ez[fold.c(m, n, 0)],
                           &fold.Bz[fold.f(m, n, 0)], &fnew.Rr[fnew.f(m, n + 1, 0)], &fnew.Lr[fnew.f(m, n + 1, 0)],
