@@ -168,7 +168,9 @@ int run(int argc, char** argv) {
 #if defined(_OPENMP)
     if (cfg.numerics.backend == gem::NumericsConfig::Backend::OpenMP) nth = omp_get_max_threads();
 #endif
-    std::printf("backend: %s on %d MPI rank%s%s\n", nth > 1 ? "openmp" : "serial", nranks, nranks > 1 ? "s" : "",
+    const bool gpu = cfg.numerics.backend == gem::NumericsConfig::Backend::Cuda;
+    std::printf("backend: %s on %d MPI rank%s%s\n", gpu ? "cuda" : nth > 1 ? "openmp" : "serial", nranks,
+                nranks > 1 ? "s" : "",
                 nth > 1 ? (", " + std::to_string(nth) + " threads per rank").c_str() : "");
     gem::RunControl rc;
     rc.deckPath = deckPath;
