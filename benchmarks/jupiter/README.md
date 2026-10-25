@@ -2,8 +2,11 @@
 
 The MPI pipeline with `numerics.backend = cuda` gives every rank one GPU. The rank pushes its beam, marches its
 block of slices and does the mean-field second push there (README, MPI section). So far this was tested only in
-the GPU emulation build (the GPU code paths on CPU threads) and compiled with nvcc 13.4 for sm_90. **It has never
-run on a real GPU.** These scripts do that, in two parts:
+the GPU emulation build (the GPU code paths on CPU threads) and compiled with nvcc 13.4 for sm_90. **On one GPU
+it has now run on a real GPU** (RTX 5090, one rank, no MPI, 2026-10-25): the ctest of the GPU build and the
+one-rank comparisons of `check.sbatch` (`benchmarks/gpu/check_1gpu.sh`) agree with the serial code, see
+`benchmarks/gpu/README.md`. **Several GPUs (MPI) have never run, and there are no representative timings yet**
+(GeForce FP64 is 1/64 of FP32). These scripts do that, in two parts:
 
 | part | script | resources | what it shows |
 |---|---|---|---|

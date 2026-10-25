@@ -24,6 +24,7 @@ The toolkit must not be newer than the "CUDA Version" that `nvidia-smi` shows.
 | RTX 30xx, A40, A10 | 86 |
 | L40, RTX 40xx | 89 |
 | H100, H200 | 90 |
+| RTX 50xx | 120 (CUDA ≥ 12.8; tested: RTX 5090, CUDA 13.0) |
 
 ## 2. Get `nvcc` (no root rights needed)
 
@@ -75,6 +76,11 @@ The GPU tests compare the GPU with the serial reference:
 | `physics_cuda` | bunch field (Gauss), ion collapse, field ionization of H and N |
 | `restart_cuda` | checkpoint and restart on the GPU |
 | `mpi_pipeline` (MPI builds) | the ζ-march of the blocks on the GPU (`numerics.backend = cuda` with 1–3 ranks, mean-field push, free-hand grids) against the serial run |
+
+Tests without a backend suffix (`lasy`, `flying_focus`, `undulator`, `cherenkov`, `axis_refine`, `bunch_functions`,
+...) also run on the GPU in a CUDA build, whose default backend is `cuda`. On one GPU without Slurm or MPI,
+`benchmarks/gpu/check_1gpu.sh` runs the GPU-vs-serial comparisons of `benchmarks/jupiter/check.sbatch` for one rank
+and the wall times against the CPU threads. First real-GPU results (RTX 5090): `benchmarks/gpu/README.md`.
 
 Several GPUs (MPI, one rank per GPU): `mpirun -np 4 build-gpu/gempic_rz run.deck numerics.backend=cuda`. Every rank
 takes the GPU of its node-local rank (Open MPI, Slurm, MPICH, MVAPICH variables), or the single GPU it sees with

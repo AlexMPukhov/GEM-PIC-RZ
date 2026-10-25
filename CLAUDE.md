@@ -22,12 +22,12 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     `benchmarks/harmonics/` (emission test, FEL deck), `benchmarks/genesis_seeded/`; the FEL result data are private too.
   - Code paper: arXiv:2610.31622 (v1 source in `paper/arxiv_v1/`); journal version for J. Comput. Phys. in
     `paper/gempic_rz.tex` (elsarticle, highlights, Elsevier end statements). Code DOI 10.5281/zenodo.23600178.
-  - GPU check: `benchmarks/gpu/` (not yet run on a GPU).
+  - GPU check: `benchmarks/gpu/` (gpu_check.sh, check_1gpu.sh; first real-GPU results on an RTX 5090 in the README there).
   - **Flying focus** (luminal Bessel pulse fed through the radial boundary, `flying_focus` block): handover in
     `docs/flying_focus_handoff.md`; tests and production decks in `benchmarks/flying_focus/` (README there).
   - **LASY** laser files (merged, PR #1): `laser.file` (import, exact propagation, `inject = boundary`) and
     `output.lasy` (export), `src/laser_file.*`, ctest `lasy`, docs/input_deck.md. Motivation: flying focus /
-    structured light prepared in LASY. Not yet run on a real GPU; MPI checked in tests/mpi.sh (3 ranks = serial).
+    structured light prepared in LASY. ctest lasy passes on a real GPU (RTX 5090); MPI checked in tests/mpi.sh (3 ranks = serial).
   - **Multi-GPU plan** (MPI pipeline + GPU engine), branch `distfields`:
     1. done: distributed storage in the MPI pipeline: `Fields`/`Currents` store only [n0, n0 + ns) with
        global-index accessors; every rank keeps its block and 2 pf + 6 ghost slices (`pipelineBlock()` in
@@ -63,4 +63,12 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        Wilson: scripts in benchmarks/jupiter/ (README there: build.sh, check.sbatch = GPU vs serial on 1-4 GPUs,
        submit_scaling.sh + scaling.sbatch + cpu_reference.sbatch, collect.sh = table). Dry-run in WSL with
        stand-ins for srun/sbatch/nvidia-smi and the emulation binary. Waiting for his results.
+       6a done (2026-10-25, branch gpu-rtx5090): first real-GPU run, one RTX 5090 (cc 12.0, CUDA 13.0, no MPI, so
+       1 rank): ctest of the GPU build 29/30 pass + gui skipped (python 3.6); benchmarks/gpu/check_1gpu.sh (the
+       1-rank part of check.sbatch, no Slurm) 0 failed comparisons, GPU = serial to all printed digits (engine and
+       pipelined block march, FEL mean-field push, flying focus), planar eps_nx 0.0067 um. Fixed: axis_refine /
+       bunch_functions ran backend = openmp, rejected by a CUDA build (now the parallel backend of the build).
+       Timings vs 20 threads: lwfa_heavy 6.4x faster, FEL 0.9x (FP64-bound field solve: GeForce FP64 = 1/64,
+       not representative of GH200); FEL pipelined +27 s over the engine outside the engine phases (5e transfers).
+       Still open: several GPUs (MPI) and representative timings on JUPITER.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
