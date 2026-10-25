@@ -229,8 +229,10 @@ struct BunchConfig {
   double file_center = 0.0;           // centroid (zeta_center of the deck)
   double resample_smoothing = 0.0;    // jitter of resampled particles, in units of the rms per coordinate
   // shot noise: random positions (noise of the macroparticles), or Fawley's beamlets
-  // with the bunching noise of the real number of electrons at noise_wavelength
+  // with the bunching noise of the real number of electrons at noise_wavelength; quiet = the
+  // beamlets without their displacements (quiet start: no bunching at harmonics h < beamlet)
   bool fawley = false;
+  bool quiet = false;
   double noise_wavelength = 0.0;
   int beamlet = 4;
   // more macroparticles near the axis (lower noise of the modes m >= 1 there): centres with r < axis_radius are

@@ -404,9 +404,10 @@ void Simulation::initBunches() {
     }
     // Fawley (PRST-AB 5, 070701, 2002): M copies at phases theta_j = 2 pi j / M (zero bunching),
     // displaced by dtheta_j = sum_h a_h cos(h theta_j) + b_h sin(h theta_j), h < M/2, with Gaussian
-    // a_h, b_h of variance 2 / (h^2 N_e): the bunching <|b_h|^2> = 1/N_e of N_e electrons at random
+    // a_h, b_h of variance 2 / (h^2 N_e): the bunching <|b_h|^2> = 1/N_e of N_e electrons at random.
+    // shot_noise = quiet: no displacements (quiet start, zero bunching for h < M)
     const double k = 2.0 * PI / B.noise_wavelength;
-    const int H = (M - 1) / 2;
+    const int H = B.quiet ? 0 : (M - 1) / 2;
     for (const auto& c : cent) {
       const double Ne = std::fabs(c.q) / Qe;  // electrons in the beamlet
       double a[16] = {0}, bb[16] = {0};
