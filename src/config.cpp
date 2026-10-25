@@ -1270,6 +1270,8 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.iterations = int(r.integer("iterations", N.iterations));
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
+  N.beam_smooth_length = r.num("beam_smooth_length", Dim::Length, 0.0);
+  if (N.beam_smooth_length < 0) r.failKey("beam_smooth_length", "must be >= 0");
   {
     const std::string bf = r.word("beam_field", "auto", {"auto", "level", "mean"});
     N.beam_field = bf == "level" ? BEAM_FIELD_LEVEL : bf == "mean" ? BEAM_FIELD_MEAN : -1;
@@ -1285,6 +1287,9 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   if (!(N.trap_gamma >= 0.0)) r.failKey("trap_gamma", "must be >= 0");
   N.theta = r.num("theta", Dim::None, N.theta);
   if (!(N.theta >= 0.5 && N.theta <= 1.0)) r.failKey("theta", "must be in [0.5, 1]");
+  N.theta_stiff = r.num("theta_stiff", Dim::None, N.theta_stiff);
+  if (!(N.theta_stiff >= 0.0)) r.failKey("theta_stiff", "must be >= 0");
+  N.beam_consistent = r.flag("beam_consistent", N.beam_consistent);
   if (!(N.vz_min > 0) || !(N.vz_beam < 1) || !(N.vz_min < N.vz_beam))
     r.failKey("vz_beam", "need 0 < vz_min < vz_beam < 1");
   if (N.iterations < 1) r.failKey("iterations", "must be >= 1");
@@ -1786,6 +1791,10 @@ std::string Config::summary() const {
   if (numerics.trap_gamma > 0)
     line("trapping: a streaming particle goes to the beam list only with gamma >= %.4g (numerics.trap_gamma)",
          numerics.trap_gamma);
+  if (numerics.theta_stiff > 0 || numerics.beam_consistent)
+    line("beam self-fields: theta per radial mode %s, consistent beam sources %s",
+         numerics.theta_stiff > 0 ? ("on (theta_stiff = " + std::to_string(numerics.theta_stiff) + ")").c_str() : "off",
+         numerics.beam_consistent ? "on" : "off");
   line("output: dir '%s', every %d steps; numerics: %d iterations/slice, theta %.3g, trap advance %.3g dz, beam "
        "filter %d, beam pusher %s, beam field %s, seed %lu, backend %s",
        output.dir.c_str(), output.every, numerics.iterations, numerics.theta, numerics.trap_advance, numerics.beam_filter,

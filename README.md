@@ -153,7 +153,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/eigen.*` | symmetric tridiagonal eigenproblem (initial fields of bunches with v < c) |
 | `src/zgrid.hpp` | longitudinal grid of the window: slices, half-cells, location of particles, interpolation weights of the R equation |
 | `src/fields.hpp` | mode fields and currents |
-| `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step) |
+| `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step); pentadiagonal with the per-mode implicitness `numerics.theta_stiff` |
 | `src/smoothing.*` | radial smoothing of the plasma sources (`plasma.smooth_length`): vector and scalar filters (1 − a²∇²)⁻¹ that commute with the discrete divergence |
 | `src/particles.hpp` | particle record, Boris pusher |
 | `src/simulation.*` | laser and bunch initialization, plasma loading, pushers, deposition, time step (serial reference) |
@@ -177,6 +177,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
+| `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
@@ -646,6 +647,52 @@ particles are not smoothed. MPI, OpenMP and the GPU engine give the same results
 - `numerics.theta > 0.5`: an off-centred update of R in s that damps the fast spurious modes by (1 − θ)/θ per
   step. θ = 0.6 gives rms 0.0003 for Δ = 1.25, 2.5 and 5 µm. It is first order in Δ for any oscillating source,
   so it must not be used with undulators.
+
+## Thin, intense beams: consistent beam sources and per-mode implicitness
+
+A thin, intense, low-γ beam structure (here a ring of radius 0.75 µm and rms width 20 nm, half a radial cell,
+10 kA, γ = 50, on matched circular orbits in a plasma lens) needs its radial self-force, which is only 1/γ² = 4 × 10⁻⁴
+of E_r, to that accuracy. Three errors of the standard scheme spoil it (numbers from `tests/thin_ring.sh` and the
+private development runs):
+
+1. **Static mismatch of j_z.** The discrete Ampère law of the E_z equation relates the mean of div B at the slices
+   ζ_n, ζ_{n+1} to j_z of the half-cell between them, while the initial bunch field and every R update attach to a
+   slice the mean of the two neighbouring half-cells. The difference, −(h²/4) ∂²_ζ j_z, drives a spurious E_z along
+   ζ; at the edges of a flat-top it is O(j_z) for any ζ resolution, and d_r E_z ~ 1/w at a sheet of width w enters
+   L = E_r − B_φ. A static ring at γ = 10⁶ (an exact steady state at s = 0) got E_z = 4.5 × 10⁻³ and L = 6 × 10⁻⁴
+   of max E_r after one step.
+2. **Non-conserving radial current.** j_r (faces) and j_z (centres) were deposited with separate linear weights, so a
+   sheet thinner than a cell left a Gauss-law error ("ghost" charge) behind wherever it moved.
+3. **Undamped odd-even mode of the stiff E_z constraint.** For a radially moving β → 1 charge, E_z jumps across the
+   sheet such that d_r E_z = −j_r cancels j_r in the L equation (the field of each charge is a tilted pancake). At
+   large Δ the scheme enforces θ G(E_z¹) + (1 − θ) G(E_z⁰) ≈ −j_r; with θ = 1/2 that is E_z¹ = −2 j_r − E_z⁰, an
+   undamped odd-even mode in s excited by every change of j_r, and L sees E_z¹, not the mean.
+
+`numerics.beam_consistent = true` fixes 1 and 2: the half-cell equations (E_z, L_r, L_φ) get the (¼, ½, ¼) mean of the
+beam current the R update uses, and the R update gets the charge-conserving radial flux of the step (per particle
+the change of its centre weights between the two positions, with the j_φ of the R_φ update for m ≥ 1; with
+`beam_field = mean` the flux starts from the first-push positions of the last step, with which R agrees).
+`numerics.theta_stiff = 1` fixes 3: θ becomes an operator, θ_k = (θ + μ_k)/(1 + μ_k) with μ_k = c h Δ |λ_k| per
+radial eigenmode of E_z and B_z, so θ_k = θ for every mode the step resolves (all radiation: c h Δ |λ| ≪ 1, damping
+negligible) and θ_k → 1 (L-stable) for the stiff near-field modes. The implicit matrices become pentadiagonal.
+With `beam_consistent`, bunches also start with the co-moving field of their azimuthal current (B_z, E_φ of a
+rotating beam; without it a rotating ring gets a large torque in the first step), discretized as the steady state of
+the scheme (E_φ from the difference of A_φ across half-cells).
+
+| ring test (0.5 mm, dz = 20 µm) | old scheme | `beam_consistent` + `theta_stiff = 1` | reference |
+|---|---|---|---|
+| static ring, γ = 10⁶: max L / max E_r after a step | 6 × 10⁻⁴ | 5 × 10⁻¹³ | 0 |
+| prescribed expansion v_r = 3 × 10⁻⁴ c: max L / max E_r | 1.7 × 10⁻³ | 2 × 10⁻⁷ … 9 × 10⁻⁶ | O(v_r²) |
+| 10 kA ring at rest, no lens: r 1/50/99 % (µm) | 0.69 / 2.49 / 4.48 | 0.74 / 1.37 / 1.95 | 0.73 / 1.44 / 1.98 (shell model) |
+| same ring on matched orbits in a lens: u_r rms | 0.32 | 0.0025 | 0.0022 (shell model) |
+| angular momentum ⟨r u_φ⟩ (start 0.5365) | 1.27 | 0.535 | 0.537 (shell model) |
+
+The reference is a long-beam shell model (every electron a charged, current-carrying cylindrical shell; Gauss,
+Ampère, B_z of the rotating shells, the lens; `tests/thin_ring.py`). With one azimuthal mode only (m_max = 0) the old
+breathing instability is gone completely; m = 1 needed the charge-conserving flux with j_φ. Beyond ~0.5 mm the
+longitudinal space charge of the sharp-edged flat-top (±10 % in γ per mm at head and tail, physical) mismatches head
+and tail to the lens; the shell model, which has no E_z, does not describe that. Both switches are off by default;
+`beam_consistent` is not yet available in the MPI pipeline.
 
 ## Corrections of earlier versions
 

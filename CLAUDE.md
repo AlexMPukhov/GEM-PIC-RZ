@@ -63,4 +63,11 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        Wilson: scripts in benchmarks/jupiter/ (README there: build.sh, check.sbatch = GPU vs serial on 1-4 GPUs,
        submit_scaling.sh + scaling.sbatch + cpu_reference.sbatch, collect.sh = table). Dry-run in WSL with
        stand-ins for srun/sbatch/nvidia-smi and the emulation binary. Waiting for his results.
+  - **Thin, intense, low-gamma beams** (branch `beam-self-field-2`; README "Thin, intense beams"; ctest thin_ring):
+    `numerics.beam_consistent` ((1/4,1/2,1/4) beam sources in the half-cell equations, charge-conserving radial
+    flux in the R update, all modes) and `numerics.theta_stiff` (theta per radial eigenmode of E_z, B_z:
+    pentadiagonal implicit matrices, FieldSolver::St; engine: leader-sequential solves in solveSliceTeam). Off by
+    default (bit-identical when off). Open: beam_consistent in the MPI pipeline (needs c1b at half-cell b and the
+    flux across block edges); team-parallel band solves on the GPU. Private context: CLAUDE-notes
+    gem-pic-rz/self_field/HANDOVER.md.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
