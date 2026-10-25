@@ -1313,9 +1313,58 @@ void Simulation::march(double s1) {
   std::fill(freedCharge.begin(), freedCharge.end(), 0.0);
   pending.swap(pendingNext);  // particles that reached s^0 in the last step with v_z < vz_beam
   pendingNext.clear();
+  static const bool ccflux = std::getenv("GEMPIC_CCFLUX") != nullptr;  // EXPERIMENT
+  std::vector<Particle> prevBeam;
+  if (ccflux) prevBeam = beam;
   pushBeam();                 // adds beam particles that became slower than vz_min
   for (const auto& p : beam) depositBeamParticle(c1b, p);
   filterBeamCurrent(c1b);  // (particles trapped during the march are deposited unfiltered)
+  // EXPERIMENT: charge-conserving radial flux of the beam over the step (mode 0), in place of (j_r^0 + j_r^1)/2
+  std::vector<cd> ccF;
+  if (ccflux) {
+    Currents D;
+    D.initRange(M, Nz, N, c1b.k0, c1b.k0 + c1b.nk);
+    D.zero();
+    for (size_t i = 0; i < prevBeam.size(); ++i) {
+      if (beamMap[i] < 0) continue;
+      const Particle &a = prevBeam[i], &b = beam[size_t(beamMap[i])];
+      double fa, fb;
+      const int ja = zv.beamCell(a.zeta, fa), jb = zv.beamCell(b.zeta, fb);
+      const double ra = std::hypot(a.x, a.y), rb = std::hypot(b.x, b.y);
+      const RadialGrid::W wa = g.locC(ra), wb = g.locC(rb);
+      auto sw = [&](const RadialGrid::W& w, int i) {  // centre weight of centre i
+        if (w.mode == 0) return (i == w.a) ? w.wa : (i == w.a + 1) ? w.wb : 0.0;
+        if (w.mode == 2) return (i == N - 1) ? 1.0 : 0.0;
+        return (i == 0) ? 1.0 : 0.0;
+      };
+      int cs[4], nc = 0;
+      auto addc = [&](int i) { if (i >= 0 && i < N) { for (int q = 0; q < nc; ++q) if (cs[q] == i) return; cs[nc++] = i; } };
+      for (const RadialGrid::W* w : {&wa, &wb}) {
+        if (w->mode == 0) { addc(w->a); addc(w->a + 1); } else if (w->mode == 2) addc(N - 1); else addc(0);
+      }
+      const int ks[4] = {ja - 1, ja, jb - 1, jb};
+      const double wk[4] = {0.5 * (1.0 - fa), 0.5 * fa, 0.5 * (1.0 - fb), 0.5 * fb};
+      for (int q = 0; q < nc; ++q) {
+        const int i = cs[q];
+        const double ds = sw(wb, i) - sw(wa, i);
+        if (ds == 0.0) continue;
+        for (int t = 0; t < 4; ++t) {
+          const int k = ks[t];
+          if (k < 0 || k >= Nz || !D.has(k) || wk[t] == 0.0) continue;
+          D.jz[D.c(0, k, i)] += b.q * wk[t] * ds / (2.0 * PI * zv.len(k) * g.Vc[i]);
+        }
+      }
+    }
+    filterBeamCurrent(D);
+    ccF.assign(size_t(Nz) * (N + 1), cd(0.0));
+    for (int k = D.k0; k < D.k0 + D.nk; ++k) {
+      cd cum = 0.0;  // flux through face j: -(1/rho_j) sum_{i<j} A^c_i d(j_z)_i / Delta
+      for (int j = 1; j <= N; ++j) {
+        cum += g.Ac[j - 1] * D.jz[D.c(0, k, j - 1)];
+        ccF[size_t(k) * (N + 1) + j] = -cum / (g.rho[j] * Delta);
+      }
+    }
+  }
   loadFresh();
   // particles joining the march at their zeta wait in the streaming list
   for (const auto& p : pending) {
@@ -1366,6 +1415,10 @@ void Simulation::march(double s1) {
           const cd pr = (n > 0) ? predR[m * (N + 1) + i] : c1b.jr[c1b.f(m, 0, i)] + c1s.jr[c1s.f(m, 0, i)];
           Jr[i] = th0 * (wl * a + wh * c0b.jr[c0b.f(m, n, i)] + wh * c0s.jr[c0s.f(m, n, i)]) +
                   th1 * (wl * pr + wh * c1b.jr[c1b.f(m, n, i)] + wh * c1s.jr[c1s.f(m, n, i)]);
+          if (ccflux && m == 0)  // EXPERIMENT: beam part from the charge-conserving flux of the step
+            Jr[i] += (th0 + th1) * (wl * ccF[size_t(nm) * (N + 1) + i] + wh * ccF[size_t(n) * (N + 1) + i]) -
+                     th0 * (wl * c0b.jr[c0b.f(m, nm, i)] + wh * c0b.jr[c0b.f(m, n, i)]) -
+                     th1 * (wl * c1b.jr[c1b.f(m, nm, i)] + wh * c1b.jr[c1b.f(m, n, i)]);
         }
         for (int i = 0; i < N; ++i) {
           const cd a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
@@ -1375,9 +1428,14 @@ void Simulation::march(double s1) {
         }
         // j^1 at half-cell n = beam + streaming
         for (int i = 0; i <= N; ++i) jr1[i] = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
+        static const bool jz121 = std::getenv("GEMPIC_JZ121") != nullptr;  // EXPERIMENT
         for (int i = 0; i < N; ++i) {
           jp1[i] = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
-          jz1[i] = c1b.jz[c1b.c(m, n, i)] + c1s.jz[c1s.c(m, n, i)];
+          cd jb = c1b.jz[c1b.c(m, n, i)];
+          if (jz121)
+            jb = 0.5 * jb + 0.25 * ((n > 0 ? c1b.jz[c1b.c(m, n - 1, i)] : cd(0.0)) +
+                                    (n + 1 < Nz ? c1b.jz[c1b.c(m, n + 1, i)] : cd(0.0)));
+          jz1[i] = jb + c1s.jz[c1s.c(m, n, i)];
         }
         solver.solveSlice(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)], &fold.Ez[fold.c(m, n, 0)],
                           &fold.Bz[fold.f(m, n, 0)], &fnew.Rr[fnew.f(m, n + 1, 0)], &fnew.Lr[fnew.f(m, n + 1, 0)],
