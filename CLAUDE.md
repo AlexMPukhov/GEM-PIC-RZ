@@ -60,6 +60,8 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        mean phase (5c, 5d); transfers per step: the whole block of fold, c0b, c0s, c1b up and fnew, c1b, c1s down
        (5e: only the changed parts / CUDA-aware MPI). Then: (march over [a, b), the pipeline exchanges staged through the host, later
        CUDA-aware MPI); develop with the GPU-emulation build against the serial code.
-    6. then: real-GPU tests (`ctest -R lasy`, regression_cuda, physics_cuda) and a scaling series (1, 4, 16, 64
-       ranks/GPUs) on JUWELS/JUPITER, run by a group member.
+    6. real-GPU tests and the scaling series (1, 4, 16, 64 GPUs) on JUPITER / JUWELS Booster, run by Thomas
+       Wilson: scripts in benchmarks/jupiter/ (README there: build.sh, check.sbatch = GPU vs serial on 1-4 GPUs,
+       submit_scaling.sh + scaling.sbatch + cpu_reference.sbatch, collect.sh = table). Dry-run in WSL with
+       stand-ins for srun/sbatch/nvidia-smi and the emulation binary. Waiting for his results.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

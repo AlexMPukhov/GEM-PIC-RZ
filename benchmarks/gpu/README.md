@@ -20,6 +20,7 @@ What to expect / look for:
   speed-up. If step 3 is also slow, the `GEMPIC_PROFILE` output tells whether the field solve (one block per mode,
   tridiagonal solves in one thread) dominates; that would be the place to bring in a parallel tridiagonal
   solver, as was done in QUARZ.
-- The GPU engine is not combined with MPI yet: one GPU per run.
+- This check uses one GPU. Several GPUs (the MPI pipeline, one rank per GPU) and the scaling series:
+  `benchmarks/jupiter/README.md`.
 - Please send back: the `nvidia-smi` line, the ctest summary, the `compare.py` lines of step 2, the `done:` lines
   and the profile of steps 3 and 4.
