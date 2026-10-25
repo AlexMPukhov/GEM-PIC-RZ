@@ -220,6 +220,7 @@ struct BunchConfig {
   Expr ux_fn, uy_fn;
   double x0 = 0, y0 = 0;    // transverse offset
   double z_waist = 0;       // position of the beta waist (z = 0: at start)
+  double z_start = 0;       // the bunch is loaded (with its co-moving self-field) when the run reaches z_start
   int macroparticles = 10000;
   // File: particles read from an openPMD / native file (bunch.file), after selection and
   // placement: x, y, zeta, ux, uy, uz [code units] and |charge| per macroparticle [code units]

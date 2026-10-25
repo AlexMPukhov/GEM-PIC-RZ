@@ -236,6 +236,11 @@ if(GEMPIC_HAVE_HDF5)
   # bunch.distribution_r = function, ux_function, uy_function: a helical ring on its matched orbits
   add_test(NAME bunch_functions
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_functions.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
+  # bunch.z_start: a bunch loaded later in the run equals the same bunch loaded at z = 0, per backend
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME bunch_zstart_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_zstart.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(bunch_zstart_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)
