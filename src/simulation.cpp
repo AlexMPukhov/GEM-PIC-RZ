@@ -213,12 +213,13 @@ void Simulation::initLasers() {
 // uncorrelated momenta sigma_u = eps_n / sigma. If z_waist != 0, the bunch is
 // drifted ballistically from the waist back to z = 0.
 // ----------------------------------------------------------------------------
-void Simulation::initBunches() {
+void Simulation::initBunches(int only) {
   std::normal_distribution<double> nd(0.0, 1.0);
   std::uniform_real_distribution<double> ud(0.0, 1.0);
   const double Qe = 1.602176634e-19 / (cfg.units.codeToPC(1.0) * 1e-12);  // one electron [code charge]
   for (size_t b = 0; b < cfg.bunches.size(); ++b) {
     const auto& B = cfg.bunches[b];
+    if (only >= 0 ? int(b) != only : B.z_start > 0) continue;  // bunch.z_start > 0: loaded later (loadBunches)
     // Fawley beamlets: the sampled particles are the centres of beamlets of M macroparticles
     const int M = B.fawley ? B.beamlet : 1;
     const int ncent = B.macroparticles / M;
@@ -464,7 +465,7 @@ void Simulation::initBunchFields() {
 // adds sign x the co-moving self-field of the beam list to fold, per group of particles
 // (bunches, and with deckGamma = false also trapped particles), with the gamma of the
 // bunch block (deckGamma) or the mean gamma of the group
-void Simulation::addBeamFields(double sign, bool deckGamma) {
+void Simulation::addBeamFields(double sign, bool deckGamma, int only) {
   const int N = g.N;
   // radial eigenmodes of -Lap^c_m (computed on demand, per mode)
   std::vector<std::vector<double>> lam(M + 1), Q(M + 1);
@@ -486,8 +487,9 @@ void Simulation::addBeamFields(double sign, bool deckGamma) {
   std::vector<double> sq(N);
   for (int i = 0; i < N; ++i) sq[i] = std::sqrt(g.Ac[i]);
   std::vector<int> groups;
-  for (size_t b = 0; b < cfg.bunches.size(); ++b) groups.push_back(int(b));
-  if (!deckGamma) {
+  for (size_t b = 0; b < cfg.bunches.size(); ++b)
+    if (only < 0 || int(b) == only) groups.push_back(int(b));
+  if (!deckGamma && only < 0) {
     for (const auto& p : beam)
       if (p.sp < 0 && std::find(groups.begin(), groups.end(), p.sp) == groups.end()) groups.push_back(p.sp);
   }
@@ -1353,6 +1355,29 @@ void Simulation::applyChicanes(double za, double zb) {
   }
 }
 
+// bunch.z_start > 0: a bunch is loaded at the end of the step that reaches z_start (za < z_start <= zb), at
+// z = zb with its co-moving self-field (as at the start, with the gamma of the deck); the beam current of the
+// level is deposited anew (as after a chicane). A bunch with particles in the beam list (restart) is not loaded again.
+void Simulation::loadBunches(double za, double zb) {
+  for (size_t b = 0; b < cfg.bunches.size(); ++b) {
+    const double zs = cfg.bunches[b].z_start;
+    const double eps = 1e-9 * std::max(1.0, zs);  // (z = sum of steps)
+    if (!(zs > 0 && za < zs - eps && zs - eps <= zb)) continue;
+    if (std::any_of(beam.begin(), beam.end(), [&](const Particle& p) { return p.sp == int(b); })) continue;
+    if (engine) engine->downloadFull();
+    const size_t n0 = beam.size();
+    initBunches(int(b));
+    addBeamFields(1.0, true, int(b));
+    c0b.zero();
+    for (const auto& p : beam) depositBeamParticle(c0b, p);
+    filterBeamCurrent(c0b);
+    ccStart.clear();
+    std::printf("bunch '%s' loaded at z = %.6g mm: %zu macroparticles\n", cfg.bunches[b].name.c_str(),
+                zb * cfg.units.k0inv_um() * 1e-3, beam.size() - n0);
+    if (engine) engine = std::make_unique<Engine>(*this);  // upload the changed state
+  }
+}
+
 void Simulation::step() {
   beginStep();
   const double za = s0;
@@ -1360,6 +1385,7 @@ void Simulation::step() {
     engine->step();
     engine->download();
     if (!cfg.chicanes.empty()) applyChicanes(za, s0);
+    loadBunches(za, s0);
     return;
   }
   const double s1 = s0 + Delta;
@@ -1377,6 +1403,7 @@ void Simulation::step() {
   s0 = s1;
   ++step_no;
   if (!cfg.chicanes.empty()) applyChicanes(za, s0);
+  loadBunches(za, s0);
 }
 
 // one march of the level s^1: beam push and deposit, fresh plasma, slices from the front to the rear

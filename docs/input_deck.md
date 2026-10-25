@@ -401,6 +401,7 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | `zeta_center` | length | — | centre, measured from the rear end of the window |
 | `x0`, `y0` | length | 0 | transverse offset. It excites modes m ≥ 1, which need m_max ≥ 1 |
 | `z_waist` | length | 0 | position of the beta waist. The bunch is drifted ballistically back to z = 0 |
+| `z_start` | length | 0 | the bunch is loaded only when the run reaches z_start (at the end of that step), at its deck position in the window and with its co-moving self-field, as at the start; then the beam current of the level is deposited anew. E.g. a witness loaded after the vacuum–plasma transition of the driver's wake has settled. A restart from a checkpoint that already holds the bunch does not load it again. Not yet available in the MPI pipeline |
 | `macroparticles` | integer | 10000 | number of macroparticles |
 
 **Helical ring** (`tests/bunch_functions.sh`): every electron on a circular orbit of radius R0 in a linear focusing

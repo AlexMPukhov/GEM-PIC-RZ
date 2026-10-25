@@ -210,9 +210,11 @@ class Simulation {
   struct CheckpointSink;  // output_hdf5.cpp: checkpoint_NNNNN.h5
   static std::unique_ptr<Sink> makeHdf5Sink(Simulation& S, int kind);  // output_hdf5.cpp (0 data, 1 openPMD, 2 LASY,
                                                                        // 3 checkpoint)
-  void initBunches();
+  // the bunches of the deck (only < 0: all with z_start = 0), or only bunch `only`
+  void initBunches(int only = -1);
   void initBunchFields();
-  void addBeamFields(double sign, bool deckGamma);
+  void addBeamFields(double sign, bool deckGamma, int only = -1);  // only >= 0: the field of that bunch only
+  void loadBunches(double za, double zb);  // bunches with z_start in (za, zb]: loaded with their self-field
   void addAzimuthalFields(const Currents& C, double sign, double beta);  // co-moving self-fields of the beam list
   void applyChicanes(double za, double zb);          // thin chicanes passed in (za, zb]
 

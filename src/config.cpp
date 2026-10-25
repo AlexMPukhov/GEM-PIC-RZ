@@ -940,6 +940,8 @@ void readBunchFile(const Block& b, const Deck& d, const Units& u, const GridConf
   B.zeta_center = 0.5 * (zmin + zmax);  // the checks use the extent
   B.macroparticles = int(r.integer("macroparticles", long(v.size())));
   if (B.macroparticles < 1) r.failKey("macroparticles", "must be >= 1");
+  B.z_start = r.num("z_start", Dim::Length, 0.0);
+  if (B.z_start < 0) r.failKey("z_start", "must be >= 0");
   B.resample_smoothing = r.num("resample_smoothing", Dim::None, 0.0);
   if (B.resample_smoothing < 0) r.failKey("resample_smoothing", "must be >= 0");
   readShotNoise(r, B);
@@ -1080,6 +1082,8 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   B.x0 = r.num("x0", Dim::Length, 0.0);
   B.y0 = r.num("y0", Dim::Length, 0.0);
   B.z_waist = r.num("z_waist", Dim::Length, 0.0);
+  B.z_start = r.num("z_start", Dim::Length, 0.0);
+  if (B.z_start < 0) r.failKey("z_start", "must be >= 0");
   B.macroparticles = int(r.integer("macroparticles", 10000));
   if (B.macroparticles < 1) r.failKey("macroparticles", "must be >= 1");
   readShotNoise(r, B);
