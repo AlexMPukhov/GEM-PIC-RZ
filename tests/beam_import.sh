@@ -7,7 +7,8 @@
 #   3. (python3 with numpy and h5py) shot noise of tests/shot_noise.deck: Fawley beamlets
 #      give the bunching of the real electrons, N_e <|b|^2> = 1 +- 0.25 (window leakage
 #      measured with a 1000 times larger charge and subtracted); random positions give
-#      that of the macroparticles, N_macro <|b|^2> = 1 +- 0.25
+#      that of the macroparticles, N_macro <|b|^2> = 1 +- 0.25; the quiet start (beamlets
+#      without displacements) gives only the window leakage, N_e <|b|^2> - leakage < 0.05
 # usage: sh tests/beam_import.sh <gempic_rz> <compare_columns>
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -45,9 +46,11 @@ if python3 -c "import numpy, h5py" 2>/dev/null; then
   A=$(python3 "$SRC/tests/bunching.py" fw/data_00000.h5 0.8e-6 16)
   B=$(python3 "$SRC/tests/bunching.py" fwq/data_00000.h5 0.8e-6 16)
   C=$(python3 "$SRC/tests/bunching.py" rn/data_00000.h5 0.8e-6 16)
-  echo "$A $B $C" | awk '{ fw = ($1 - $4) * $2; rn = $7 * $9;
-    printf "  Fawley: N_e <|b|^2> = %.3f (leakage %.3f subtracted); random: N_macro <|b|^2> = %.3f\n", fw, $4 * $2, rn;
-    exit !(fw > 0.75 && fw < 1.25 && rn > 0.75 && rn < 1.25) }'
+  "$EXE" "$SRC/tests/shot_noise.deck" output.dir=qt bunch.shot_noise=quiet > qt.log
+  D=$(python3 "$SRC/tests/bunching.py" qt/data_00000.h5 0.8e-6 16)
+  echo "$A $B $C $D" | awk '{ fw = ($1 - $4) * $2; rn = $7 * $9; qt = ($10 - $4) * $2;
+    printf "  Fawley: N_e <|b|^2> = %.3f (leakage %.3f subtracted); random: N_macro <|b|^2> = %.3f; quiet: N_e <|b|^2> = %.4f\n", fw, $4 * $2, rn, qt;
+    exit !(fw > 0.75 && fw < 1.25 && rn > 0.75 && rn < 1.25 && qt < 0.05) }'
 else
   echo "  shot-noise check skipped (python3 with numpy and h5py not found)"
 fi

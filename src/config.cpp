@@ -833,7 +833,9 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
 
 // shot-noise model (all bunch kinds)
 void readShotNoise(const BlockReader& r, BunchConfig& B) {
-  B.fawley = r.word("shot_noise", "random", {"random", "fawley"}) == "fawley";
+  const std::string sn = r.word("shot_noise", "random", {"random", "fawley", "quiet"});
+  B.fawley = sn != "random";  // quiet: the beamlets of fawley without their random displacements
+  B.quiet = sn == "quiet";
   if (B.fawley) {
     B.noise_wavelength = r.num("noise_wavelength", Dim::Length);
     if (!(B.noise_wavelength > 0)) r.failKey("noise_wavelength", "must be positive");
@@ -841,10 +843,10 @@ void readShotNoise(const BlockReader& r, BunchConfig& B) {
     if (B.beamlet < 3) r.failKey("beamlet", "must be >= 3 (macroparticles per beamlet)");
     if (B.macroparticles % B.beamlet != 0)
       r.failKey("macroparticles", "must be a multiple of beamlet = " + std::to_string(B.beamlet) +
-                                      " with shot_noise = fawley");
+                                      " with shot_noise = fawley or quiet");
   } else {
-    if (r.has("noise_wavelength")) r.failKey("noise_wavelength", "is used with shot_noise = fawley");
-    if (r.has("beamlet")) r.failKey("beamlet", "is used with shot_noise = fawley");
+    if (r.has("noise_wavelength")) r.failKey("noise_wavelength", "is used with shot_noise = fawley or quiet");
+    if (r.has("beamlet")) r.failKey("beamlet", "is used with shot_noise = fawley or quiet");
   }
   B.axis_refine = int(r.integer("axis_refine", 1));
   if (B.axis_refine < 1 || B.axis_refine > 1000) r.failKey("axis_refine", "must be 1 ... 1000");
@@ -1722,7 +1724,8 @@ std::string Config::summary() const {
       line("        from %s (rms length %.4g um, extent %.4g ... %.4g um)", B.file_info.c_str(), B.sigma_z * um,
            B.zeta_min * um, B.zeta_max * um);
     if (B.fawley)
-      line("        shot noise: Fawley beamlets of %d macroparticles at %.4g um", B.beamlet, B.noise_wavelength * um);
+      line("        shot noise: %s beamlets of %d macroparticles at %.4g um", B.quiet ? "quiet (noise-free)" : "Fawley",
+           B.beamlet, B.noise_wavelength * um);
     if (B.axis_refine > 1)
       line("        axis refinement: %d times the macroparticles at r < %s, with 1/%d of the charge", B.axis_refine,
            B.axis_radius > 0 ? (std::to_string(B.axis_radius * um) + " um").c_str() : "4 radial cells",

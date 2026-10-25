@@ -863,6 +863,9 @@ int main() {
     Config c = cfgOf(std::string(BASE) + Bk + " macroparticles = 400; shot_noise = fawley; noise_wavelength = 0.8 um }");
     CHECK(c.bunches[0].fawley && c.bunches[0].beamlet == 4);
     CHECK_NEAR(c.bunches[0].noise_wavelength, 2.0 * PI, 1e-14);
+    CHECK(!c.bunches[0].quiet);
+    Config cq = cfgOf(std::string(BASE) + Bk + " macroparticles = 400; shot_noise = quiet; noise_wavelength = 0.8 um }");
+    CHECK(cq.bunches[0].fawley && cq.bunches[0].quiet && cq.bunches[0].beamlet == 4);
     EXPECT_ERROR(cfgOf(std::string(BASE) + Bk + " macroparticles = 401; shot_noise = fawley; noise_wavelength = 0.8 um }"),
                  "multiple of beamlet");
     EXPECT_ERROR(cfgOf(std::string(BASE) + Bk + " shot_noise = fawley }"), "noise_wavelength");

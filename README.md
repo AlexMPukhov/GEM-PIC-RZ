@@ -513,7 +513,8 @@ The FEL parameter is ρ = 0.009. The 1D power gain length is 5.1 periods, and Mi
 - **Helical field:** it is the on-axis field, without natural focusing. External focusing comes from the
   transport elements (quadrupoles, solenoids, plasma lenses), which may overlap the undulator.
 - **Shot noise:** in this example the noise comes from the macroparticles. `bunch.shot_noise = fawley` gives
-  the true shot noise of the electron number (beamlets).
+  the true shot noise of the electron number (beamlets); `shot_noise = quiet` gives the same beamlets without
+  noise (quiet start, for seeded amplifiers compared with codes that load a quiet beam).
 
 ## Mobile ions
 
