@@ -8,7 +8,7 @@
 #    on one rank (GEMPIC_PIPELINE=1: the block march of the MPI code) against serial, 1e-6 relative
 # 2. FEL deck (4 kA beam, mean-field push) and flying focus through the absorber layer: pipelined GPU vs serial
 # 3. 4 kA beam in a planar undulator at lambda_u/16, pipelined on the GPU: eps_nx at 5 cm (serial 0.0067 um)
-# 4. wall times: lwfa_heavy.deck (plasma) and the FEL deck (beam, 96 steps), GPU vs CPU with THREADS threads
+# 4. wall times: lwfa_heavy.deck (plasma) and the FEL deck (beam, 30 mm = 48 steps), GPU vs CPU with THREADS threads
 set -u
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 BG=$(cd "${1:-$SRC/build-gpu}" && pwd) || exit 1
@@ -71,10 +71,10 @@ echo "-- lwfa_heavy, $THREADS threads:   $(donel t_lwfa_cpu.log)"
 "$G" "$FD" $F96 numerics.backend=cuda output.dir=t_fel_gpu > t_fel_gpu.log 2>&1
 OMP_NUM_THREADS=$THREADS OMP_PROC_BIND=close "$C" "$FD" $F96 numerics.backend=openmp output.dir=t_fel_cpu \
   > t_fel_cpu.log 2>&1
-echo "-- FEL 96 steps, GPU:        $(donel t_fel_gpu.log)"
-echo "-- FEL 96 steps, $THREADS threads: $(donel t_fel_cpu.log)"
-for d in t_fel_gpu t_fel_cpu; do
-  awk -v d=$d '!/^#/ && $1 == 96 && $3 == 1 && $4 == 1 {print "   " d ": P1 in slice 14 at step 96:", $19, "W"}' \
+echo "-- FEL to 30 mm, GPU:        $(donel t_fel_gpu.log)"
+echo "-- FEL to 30 mm, $THREADS threads: $(donel t_fel_cpu.log)"
+for d in t_fel_gpu t_fel_cpu; do  # the last step (48 at dz = lambda_u / 16)
+  awk -v d=$d '!/^#/ && $3 == 1 && $4 == 1 { s = $1; p = $19 } END { print "   " d ": P1 in slice 14 at step " s ":", p, "W" }' \
     $d/fel_harmonics.txt
 done
 
