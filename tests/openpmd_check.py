@@ -48,8 +48,8 @@ def field(rec, comp, r, th):  # at radius r [m], angle th, along z; SI
 
 zgrid = z0 + dz * np.arange(E["r"].shape[2])
 for r_um, deg in [(2.0, 30.0), (5.0, 250.0)]:
-    ref = np.loadtxt(subprocess.run([h5x, nat, "lineout", str(r_um), str(deg)], capture_output=True,
-                                    text=True, check=True).stdout.splitlines())
+    ref = np.loadtxt(subprocess.run([h5x, nat, "lineout", str(r_um), str(deg)], stdout=subprocess.PIPE,
+                                    universal_newlines=True, check=True).stdout.splitlines())
     zeta = ref[:, 0]
     th = np.deg2rad(deg)
     Fr, Ft, Fz = (field(rec, c, r_um * 1e-6, th) for rec in ["E"] for c in "rtz")

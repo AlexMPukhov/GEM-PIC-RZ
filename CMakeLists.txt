@@ -228,10 +228,14 @@ if(GEMPIC_HAVE_HDF5)
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME planar_step_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/planar_step.sh $<TARGET_FILE:gempic_rz> ${b})
   endforeach()
+  # the parallel backend of this build (cuda in a CUDA build, which rejects openmp; else openmp or serial)
+  list(GET GEMPIC_TEST_BACKENDS -1 GEMPIC_PAR_BACKEND)
   # bunch.axis_refine: more macroparticles near the axis at the same charge density
-  add_test(NAME axis_refine COMMAND sh ${CMAKE_SOURCE_DIR}/tests/axis_refine.sh $<TARGET_FILE:gempic_rz>)
+  add_test(NAME axis_refine
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/axis_refine.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
   # bunch.distribution_r = function, ux_function, uy_function: a helical ring on its matched orbits
-  add_test(NAME bunch_functions COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_functions.sh $<TARGET_FILE:gempic_rz>)
+  add_test(NAME bunch_functions
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_functions.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)

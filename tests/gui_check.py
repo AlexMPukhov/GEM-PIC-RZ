@@ -20,6 +20,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+if sys.version_info < (3, 7):  # tools/gempic_gui.py needs http.server.ThreadingHTTPServer
+    print("SKIP: needs python >= 3.7")
+    sys.exit(77)
 try:
     import numpy as np
     import h5py  # noqa: F401
