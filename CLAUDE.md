@@ -13,6 +13,16 @@ Read this first. README.md is the user documentation; docs/ holds the details.
 - Every new feature gets a test (ctest) against an independent reference and an entry in docs/ and README.md.
 - Testing aids: `-DCMAKE_CXX_FLAGS=-DGEMPIC_RANGE_CHECK` (every field/current access checked against the stored
   slices), an AddressSanitizer build, and `tests/mpi.sh <exe> <compare_columns> mpirun` for 2-4 ranks.
+- **Setting up runs with a flexible radial grid (`radial_grid = table`): the grid must not reflect radiation back**
+  (Alexander). (1) A cell larger than the transverse wavelength cannot carry the wave (discrete cutoff
+  k_perp = 2/dr): it is thrown back. (2) Below the cutoff the numerical dispersion, k_perp,eff = (2/dr) sin(k_perp dr/2),
+  falls as dr grows outward and acts like a lower refractive index: numerical total internal reflection of grazing
+  waves. Estimate the largest k_perp = k theta that must leave the beam region (radiation cones of all relevant
+  harmonics, also off-axis harmonics landing at the diagnosed frequency, e.g. for a planar undulator harmonic h' seen
+  at h: gamma theta = sqrt((1 + K^2/2)(h'/h - 1)); diffraction of the smallest features), keep k_perp dr <~ 1 wherever
+  it must propagate freely, let dr grow only outside that region or behind an absorber that removes it first, and
+  stretch slowly. Symptom of a violation: fringes near the axis with a fixed radial wavenumber that disappear when the
+  fine region is extended.
 - Compile-check the CUDA build after every engine change, also without a GPU (nvcc catches what g++ does not,
   e.g. device lambdas in private member functions): `-DGEMPIC_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90
   -DCMAKE_CUDA_COMPILER=<nvcc>` (nvcc from tools/install_cuda_pip.sh).
