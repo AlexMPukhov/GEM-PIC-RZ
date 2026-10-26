@@ -74,8 +74,15 @@ Read this first. README.md is the user documentation; docs/ holds the details.
        submit_scaling.sh + scaling.sbatch + cpu_reference.sbatch, collect.sh = table). Dry-run in WSL with
        stand-ins for srun/sbatch/nvidia-smi and the emulation binary. Results 2026-10-26 in
        benchmarks/jupiter/README.md (35/35 ctests, 1-4 GPUs = serial; 4/16/64 GPUs: LWFA 88/66/28 %, FEL 64/47/30 %
-       efficiency; 1 GH200 node = 2.6x (LWFA) / 1.4x (FEL) one CPU node). Next: 5e (device-resident blocks,
-       CUDA-aware MPI) and a weak-scaling series.
+       efficiency; 1 GH200 node = 2.6x (LWFA) / 1.4x (FEL) one CPU node). The engine part scales ideally (engine
+       profile = 1/P); all losses are host side. Critical cycle: steady step = whole step + the prefix before the R
+       message (messages, mean phase, diagnostics, beam push, uploads), so the prefix counts twice.
+       5e round 1 (branch `device-resident`, 2026-10-26): level s^0 + currents stay on the device (recvRear uploads
+       only ghosts; Engine::swapPreAbsorber for the mean phase), per-step diagnostics on a host thread during the
+       next step (PipelineRun::dueDiag/joinDiag/finishDiag; output/checkpoint steps synchronous), sparse FEL slice
+       tables to rank 0, `pipeline profile` + time per step after the fill (GEMPIC_PROFILE=1), weak-scaling scripts
+       (submit_weak.sh). Emulation: files and console bit-identical to main. Waiting for Tom's round-2 profiles.
+       Open: device-resident beam list (bookkeeping on the device), CUDA-aware MPI.
        6a done (2026-10-25, branch gpu-rtx5090): first real-GPU run, one RTX 5090 (cc 12.0, CUDA 13.0, no MPI, so
        1 rank): ctest of the GPU build 29/30 pass + gui skipped (python 3.6); benchmarks/gpu/check_1gpu.sh (the
        1-rank part of check.sbatch, no Slurm) 0 failed comparisons, GPU = serial to all printed digits (engine and

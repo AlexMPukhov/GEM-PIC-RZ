@@ -13,7 +13,8 @@
 #      absorber; beam filter 2); the intense beam in a planar undulator at dz = lambda_u/16
 #      (benchmarks/harmonics/fel.deck, the beam spans the 3 blocks): 3 ranks = serial
 #   8. the march of the blocks on the device (Engine::marchBlock; GPU emulation build, or a CUDA build with a
-#      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run
+#      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run, also with the
+#      per-step diagnostics computed during the next step (steps without output)
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -105,10 +106,17 @@ if [ -n "$DEV" ]; then
   done
   OMP_NUM_THREADS=2 runx 3 "$DEV" "$DECK" $E numerics.beam_field=mean numerics.beam_filter=2 output.dir=dm > dm.log
   for f in axis_00002.txt axis_00004.txt map_00004.txt bunches.txt; do "$CMP" mser/$f dm/$f 1e-6 1e-9; done
+  # steps without output: the diagnostics of a level are computed on a host thread during the next step
+  OMP_NUM_THREADS=2 runx 3 "$DEV" "$DECK" $E output.every=3 output.dir=da > da.log
+  for f in axis_00004.txt bunches.txt; do "$CMP" ser/$f da/$f 1e-6 1e-9; done
+  OMP_NUM_THREADS=2 runx 2 "$DEV" "$DECK" $E output.every=0 numerics.beam_field=mean numerics.beam_filter=2 \
+    output.dir=dam > dam.log
+  for f in axis_00004.txt bunches.txt; do "$CMP" mser/$f dam/$f 1e-6 1e-9; done
   OMP_NUM_THREADS=2 runx 3 "$DEV" "$SRC/tests/flexgrid.deck" $DB output.map_stride=8 output.dir=dfx > dfx.log
   for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" fser/$f dfx/$f 1e-6 1e-9; done
   unset GEMPIC_PIPELINE_ENGINE
-  echo "  device march of the blocks ($DB): 1-3 ranks, mean-field push, free-hand grids = serial"
+  echo "  device march of the blocks ($DB): 1-3 ranks, mean-field push, free-hand grids, diagnostics during the"
+  echo "  next step = serial"
 else
   echo "  device march of the blocks skipped: no GPU emulation build and no GPU"
 fi
