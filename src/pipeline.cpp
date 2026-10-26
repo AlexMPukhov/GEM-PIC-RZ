@@ -97,6 +97,22 @@ class PipelineRun {
   long baseRestreamed = 0, baseTrapped = 0;
   std::chrono::steady_clock::time_point t0;
   int stepsDone = 0;
+  // host-side profile of the pipelined step (GEMPIC_PROFILE=1): wall time per phase, printed by rank 0 (own and
+  // maximum over the ranks)
+  struct Prof {
+    enum { WAIT, BEAM, UP, MARCH, DOWN, MSG, DIAG, CHECK, MEAN, COUNT };
+    bool on = false;
+    double t[COUNT] = {};
+    std::chrono::steady_clock::time_point last;
+    void start() { if (on) last = std::chrono::steady_clock::now(); }
+    void stop(int k) {
+      if (!on) return;
+      const auto now = std::chrono::steady_clock::now();
+      t[k] += std::chrono::duration<double>(now - last).count();
+      last = now;
+    }
+  } prof;
+  void reportProfile();
 
   // ---- numerics.beam_field = mean (see the header): state kept from step k for its mean phase
   bool mean = false;
@@ -131,6 +147,10 @@ class PipelineRun {
   void meanPhase(Buffer* F);
   // numerics.backend = cuda (or GEMPIC_PIPELINE_ENGINE=1, testing): the march of the block on the device
   std::unique_ptr<Engine> eng;
+  // the device holds level s^0 and the currents of s^0 between the steps (after the first step): only what the
+  // host changes is uploaded (recvRear: the ghosts below the block), the mean phase swaps the pre-absorber values
+  // on the device
+  bool devSynced = false;
   void deviceMarch(int k, double s1, std::vector<Particle>& newForFront, std::vector<Particle>& transferDown);
   void deviceBeamCurrent(Engine::Curr C, const std::vector<Particle>& depB, const std::vector<Particle>& depH,
                          bool meanPhase);
@@ -522,6 +542,7 @@ Buffer PipelineRun::recvFront(int k) {
 // ----------------------------------------------------------------------------
 void PipelineRun::step(Buffer& F) {
   const int N = S.g.N, M = S.M, Nz = S.Nz;
+  prof.start();
   S.beginStep();
   const double Delta = S.Delta;
   const ZetaView& zv = S.zv;
@@ -571,7 +592,9 @@ void PipelineRun::step(Buffer& F) {
 
   // ---- beam push (fields of s^0; slices a-2 ... b are available)
   beamPushSetup();
-  if (eng) eng->putFields(0, sa, sb + 1);  // level s^0 on the device: the own block and the ghosts
+  prof.stop(Prof::MSG);
+  if (eng && !devSynced) eng->putFields(0, sa, sb + 1);  // level s^0 on the device: the block and the ghosts
+  prof.stop(Prof::UP);
   // returns true if the push must continue on the rank behind (zeta < lowZ)
   auto push = [&](Particle& p, bool count) { return pushBeamParticle(p, S.fold, nullptr, count); };
   std::vector<Particle> newBeam, handCont, handFin, transferDown;
@@ -699,6 +722,7 @@ void PipelineRun::step(Buffer& F) {
   // ---- zeta march over the own slices (numerics.backend = cuda: on the device, deviceMarch)
   std::vector<Particle> newForFront;
   int done = 0;
+  prof.stop(Prof::BEAM);
   if (eng) deviceMarch(k, s1, newForFront, transferDown);
   else for (int n = b - 1; n >= a; --n) {
     for (int m = 0; m <= M; ++m) {
@@ -811,6 +835,7 @@ void PipelineRun::step(Buffer& F) {
     if (++done == pf + 3 && r < P - 1) sendFront(k, newForFront);
   }
   if (r == 0 && !eng) absorb(0, s1);
+  if (!eng) prof.stop(Prof::MARCH);
   for (auto& v : S.exitStates) std::fill(v.begin(), v.end(), 0.0);
   if (r == 0)
     for (const auto& p : S.stream)
@@ -853,9 +878,10 @@ void PipelineRun::step(Buffer& F) {
   std::swap(S.fold, S.fnew);
   std::swap(S.c0b, S.c1b);
   std::swap(S.c0s, S.c1s);
-  if (eng) eng->swapLevels();
+  if (eng) { eng->swapLevels(); devSynced = true; }
   S.s0 = s1;
   ++S.step_no;
+  prof.stop(Prof::MSG);
 }
 
 // numerics.backend = cuda: the beam current of s^1 on the device (filterBeam): the deposits of the own beam
@@ -899,8 +925,11 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   const int N = S.g.N;
   // (level s^0 and the beam current c1b are on the device since the beam push)
   eng->putFields(1, b, b + 1);
-  eng->putCurrents(Engine::C0B, sa, sb);
-  eng->putCurrents(Engine::C0S, sa, sb);
+  if (!devSynced) {
+    eng->putCurrents(Engine::C0B, sa, sb);
+    eng->putCurrents(Engine::C0S, sa, sb);
+  }
+  prof.stop(Prof::UP);
   size_t routed = 0;
   auto route = [&]() {  // trapped particles (fast ones, already deposited into c1b on the device)
     for (const Particle& t : eng->trapped(routed)) {
@@ -939,10 +968,12 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   }
   eng->marchBlock(bm);
   route();
+  prof.stop(Prof::MARCH);
   eng->getFields(1, a, b + 1);
   eng->getCurrents(Engine::C1B, sa, sb);
   eng->getCurrents(Engine::C1S, sa, sb);
   if (mean) fetchPreAbs(a, b + 1);
+  prof.stop(Prof::DOWN);
 }
 
 // Filter of the beam current (Simulation::filterBeamCurrent) on the own
@@ -1038,13 +1069,13 @@ void PipelineRun::filterRaw(Currents& C, bool belowIntoC) {
 // ----------------------------------------------------------------------------
 void PipelineRun::meanPhase(Buffer* F) {
   using u64 = unsigned long long;
-  swapPreAbs();  // F^1 before the absorber, as Simulation::step pushes before absorber()
+  // F^1 before the absorber, as Simulation::step pushes before absorber(). numerics.backend = cuda: the pushes,
+  // deposits and the filter on the device, where level 0 is F^1 and level 1 F^0; the swap is done there
+  if (eng) eng->swapPreAbsorber();
+  else swapPreAbs();
   beamPushSetup();
   const Fields& F0 = S.fnew;
   const Fields& F1 = S.fold;
-  // numerics.backend = cuda: the pushes, deposits and the filter on the device; F^1 (before the absorber) to
-  // the device level 0 (F^0 is there as level 1; level 0 is uploaded again, after the absorber, in step())
-  if (eng) eng->putFields(0, sa, sb + 1);
   std::vector<Particle> depH;
   auto toH = [&](const Particle& p) { if (eng) depH.push_back(p); else S.depositBeamParticle(H, p); };
   if (r > 0)
@@ -1204,7 +1235,8 @@ void PipelineRun::meanPhase(Buffer* F) {
       getHalf(rearT, S.c0b, a, true);
     }
   }
-  swapPreAbs();  // back to F^1 after the absorber
+  if (eng) eng->swapPreAbsorber();  // back to F^1 after the absorber
+  else swapPreAbs();
   // ---- for the rank behind (with the F message of the next step)
   meanOut = Buffer();
   if (r > 0) {
@@ -1267,6 +1299,14 @@ void PipelineRun::recvRear() {
     putHalf(rearT, Tq, a - 1);
     putHalf(rearT, Tq, a);
     for (const auto& o : B.getVec<Particle>()) fpKnow[o.id] = o;  // outcomes of the particles continued there
+  }
+  if (eng && devSynced) {  // the device keeps level s^0: the values changed above
+    eng->putFields(0, a - pf - 2, a + 1);
+    eng->putCurrents(Engine::C0B, a - 1, a + 1);
+    eng->putCurrents(Engine::C0S, a - 1, a);
+    if (mean)
+      for (int n = std::max(0, a - pf - 2); n <= a; ++n)
+        if (preHave[size_t(n - sa)]) eng->putPreAbsorber(n, preAbs[size_t(n - sa)]);
   }
 }
 
@@ -1411,6 +1451,37 @@ void PipelineRun::reportStep(int k) {
   std::fflush(stdout);
 }
 
+// GEMPIC_PROFILE=1: rank 0 prints the phases of its own steps and the maximum of every phase over the ranks
+void PipelineRun::reportProfile() {
+  if (!prof.on) return;
+  enum { TAG_PROF = 105 };
+  if (r > 0) {
+    Buffer B;
+    for (double x : prof.t) B.put(x);
+    comm::send(0, TAG_PROF, std::move(B));
+    comm::waitAll();
+    return;
+  }
+  double mx[Prof::COUNT];
+  std::copy(prof.t, prof.t + Prof::COUNT, mx);
+  for (int q = 1; q < P; ++q) {
+    Buffer B = comm::recv(q, TAG_PROF);
+    for (int i = 0; i < Prof::COUNT; ++i) mx[i] = std::max(mx[i], B.get<double>());
+  }
+  static const char* names[Prof::COUNT] = {"wait (messages)", "beam push+current", "upload", "march",
+                                           "download", "messages/swap", "diagnostics+output", "finite check",
+                                           "mean phase"};
+  for (int pass = 0; pass < 2; ++pass) {
+    const double* v = pass == 0 ? prof.t : mx;
+    double tot = 0;
+    for (int i = 0; i < Prof::COUNT; ++i) tot += v[i];
+    std::printf("pipeline profile (s, %s):", pass == 0 ? "rank 0" : "max over ranks");
+    for (int i = 0; i < Prof::COUNT; ++i) std::printf("  %s %.3f", names[i], v[i]);
+    std::printf("  total %.3f\n", tot);
+  }
+  std::fflush(stdout);
+}
+
 // ----------------------------------------------------------------------------
 int PipelineRun::run() {
   P = comm::size();
@@ -1426,6 +1497,7 @@ int PipelineRun::run() {
   r = comm::rank();
   S.externalOutput = true;  // rank 0 streams the output block by block (reportStep)
   t0 = std::chrono::steady_clock::now();
+  if (const char* e = std::getenv("GEMPIC_PROFILE")) prof.on = (e[0] == '1');
   try {
     partition();
     if (!rc.restarted) {  // initial state: collected from the blocks like every output step
@@ -1441,23 +1513,31 @@ int PipelineRun::run() {
     }
     const int k0 = S.step_no;
     for (int k = k0 + 1; k <= lastStep; ++k) {
+      prof.start();
       if (k > k0 + 1 && r > 0) {
         recvRear();
+        prof.stop(Prof::WAIT);
         if (!mean) sendDiag(k - 1);
+        prof.stop(Prof::DIAG);
       }
       Buffer F;
       if (r < P - 1) F = recvFront(k);
+      prof.stop(Prof::WAIT);
       if (k > k0 + 1 && mean) {  // the second push of step k-1, then its output
         meanPhase(r < P - 1 ? &F : nullptr);
+        prof.stop(Prof::MEAN);
         if (r > 0) sendDiag(k - 1);
         else reportStep(k - 1);
+        prof.stop(Prof::DIAG);
       }
       step(F);
       if (!finiteOwn()) {
         std::fprintf(stderr, "non-finite field at step %d on rank %d\n", S.step_no, r);
         comm::abort(2);
       }
+      prof.stop(Prof::CHECK);
       if (r == 0 && !mean) reportStep(k);
+      prof.stop(Prof::DIAG);
     }
     if (lastStep > k0) {
       if (r > 0) recvRear();
@@ -1479,6 +1559,7 @@ int PipelineRun::run() {
       else if (mean) reportStep(lastStep);
     }
     comm::waitAll();
+    reportProfile();
     if (meanGuessed > 0)
       std::printf("rank %d, beam_field = mean: %lld second pushes ended where the first push of the particle was "
                   "not known (it had continued two ranks behind); taken as survived\n", r, meanGuessed);
