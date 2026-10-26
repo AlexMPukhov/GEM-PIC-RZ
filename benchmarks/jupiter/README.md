@@ -90,6 +90,32 @@ sh benchmarks/jupiter/collect.sh                 # the table, when the jobs are 
 
 That is at most about 100 GPU-hours, plus 4 node-hours for the CPU reference. The real times should be much shorter. The `done:` lines give them.
 
+## Results on JUPITER (Thomas Wilson, 2026-10-26; `results_2026-10-26/`)
+
+**Correctness.** All 35 ctests of the GPU build pass. The regression, FEL (mean-field push, beam across the blocks)
+and flying-focus decks on 1, 2 and 4 GPUs equal the serial code (0 failed comparisons). The planar undulator at
+λ_u/16 on 4 GPUs gives ε_nx = 0.0067 µm, as serially.
+
+**Strong scaling** (s per step; speed-up and efficiency against the pipelined step on 1 GH200; "pipeline" is the
+ideal N/(N + P − 1)):
+
+| GPUs | LWFA (`lwfa_heavy`, 200 steps) | speed-up | eff. | pipeline | FEL (400 steps) | speed-up | eff. | pipeline |
+|---|---|---|---|---|---|---|---|---|
+| 1 (engine, no pipeline) | 0.366 | 1.02 | | | 1.894 | 1.14 | | |
+| 1 | 0.371 | 1 | 100 % | 100 % | 2.151 | 1 | 100 % | 100 % |
+| 4 | 0.105 | 3.5 | 88 % | 99 % | 0.842 | 2.6 | 64 % | 99 % |
+| 16 | 0.035 | 10.6 | 66 % | 93 % | 0.284 | 7.6 | 47 % | 96 % |
+| 64 | 0.020 | 18.1 | 28 % | 76 % | 0.112 | 19.2 | 30 % | 86 % |
+| CPU node, 4 × 72 cores | 0.273 | 1.36 | | | 1.166 | 1.84 | | |
+
+Reading:
+- One GH200 node (4 GPUs) is 2.6× (LWFA) and 1.4× (FEL) faster than one CPU node.
+- The losses beyond the pipeline limit come from the whole-block host–device transfers and host-staged MPI
+  messages of every step (open item 5e). They are largest for the FEL deck, which has many slices and a beam that
+  crosses the blocks: on 1 GPU the pipelined step is already 14 % slower than the engine alone.
+- At 64 GPUs the LWFA window (1200 slices) leaves about 19 slices per rank: strong scaling ends there. A weak-scaling
+  series (window or step count growing with the GPU count) would be the fairer test of large runs.
+
 ## What to send back
 
 - `gempic-check.<job>.log`, and if a comparison failed, the directory `benchmarks/jupiter/runs/check.<job>`.

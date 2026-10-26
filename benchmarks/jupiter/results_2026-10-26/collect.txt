@@ -1,0 +1,15 @@
+run            GPUs    ranks  steps     s/step  speed-up    effic.  pipeline
+lwfa             16       16    200      0.035     10.61      66 %      93 %
+lwfa             64       64    200      0.020     18.12      28 %      76 %
+lwfa              4        4    200      0.105      3.54      88 %      99 %
+lwfa_cpu        cpu     4x72    200      0.273      1.36                    
+lwfa_engine       1        1    200      0.366      1.02     102 %     100 %
+fel              64       64    400      0.112     19.20      30 %      86 %
+fel              16       16    400      0.284      7.59      47 %      96 %
+fel               4        4    400      0.842      2.56      64 %      99 %
+fel_cpu         cpu     4x72    400      1.166      1.84                    
+fel_engine        1        1    400      1.894      1.14     114 %     100 %
+lwfa              1        1    200      0.371      1.00     100 %     100 %
+fel               1        1    400      2.151      1.00     100 %     100 %
+(speed-up and efficiency against the pipelined step on 1 GPU; *_engine: the single-GPU engine without the
+ pipeline; *_cpu: one node without GPUs; 'pipeline': the ideal efficiency N / (N + P - 1) of the pipeline)

@@ -1,0 +1,831 @@
+GEM-PIC-RZ 1.0.0   deck: /e/project1/lpqed/gemrz/GEM-PIC-RZ-main/benchmarks/harmonics/fel.deck
+units: lambda0 = 0.01063 um, 1/k0 = 0.001691 um, 1/omega0 = 0.0056406 fs, n_c = 9.875e+24 cm^-3
+grid : modes m = 0..2
+       radial table: Nr = 122, dr = 1 .. 30 um, r_max = 1027 um, max cell-to-cell change 5.3 %
+       reference points (r, dr) [um]: (0, 1) (40, 1) (400, 20) (1000, 30)
+       window: Nz = 18372, dzeta = 0.000332 um, length = 6.1 um
+       dz = 625 um, z_end = 250 mm (400 steps); absorber r > 2000 um, strength 0.2
+laser[0]: a0 = 7.637e-06, lambda = 0.01063 um, w0 = 30 um (zR = 266.1 mm), tau_FWHM = 7.087 fs, zeta_c = 3.02 um, focus at z = 0 mm, linear, P = 1e-05 TW
+        envelope_function(zeta) = zeta < 1.42 um ? 0 : zeta < 1.52 um ? sin(pi / 2 * (zeta - 1.42 um) / (0.1 um))^2 : zeta < 4.57 um ? 1 : zeta < 4.67 um ? sin(pi / 2 * (4.67 um - zeta) / (0.1 um))^2 : 0 (tau_FWHM: estimate)
+box for bunch 'b' (v < c): r_max >= 2.1e+03 um (gamma L; now 1.03e+03 um), gaps >= 1.45 um at both ends (now 1.48 um ahead, 2.25 um behind after 0.266 um slippage): window >= 5.26 um (now 6.1 um)
+undulator[0]: planar, period = 10 mm, K = 1.5 (B0 = 1.606 T), z = 0 ... 1000 mm (100 periods, ramps 1 periods), no focusing
+        resonant wavelength (on axis): b 0.01062 um
+bunch[0] 'b': electrons, Q = 28.02 pC, E = 510.49 MeV (gamma 1000), dE/E = 0, sigma_x,y = 10, 10 um, eps_n = 0, 0 um, length 2.1 um at zeta = 3.57 um, 640000 macroparticles
+        shot noise: Fawley beamlets of 8 macroparticles at 0.01063 um
+        axis refinement: 16 times the macroparticles at r < 4 radial cells, with 1/16 of the charge
+        profile_z(zeta) = zeta < 2.62 um ? sin(pi / 2 * (zeta - 2.52 um) / (0.1 um))^2 : zeta > 4.52 um ? sin(pi / 2 * (4.62 um - zeta) / (0.1 um))^2 : 1 on 2.52 ... 4.62 um
+output format: hdf5 (HDF5 double precision, compression 0)
+FEL diagnostics: fel.txt every step, bunching at 0.010625 um
+        fel_harmonics.txt: harmonics 1 ... 3, modes m = 0 ... 2, slices of 0.2125 um
+output: dir 'fel', every 0 steps; numerics: 1 iterations/slice, theta 0.5, trap advance 1 dz, beam filter 0, beam pusher vay, beam field mean of s^0, s^1, seed 12345, backend cuda
+WARNING: grid.window_length is not a multiple of dzeta; using 18372 slices
+WARNING: grid.r_absorber >= r_max: the radial absorber is off
+WARNING: bunch 'b': the radial boundary is closer than the reach of its fields: r_max = 1.03e+03 um < 2.1e+03 um (gamma L); a wall closer than gamma L shields the space charge like a beam pipe
+WARNING: no plasma block: vacuum propagation
+bunch 'b': axis refinement x16 at r < 4 um: 6127 centres there, 91905 added (171905 in all)
+backend: cuda on 64 MPI ranks
+step     0  z =   0.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 0.00e+00  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+MPI pipeline along zeta: 64 ranks, slices per rank 287 ... 288
+step     1  z =   0.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.51e-06  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     2  z =   1.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.03e-06  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     3  z =   1.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.54e-06  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     4  z =   2.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.08e-06  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     5  z =   3.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.61e-06  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     6  z =   3.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.13e-06  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     7  z =   4.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.06e-05  sig_x = 10.014 um  eps_nx = 0.000 um  sig_z = 0.58 um
+step     8  z =   5.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.21e-05  sig_x = 10.014 um  eps_nx = 0.001 um  sig_z = 0.58 um
+step     9  z =   5.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.37e-05  sig_x = 10.014 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    10  z =   6.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.56e-05  sig_x = 10.014 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    11  z =   6.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.78e-05  sig_x = 10.014 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    12  z =   7.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.02e-05  sig_x = 10.014 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    13  z =   8.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.27e-05  sig_x = 10.014 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    14  z =   8.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.48e-05  sig_x = 10.014 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    15  z =   9.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.66e-05  sig_x = 10.014 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    16  z =  10.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.80e-05  sig_x = 10.014 um  eps_nx = 0.001 um  sig_z = 0.58 um
+step    17  z =  10.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.93e-05  sig_x = 10.014 um  eps_nx = 0.001 um  sig_z = 0.58 um
+step    18  z =  11.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.07e-05  sig_x = 10.014 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    19  z =  11.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.27e-05  sig_x = 10.015 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    20  z =  12.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.54e-05  sig_x = 10.015 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    21  z =  13.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.84e-05  sig_x = 10.015 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    22  z =  13.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.11e-05  sig_x = 10.015 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    23  z =  14.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.33e-05  sig_x = 10.015 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    24  z =  15.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.52e-05  sig_x = 10.015 um  eps_nx = 0.001 um  sig_z = 0.58 um
+step    25  z =  15.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.70e-05  sig_x = 10.015 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    26  z =  16.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.89e-05  sig_x = 10.015 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    27  z =  16.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.12e-05  sig_x = 10.015 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    28  z =  17.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.41e-05  sig_x = 10.016 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    29  z =  18.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.73e-05  sig_x = 10.016 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    30  z =  18.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.01e-05  sig_x = 10.016 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    31  z =  19.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.25e-05  sig_x = 10.016 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    32  z =  20.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.44e-05  sig_x = 10.016 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    33  z =  20.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.63e-05  sig_x = 10.016 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    34  z =  21.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.82e-05  sig_x = 10.017 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    35  z =  21.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.06e-05  sig_x = 10.017 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    36  z =  22.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.35e-05  sig_x = 10.017 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    37  z =  23.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.67e-05  sig_x = 10.017 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    38  z =  23.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.97e-05  sig_x = 10.017 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    39  z =  24.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.21e-05  sig_x = 10.017 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    40  z =  25.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.43e-05  sig_x = 10.018 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    41  z =  25.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.63e-05  sig_x = 10.018 um  eps_nx = 0.002 um  sig_z = 0.58 um
+step    42  z =  26.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.83e-05  sig_x = 10.018 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    43  z =  26.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.08e-05  sig_x = 10.018 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    44  z =  27.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.38e-05  sig_x = 10.018 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    45  z =  28.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.71e-05  sig_x = 10.019 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    46  z =  28.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.00e-04  sig_x = 10.019 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    47  z =  29.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.03e-04  sig_x = 10.019 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    48  z =  30.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.05e-04  sig_x = 10.019 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    49  z =  30.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.07e-04  sig_x = 10.020 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    50  z =  31.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.09e-04  sig_x = 10.020 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    51  z =  31.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.11e-04  sig_x = 10.020 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    52  z =  32.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.14e-04  sig_x = 10.020 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    53  z =  33.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.18e-04  sig_x = 10.021 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    54  z =  33.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.21e-04  sig_x = 10.021 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    55  z =  34.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.23e-04  sig_x = 10.021 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    56  z =  35.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.25e-04  sig_x = 10.021 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    57  z =  35.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.28e-04  sig_x = 10.022 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    58  z =  36.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.30e-04  sig_x = 10.022 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    59  z =  36.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.32e-04  sig_x = 10.022 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    60  z =  37.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.35e-04  sig_x = 10.023 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    61  z =  38.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.39e-04  sig_x = 10.023 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    62  z =  38.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.42e-04  sig_x = 10.023 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    63  z =  39.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.44e-04  sig_x = 10.024 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    64  z =  40.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.46e-04  sig_x = 10.024 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    65  z =  40.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.48e-04  sig_x = 10.024 um  eps_nx = 0.003 um  sig_z = 0.58 um
+step    66  z =  41.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.51e-04  sig_x = 10.025 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    67  z =  41.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.53e-04  sig_x = 10.025 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    68  z =  42.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.56e-04  sig_x = 10.025 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    69  z =  43.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.60e-04  sig_x = 10.026 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    70  z =  43.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.63e-04  sig_x = 10.026 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    71  z =  44.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.65e-04  sig_x = 10.026 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    72  z =  45.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.68e-04  sig_x = 10.027 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    73  z =  45.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.70e-04  sig_x = 10.027 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    74  z =  46.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.72e-04  sig_x = 10.027 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    75  z =  46.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.75e-04  sig_x = 10.028 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    76  z =  47.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.78e-04  sig_x = 10.028 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    77  z =  48.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.81e-04  sig_x = 10.029 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    78  z =  48.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.84e-04  sig_x = 10.029 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    79  z =  49.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.87e-04  sig_x = 10.029 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    80  z =  50.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.89e-04  sig_x = 10.030 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    81  z =  50.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.91e-04  sig_x = 10.030 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    82  z =  51.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.93e-04  sig_x = 10.031 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    83  z =  51.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.96e-04  sig_x = 10.031 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    84  z =  52.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 1.99e-04  sig_x = 10.031 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    85  z =  53.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.02e-04  sig_x = 10.032 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    86  z =  53.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.06e-04  sig_x = 10.032 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    87  z =  54.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.08e-04  sig_x = 10.033 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    88  z =  55.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.10e-04  sig_x = 10.033 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    89  z =  55.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.13e-04  sig_x = 10.034 um  eps_nx = 0.004 um  sig_z = 0.58 um
+step    90  z =  56.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.15e-04  sig_x = 10.034 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    91  z =  56.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.18e-04  sig_x = 10.035 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    92  z =  57.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.21e-04  sig_x = 10.035 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step    93  z =  58.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.24e-04  sig_x = 10.035 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step    94  z =  58.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.27e-04  sig_x = 10.036 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    95  z =  59.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.30e-04  sig_x = 10.036 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    96  z =  60.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.32e-04  sig_x = 10.037 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    97  z =  60.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.34e-04  sig_x = 10.037 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    98  z =  61.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.36e-04  sig_x = 10.038 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step    99  z =  61.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.39e-04  sig_x = 10.038 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   100  z =  62.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.42e-04  sig_x = 10.039 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   101  z =  63.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.45e-04  sig_x = 10.039 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   102  z =  63.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.49e-04  sig_x = 10.040 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   103  z =  64.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.51e-04  sig_x = 10.040 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   104  z =  65.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.54e-04  sig_x = 10.041 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   105  z =  65.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.56e-04  sig_x = 10.042 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   106  z =  66.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.58e-04  sig_x = 10.042 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   107  z =  66.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.61e-04  sig_x = 10.043 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   108  z =  67.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.64e-04  sig_x = 10.043 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   109  z =  68.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.67e-04  sig_x = 10.044 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   110  z =  68.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.70e-04  sig_x = 10.044 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   111  z =  69.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.73e-04  sig_x = 10.045 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   112  z =  70.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.75e-04  sig_x = 10.045 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   113  z =  70.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.77e-04  sig_x = 10.046 um  eps_nx = 0.005 um  sig_z = 0.58 um
+step   114  z =  71.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.80e-04  sig_x = 10.047 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   115  z =  71.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.82e-04  sig_x = 10.047 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   116  z =  72.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.85e-04  sig_x = 10.048 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   117  z =  73.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.89e-04  sig_x = 10.048 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   118  z =  73.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.92e-04  sig_x = 10.049 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   119  z =  74.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.95e-04  sig_x = 10.050 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   120  z =  75.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.97e-04  sig_x = 10.050 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   121  z =  75.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 2.99e-04  sig_x = 10.051 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   122  z =  76.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.01e-04  sig_x = 10.051 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   123  z =  76.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.04e-04  sig_x = 10.052 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   124  z =  77.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.07e-04  sig_x = 10.053 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   125  z =  78.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.11e-04  sig_x = 10.053 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   126  z =  78.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.14e-04  sig_x = 10.054 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   127  z =  79.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.16e-04  sig_x = 10.055 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   128  z =  80.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.19e-04  sig_x = 10.055 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   129  z =  80.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.21e-04  sig_x = 10.056 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   130  z =  81.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.23e-04  sig_x = 10.056 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   131  z =  81.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.26e-04  sig_x = 10.057 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   132  z =  82.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.29e-04  sig_x = 10.058 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   133  z =  83.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.32e-04  sig_x = 10.058 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   134  z =  83.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.35e-04  sig_x = 10.059 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   135  z =  84.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.38e-04  sig_x = 10.060 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   136  z =  85.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.40e-04  sig_x = 10.061 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   137  z =  85.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.43e-04  sig_x = 10.061 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   138  z =  86.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.45e-04  sig_x = 10.062 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   139  z =  86.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.48e-04  sig_x = 10.063 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   140  z =  87.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.51e-04  sig_x = 10.063 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   141  z =  88.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.54e-04  sig_x = 10.064 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   142  z =  88.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.57e-04  sig_x = 10.065 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   143  z =  89.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.60e-04  sig_x = 10.066 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   144  z =  90.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.62e-04  sig_x = 10.066 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   145  z =  90.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.64e-04  sig_x = 10.067 um  eps_nx = 0.006 um  sig_z = 0.58 um
+step   146  z =  91.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.67e-04  sig_x = 10.068 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   147  z =  91.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.69e-04  sig_x = 10.068 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   148  z =  92.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.72e-04  sig_x = 10.069 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   149  z =  93.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.76e-04  sig_x = 10.070 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   150  z =  93.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.79e-04  sig_x = 10.071 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   151  z =  94.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.81e-04  sig_x = 10.072 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   152  z =  95.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.84e-04  sig_x = 10.072 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   153  z =  95.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.86e-04  sig_x = 10.073 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   154  z =  96.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.88e-04  sig_x = 10.074 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   155  z =  96.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.91e-04  sig_x = 10.075 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   156  z =  97.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.94e-04  sig_x = 10.075 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   157  z =  98.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 3.97e-04  sig_x = 10.076 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   158  z =  98.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.01e-04  sig_x = 10.077 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   159  z =  99.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.03e-04  sig_x = 10.078 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   160  z = 100.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.06e-04  sig_x = 10.079 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   161  z = 100.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.08e-04  sig_x = 10.080 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   162  z = 101.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.10e-04  sig_x = 10.080 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   163  z = 101.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.13e-04  sig_x = 10.081 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   164  z = 102.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.16e-04  sig_x = 10.082 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   165  z = 103.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.19e-04  sig_x = 10.083 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   166  z = 103.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.22e-04  sig_x = 10.084 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   167  z = 104.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.25e-04  sig_x = 10.085 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   168  z = 105.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.27e-04  sig_x = 10.085 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   169  z = 105.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.30e-04  sig_x = 10.086 um  eps_nx = 0.007 um  sig_z = 0.58 um
+step   170  z = 106.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.32e-04  sig_x = 10.087 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   171  z = 106.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.34e-04  sig_x = 10.088 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   172  z = 107.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.38e-04  sig_x = 10.089 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   173  z = 108.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.41e-04  sig_x = 10.090 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   174  z = 108.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.44e-04  sig_x = 10.091 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   175  z = 109.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.47e-04  sig_x = 10.092 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   176  z = 110.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.49e-04  sig_x = 10.092 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   177  z = 110.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.51e-04  sig_x = 10.093 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   178  z = 111.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.53e-04  sig_x = 10.094 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   179  z = 111.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.56e-04  sig_x = 10.095 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   180  z = 112.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.59e-04  sig_x = 10.096 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   181  z = 113.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.62e-04  sig_x = 10.097 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   182  z = 113.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.66e-04  sig_x = 10.098 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   183  z = 114.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.68e-04  sig_x = 10.099 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   184  z = 115.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.71e-04  sig_x = 10.100 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   185  z = 115.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.73e-04  sig_x = 10.101 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   186  z = 116.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.75e-04  sig_x = 10.102 um  eps_nx = 0.008 um  sig_z = 0.58 um
+step   187  z = 116.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.78e-04  sig_x = 10.103 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   188  z = 117.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.81e-04  sig_x = 10.104 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   189  z = 118.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.84e-04  sig_x = 10.105 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   190  z = 118.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.87e-04  sig_x = 10.105 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   191  z = 119.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.90e-04  sig_x = 10.106 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   192  z = 120.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.92e-04  sig_x = 10.107 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   193  z = 120.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.95e-04  sig_x = 10.108 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   194  z = 121.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.97e-04  sig_x = 10.109 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   195  z = 121.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 4.99e-04  sig_x = 10.110 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   196  z = 122.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.02e-04  sig_x = 10.111 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   197  z = 123.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.06e-04  sig_x = 10.112 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   198  z = 123.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.09e-04  sig_x = 10.113 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   199  z = 124.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.12e-04  sig_x = 10.114 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   200  z = 125.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.14e-04  sig_x = 10.115 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   201  z = 125.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.16e-04  sig_x = 10.116 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   202  z = 126.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.19e-04  sig_x = 10.118 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   203  z = 126.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.21e-04  sig_x = 10.119 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   204  z = 127.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.24e-04  sig_x = 10.120 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   205  z = 128.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.28e-04  sig_x = 10.121 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   206  z = 128.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.31e-04  sig_x = 10.122 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   207  z = 129.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.33e-04  sig_x = 10.123 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   208  z = 130.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.36e-04  sig_x = 10.124 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   209  z = 130.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.38e-04  sig_x = 10.125 um  eps_nx = 0.009 um  sig_z = 0.58 um
+step   210  z = 131.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.40e-04  sig_x = 10.126 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   211  z = 131.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.43e-04  sig_x = 10.127 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   212  z = 132.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.46e-04  sig_x = 10.128 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   213  z = 133.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.49e-04  sig_x = 10.129 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   214  z = 133.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.52e-04  sig_x = 10.130 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   215  z = 134.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.55e-04  sig_x = 10.131 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   216  z = 135.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.57e-04  sig_x = 10.132 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   217  z = 135.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.60e-04  sig_x = 10.134 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   218  z = 136.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.62e-04  sig_x = 10.135 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   219  z = 136.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.64e-04  sig_x = 10.136 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   220  z = 137.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.68e-04  sig_x = 10.137 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   221  z = 138.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.71e-04  sig_x = 10.138 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   222  z = 138.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.74e-04  sig_x = 10.139 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   223  z = 139.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.77e-04  sig_x = 10.140 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   224  z = 140.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.79e-04  sig_x = 10.141 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   225  z = 140.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.81e-04  sig_x = 10.143 um  eps_nx = 0.010 um  sig_z = 0.58 um
+step   226  z = 141.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.83e-04  sig_x = 10.144 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   227  z = 141.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.86e-04  sig_x = 10.145 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   228  z = 142.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.89e-04  sig_x = 10.146 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   229  z = 143.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.92e-04  sig_x = 10.147 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   230  z = 143.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.96e-04  sig_x = 10.148 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   231  z = 144.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 5.98e-04  sig_x = 10.150 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   232  z = 145.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.01e-04  sig_x = 10.151 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   233  z = 145.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.03e-04  sig_x = 10.152 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   234  z = 146.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.05e-04  sig_x = 10.153 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   235  z = 146.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.08e-04  sig_x = 10.154 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   236  z = 147.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.11e-04  sig_x = 10.156 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   237  z = 148.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.14e-04  sig_x = 10.157 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   238  z = 148.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.17e-04  sig_x = 10.158 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   239  z = 149.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.20e-04  sig_x = 10.159 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   240  z = 150.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.22e-04  sig_x = 10.160 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   241  z = 150.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.24e-04  sig_x = 10.162 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   242  z = 151.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.27e-04  sig_x = 10.163 um  eps_nx = 0.011 um  sig_z = 0.58 um
+step   243  z = 151.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.29e-04  sig_x = 10.164 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   244  z = 152.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.32e-04  sig_x = 10.165 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   245  z = 153.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.36e-04  sig_x = 10.167 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   246  z = 153.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.39e-04  sig_x = 10.168 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   247  z = 154.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.41e-04  sig_x = 10.169 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   248  z = 155.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.44e-04  sig_x = 10.170 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   249  z = 155.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.46e-04  sig_x = 10.172 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   250  z = 156.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.48e-04  sig_x = 10.173 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   251  z = 156.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.51e-04  sig_x = 10.174 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   252  z = 157.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.54e-04  sig_x = 10.175 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   253  z = 158.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.57e-04  sig_x = 10.177 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   254  z = 158.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.60e-04  sig_x = 10.178 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   255  z = 159.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.63e-04  sig_x = 10.179 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   256  z = 160.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.65e-04  sig_x = 10.181 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   257  z = 160.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.68e-04  sig_x = 10.182 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   258  z = 161.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.70e-04  sig_x = 10.183 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   259  z = 161.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.72e-04  sig_x = 10.185 um  eps_nx = 0.012 um  sig_z = 0.58 um
+step   260  z = 162.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.75e-04  sig_x = 10.186 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   261  z = 163.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.79e-04  sig_x = 10.187 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   262  z = 163.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.82e-04  sig_x = 10.189 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   263  z = 164.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.85e-04  sig_x = 10.190 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   264  z = 165.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.87e-04  sig_x = 10.191 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   265  z = 165.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.89e-04  sig_x = 10.193 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   266  z = 166.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.91e-04  sig_x = 10.194 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   267  z = 166.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.94e-04  sig_x = 10.195 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   268  z = 167.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 6.97e-04  sig_x = 10.197 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   269  z = 168.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.00e-04  sig_x = 10.198 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   270  z = 168.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.03e-04  sig_x = 10.199 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   271  z = 169.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.06e-04  sig_x = 10.201 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   272  z = 170.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.08e-04  sig_x = 10.202 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   273  z = 170.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.11e-04  sig_x = 10.204 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   274  z = 171.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.13e-04  sig_x = 10.205 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   275  z = 171.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.15e-04  sig_x = 10.206 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   276  z = 172.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.18e-04  sig_x = 10.208 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   277  z = 173.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.22e-04  sig_x = 10.209 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   278  z = 173.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.25e-04  sig_x = 10.211 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   279  z = 174.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.28e-04  sig_x = 10.212 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   280  z = 175.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.30e-04  sig_x = 10.213 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   281  z = 175.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.32e-04  sig_x = 10.215 um  eps_nx = 0.013 um  sig_z = 0.58 um
+step   282  z = 176.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.35e-04  sig_x = 10.216 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   283  z = 176.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.37e-04  sig_x = 10.218 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   284  z = 177.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.40e-04  sig_x = 10.219 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   285  z = 178.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.43e-04  sig_x = 10.221 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   286  z = 178.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.46e-04  sig_x = 10.222 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   287  z = 179.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.49e-04  sig_x = 10.224 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   288  z = 180.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.52e-04  sig_x = 10.225 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   289  z = 180.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.54e-04  sig_x = 10.227 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   290  z = 181.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.56e-04  sig_x = 10.228 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   291  z = 181.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.58e-04  sig_x = 10.229 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   292  z = 182.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.61e-04  sig_x = 10.231 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   293  z = 183.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.65e-04  sig_x = 10.232 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   294  z = 183.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.68e-04  sig_x = 10.234 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   295  z = 184.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.71e-04  sig_x = 10.235 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   296  z = 185.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.73e-04  sig_x = 10.237 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   297  z = 185.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.75e-04  sig_x = 10.238 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   298  z = 186.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.78e-04  sig_x = 10.240 um  eps_nx = 0.014 um  sig_z = 0.58 um
+step   299  z = 186.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.80e-04  sig_x = 10.241 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   300  z = 187.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.83e-04  sig_x = 10.243 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   301  z = 188.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.86e-04  sig_x = 10.245 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   302  z = 188.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.89e-04  sig_x = 10.246 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   303  z = 189.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.92e-04  sig_x = 10.248 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   304  z = 190.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.95e-04  sig_x = 10.249 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   305  z = 190.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.97e-04  sig_x = 10.251 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   306  z = 191.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 7.99e-04  sig_x = 10.252 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   307  z = 191.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.01e-04  sig_x = 10.254 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   308  z = 192.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.04e-04  sig_x = 10.255 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   309  z = 193.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.08e-04  sig_x = 10.257 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   310  z = 193.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.11e-04  sig_x = 10.259 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   311  z = 194.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.14e-04  sig_x = 10.260 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   312  z = 195.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.16e-04  sig_x = 10.262 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   313  z = 195.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.18e-04  sig_x = 10.263 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   314  z = 196.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.20e-04  sig_x = 10.265 um  eps_nx = 0.015 um  sig_z = 0.58 um
+step   315  z = 196.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.23e-04  sig_x = 10.266 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   316  z = 197.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.26e-04  sig_x = 10.268 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   317  z = 198.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.29e-04  sig_x = 10.270 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   318  z = 198.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.32e-04  sig_x = 10.271 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   319  z = 199.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.35e-04  sig_x = 10.273 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   320  z = 200.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.38e-04  sig_x = 10.275 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   321  z = 200.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.40e-04  sig_x = 10.276 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   322  z = 201.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.42e-04  sig_x = 10.278 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   323  z = 201.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.44e-04  sig_x = 10.279 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   324  z = 202.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.47e-04  sig_x = 10.281 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   325  z = 203.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.50e-04  sig_x = 10.283 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   326  z = 203.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.54e-04  sig_x = 10.284 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   327  z = 204.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.57e-04  sig_x = 10.286 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   328  z = 205.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.59e-04  sig_x = 10.288 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   329  z = 205.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.61e-04  sig_x = 10.289 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   330  z = 206.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.63e-04  sig_x = 10.291 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   331  z = 206.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.66e-04  sig_x = 10.293 um  eps_nx = 0.016 um  sig_z = 0.58 um
+step   332  z = 207.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.69e-04  sig_x = 10.294 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   333  z = 208.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.72e-04  sig_x = 10.296 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   334  z = 208.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.75e-04  sig_x = 10.298 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   335  z = 209.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.78e-04  sig_x = 10.300 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   336  z = 210.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.81e-04  sig_x = 10.301 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   337  z = 210.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.83e-04  sig_x = 10.303 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   338  z = 211.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.85e-04  sig_x = 10.305 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   339  z = 211.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.87e-04  sig_x = 10.306 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   340  z = 212.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.90e-04  sig_x = 10.308 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   341  z = 213.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.93e-04  sig_x = 10.310 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   342  z = 213.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 8.97e-04  sig_x = 10.312 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   343  z = 214.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.00e-04  sig_x = 10.313 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   344  z = 215.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.02e-04  sig_x = 10.315 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   345  z = 215.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.04e-04  sig_x = 10.317 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   346  z = 216.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.06e-04  sig_x = 10.319 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   347  z = 216.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.09e-04  sig_x = 10.320 um  eps_nx = 0.017 um  sig_z = 0.58 um
+step   348  z = 217.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.12e-04  sig_x = 10.322 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   349  z = 218.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.15e-04  sig_x = 10.324 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   350  z = 218.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.18e-04  sig_x = 10.326 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   351  z = 219.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.21e-04  sig_x = 10.327 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   352  z = 220.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.24e-04  sig_x = 10.329 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   353  z = 220.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.26e-04  sig_x = 10.331 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   354  z = 221.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.28e-04  sig_x = 10.333 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   355  z = 221.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.30e-04  sig_x = 10.335 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   356  z = 222.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.33e-04  sig_x = 10.336 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   357  z = 223.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.36e-04  sig_x = 10.338 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   358  z = 223.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.40e-04  sig_x = 10.340 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   359  z = 224.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.43e-04  sig_x = 10.342 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   360  z = 225.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.45e-04  sig_x = 10.344 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   361  z = 225.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.47e-04  sig_x = 10.345 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   362  z = 226.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.49e-04  sig_x = 10.347 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   363  z = 226.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.52e-04  sig_x = 10.349 um  eps_nx = 0.018 um  sig_z = 0.58 um
+step   364  z = 227.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.55e-04  sig_x = 10.351 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   365  z = 228.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.58e-04  sig_x = 10.353 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   366  z = 228.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.61e-04  sig_x = 10.355 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   367  z = 229.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.64e-04  sig_x = 10.357 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   368  z = 230.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.67e-04  sig_x = 10.358 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   369  z = 230.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.49 MeV  dE/E = 9.69e-04  sig_x = 10.360 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   370  z = 231.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.71e-04  sig_x = 10.362 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   371  z = 231.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.73e-04  sig_x = 10.364 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   372  z = 232.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.76e-04  sig_x = 10.366 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   373  z = 233.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.79e-04  sig_x = 10.368 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   374  z = 233.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.83e-04  sig_x = 10.370 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   375  z = 234.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.86e-04  sig_x = 10.372 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   376  z = 235.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.88e-04  sig_x = 10.374 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   377  z = 235.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.90e-04  sig_x = 10.375 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   378  z = 236.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.93e-04  sig_x = 10.377 um  eps_nx = 0.019 um  sig_z = 0.58 um
+step   379  z = 236.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.95e-04  sig_x = 10.379 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   380  z = 237.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 9.98e-04  sig_x = 10.381 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   381  z = 238.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.00e-03  sig_x = 10.383 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   382  z = 238.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.00e-03  sig_x = 10.385 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   383  z = 239.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.01e-03  sig_x = 10.387 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   384  z = 240.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.01e-03  sig_x = 10.389 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   385  z = 240.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.01e-03  sig_x = 10.391 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   386  z = 241.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.01e-03  sig_x = 10.393 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   387  z = 241.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.02e-03  sig_x = 10.395 um  eps_nx = 0.020 um  sig_z = 0.58 um
+step   388  z = 242.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.02e-03  sig_x = 10.397 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   389  z = 243.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.02e-03  sig_x = 10.399 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   390  z = 243.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.03e-03  sig_x = 10.401 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   391  z = 244.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.03e-03  sig_x = 10.403 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   392  z = 245.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.03e-03  sig_x = 10.405 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   393  z = 245.6250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.03e-03  sig_x = 10.407 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   394  z = 246.2500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.04e-03  sig_x = 10.409 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   395  z = 246.8750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.04e-03  sig_x = 10.411 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   396  z = 247.5000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.04e-03  sig_x = 10.413 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   397  z = 248.1250 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.04e-03  sig_x = 10.415 um  eps_nx = 0.021 um  sig_z = 0.58 um
+step   398  z = 248.7500 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.05e-03  sig_x = 10.417 um  eps_nx = 0.022 um  sig_z = 0.58 um
+step   399  z = 249.3750 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.05e-03  sig_x = 10.419 um  eps_nx = 0.022 um  sig_z = 0.58 um
+step   400  z = 250.0000 mm  |Ex|max = 0.000  Ez = [-0.0000, 0.0000]  trapped 0.000 pC (N = 0)
+      b          N = 1375240  Q =  28.020 pC  E =    510.48 MeV  dE/E = 1.05e-03  sig_x = 10.421 um  eps_nx = 0.022 um  sig_z = 0.58 um
+done: 400 steps in 44.8 s, particles returned from the beam list to streaming: 0
+engine profile (s):  beam push+compaction 0.000  fresh plasma (host) 0.000  slice preparation 2.159  backup/restore 0.163  streaming push+deposit 0.927  field solve 4.011  trapped/freed 0.970  R correction 1.175  end of step 0.000  download 0.000  total 9.406
