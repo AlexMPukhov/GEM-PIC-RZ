@@ -259,6 +259,7 @@ if(GEMPIC_HAVE_HDF5)
     set_tests_properties(thin_ring_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
   endif()
   # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
+  add_test(NAME cone_grid COMMAND sh ${CMAKE_SOURCE_DIR}/tests/cone_grid.sh $<TARGET_FILE:gempic_rz>)
   add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(energy_spread PROPERTIES SKIP_RETURN_CODE 77)
   # GUI (tools/gempic_gui.py): runs started through its HTTP API; fields against the code's gather

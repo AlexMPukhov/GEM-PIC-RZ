@@ -386,4 +386,8 @@ struct Config {
   std::vector<BoxAdvice> boxAdvice() const;
 };
 
+// warnings for undulator harmonic cones that the radial grid cannot carry (thrown back at k_perp dr > 2, or turned
+// back by numerical dispersion where the grid stretches with k_perp dr > 1); part of the warnings of fromDeck
+std::vector<std::string> coneGridWarnings(const Config& c);
+
 }  // namespace gem

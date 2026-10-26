@@ -175,6 +175,12 @@ r_max       = 24 um                    # or: nr
 - **Reference points:** if the first point is not 0, the step `dr_points[0]` is used from the axis on. `r_points` need not coincide with cell faces; `r_max` (or `nr`) sets the outer edge independently.
 - **Smoothness:** h(r) is continuous, its slope jumps at the reference points. The scheme stays second-order accurate (checked with the Laplacian eigenvalues of modes 0–2 under refinement); only the cell-to-cell change |b| = |Δh/Δr| matters. The summary prints the largest change, and a warning is issued above 25 %. Keep it below ~20 %.
 - **Resolution:** a uniform grid is `r_points = 0` with a single `dr_points` value.
+- **Radiation must not be reflected:** the discrete radial operator carries only transverse wavenumbers k_⊥ ≤ 2/dr (a
+  coarser cell throws the wave back), and below that its k_⊥,eff = (2/dr) sin(k_⊥ dr/2) falls where dr grows outward,
+  which turns grazing waves back (numerical total internal reflection). Keep k_⊥ dr ≲ 1 wherever radiation must
+  propagate; stretch only outside it or behind the absorber. With undulators `--check` warns for the off-axis harmonic
+  cones (k_⊥ = h k_r θ, θ² = (1/h)(1 + K²/2)/γ² for harmonic h + 1 at hω₁; README, "Undulators (FEL)"): it names the
+  radius where the grid first stretches with k_⊥ dr > 1 and where dr exceeds 2/k_⊥, up to the radius the cone reaches.
 - **Summary:** `--check` prints Nr, the step range, the actual `r_max`, the largest cell-to-cell change and the reference points in µm.
 
 The window and the propagation distance use the same mapping:

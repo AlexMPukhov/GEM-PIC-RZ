@@ -179,6 +179,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
+| `tests/cone_grid.sh` | `--check` warning for undulator harmonic cones the radial grid turns back: θ and k_⊥ for h = 1–3 of `benchmarks/harmonics/fel.deck` against the cone formula (10⁻³), the stretching (40 µm) and cutoff (51.5 µm) radii of the h = 2 cone, the cutoff beyond 100 µm with dr = 1 µm to 100 µm, no warning on a uniform 0.5 µm grid |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
@@ -456,6 +457,16 @@ spontaneous and coherent emission, and the FEL interaction, are contained in the
 resolves the radiation (λ_r/20 or finer). The steps along z resolve the wiggling (λ_u/16 or finer); the summary
 warns otherwise. With undulators the beam is pushed in the mean of the fields of the two levels of a step
 (`numerics.beam_field = mean`, "Corrections", item 9); this keeps intense beams in planar undulators stable at λ_u/16.
+
+**Radial grid and harmonic cones.** At the frequency hω₁ the harmonic n = h + 1 is emitted off axis, on the cone
+θ² = (1/h)(1 + K²/2)/γ² (helical: 1 + K²), with the transverse wavenumber k_⊥ = h k_r θ (k_⊥² = 2h k_r k_u). The
+discrete radial operator carries only k_⊥ ≤ 2/dr: a coarser cell throws the wave back, and where the grid stretches
+with k_⊥ dr > 1 the numerical dispersion turns grazing waves back (numerical total internal reflection). The turned
+cone then collects near the beam. Example: in `benchmarks/harmonics/fel.deck` the 2nd harmonic (h = 2) has
+k_⊥ = 1.22 µm⁻¹ (a 5.1 µm radial structure near the beam); the grid (dr = 1 µm to 40 µm, then stretching) turns it
+back at 40–52 µm. `--check` warns for every harmonic up to
+`output.fel_harmonics` whose cone the grid turns back before the cone leaves the run (θ times the undulator length plus
+3σ, at most r_absorber). Keep k_⊥ dr ≲ 1 wherever the cone propagates; stretch only behind the absorber.
 
 **Test: coherent spontaneous emission** (`examples/undulator_emission.deck`). The setup:
 - planar undulator, 50 periods of 14.22 mm, K = 0.5;

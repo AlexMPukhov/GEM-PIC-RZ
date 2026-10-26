@@ -1376,6 +1376,72 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 }
 
 // ============================================================================
+// ----------------------------------------------------------------------------
+// Off-axis harmonic cones of an undulator against the radial grid. At the
+// observed frequency h omega_1 the harmonic n = h + 1 is emitted on the cone
+//     theta^2 = (n/h - 1) (1 + K^2/2) / gamma^2   (helical: 1 + K^2),
+// i.e. with the transverse wavenumber k_perp = h k_r theta, k_perp^2 = 2 h (n - h) k_r k_u
+// (FEL benchmark, h = 2: 1.22 /um, a 5.1 um structure near the beam). The discrete
+// radial operator carries only k_perp <= 2/dr: where k_perp dr > 2 the wave is
+// thrown back; below that its numerical k_perp,eff = (2/dr) sin(k_perp dr/2) falls
+// where dr grows outward, which turns grazing waves back (numerical total internal
+// reflection). Checked out to the radius the cone reaches (theta times the
+// undulator length plus 3 sigma of the bunch), at most r_absorber: warning where
+// k_perp dr > 2, or where the grid stretches with k_perp dr > 1.
+// ----------------------------------------------------------------------------
+std::vector<std::string> coneGridWarnings(const Config& c) {
+  std::vector<std::string> out;
+  const GridConfig& g = c.grid;
+  const double um = c.units.k0inv_um();
+  const double rEnd = std::min(g.r_absorber, g.r_max);
+  auto fmt = [](const char* f, double a, double b = 0, double d = 0, double e = 0) {
+    char s[256];
+    std::snprintf(s, sizeof s, f, a, b, d, e);
+    return std::string(s);
+  };
+  const int H = std::max(1, c.output.fel_harmonics);
+  for (size_t k = 0; k < c.undulators.size(); ++k) {
+    const auto& U = c.undulators[k];
+    const double kk = (U.type == UndulatorConfig::Type::Planar) ? 0.5 * U.K * U.K : U.K * U.K;
+    for (const auto& B : c.bunches) {
+      const double kr = 2.0 * PI / U.resonance(B.gamma);
+      for (int h = 1; h <= H; ++h) {
+        const int n = h + 1;
+        const double theta = std::sqrt((double(n) / h - 1.0) * (1.0 + kk)) / B.gamma;
+        const double kp = h * kr * theta;
+        const double reach = std::min(rEnd, theta * U.length + 3.0 * std::max(B.sigma_x, B.sigma_y));
+        double rCut = -1, rTir = -1, drCut = 0, drTir = 0;
+        for (int i = 0; i < g.Nr; ++i) {
+          const double r0 = g.mapping(i), dr = g.mapping(i + 1) - r0;
+          if (r0 >= reach) break;
+          if (rCut < 0 && kp * dr > 2.0) { rCut = r0; drCut = dr; }
+          const double drPrev = (i > 0) ? r0 - g.mapping(i - 1) : dr;
+          if (rTir < 0 && kp * dr > 1.0 && dr > drPrev * (1.0 + 1e-9)) { rTir = r0; drTir = dr; }
+        }
+        if (rCut < 0 && rTir < 0) continue;
+        std::string w = "undulator[" + std::to_string(k) + "], bunch '" + B.name + "': harmonic " +
+                        std::to_string(n) + " is emitted at " + std::to_string(h) + " omega_1 on a cone" +
+                        fmt(" (theta = %.4g mrad, k_perp = %.4g /um, %.3g um period) that reaches r = %.4g um;",
+                            theta * 1e3, kp / um, 2.0 * PI / kp * um, reach * um);
+        if (rTir >= 0 && (rCut < 0 || rTir < rCut))
+          w += fmt(" the grid stretches at r = %.4g um with k_perp dr = %.3g > 1: numerical dispersion turns grazing"
+                   " waves back (numerical total internal reflection)",
+                   rTir * um, kp * drTir);
+        if (rCut >= 0) {
+          if (rTir >= 0 && rTir < rCut) w += ";";
+          w += fmt(" at r = %.4g um the radial step %.3g um exceeds 2/k_perp = %.3g um: the grid cannot carry the cone,"
+                   " it is thrown back",
+                   rCut * um, drCut * um, 2.0 / kp * um);
+        }
+        w += fmt(". Keep dr <~ 1/k_perp = %.3g um out to %.4g um (stretch only behind the absorber)", 1.0 / kp * um,
+                 reach * um);
+        out.push_back(w);
+      }
+    }
+  }
+  return out;
+}
+
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
   deck.checkBlockNames({"constants", "grid", "laser", "flying_focus", "plasma", "ion", "bunch", "undulator", "quadrupole",
@@ -1502,6 +1568,7 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
                        std::to_string(lr / c.grid.dzeta_max) + " zeta steps (use >= 12, better ~20)");
     }
   }
+  for (const auto& w : coneGridWarnings(c)) warn.push_back(w);
   // transport elements: the sub-steps of the beam push must resolve the element and the betatron phase
   for (const auto& G : c.magnets) {
     if (G.length < 4.0 * c.numerics.beam_dz_max)
