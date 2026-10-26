@@ -137,6 +137,10 @@ target_link_libraries(test_deck gemcore)
 target_compile_definitions(test_deck PRIVATE GEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME deck_parser COMMAND test_deck)
 
+add_executable(solver_source tests/solver_source.cpp)
+target_link_libraries(solver_source gemcore)
+add_test(NAME solver_source COMMAND solver_source)
+
 add_executable(compare_columns tools/compare_columns.cpp)
 add_executable(check_physics tests/check_physics.cpp)
 target_link_libraries(check_physics gemcore)
