@@ -115,7 +115,10 @@ void DiagSums::add(const DiagSums& o) {
 }
 
 // on-axis field extrema over the slices [n0, n1), moments of the beam list
-DiagSums Simulation::diagSums(int n0, int n1) const {
+DiagSums Simulation::diagSums(int n0, int n1) const { return diagSums(n0, n1, beam, freedCharge); }
+
+DiagSums Simulation::diagSums(int n0, int n1, const std::vector<Particle>& beam,
+                              const std::vector<double>& freedCharge) const {
   DiagSums D;
   for (int n = n0; n < n1; ++n) {
     EB f = gather(fold, n, 1.0, n, 0.0, 1e-9, 0.0);

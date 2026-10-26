@@ -260,6 +260,8 @@ class Simulation {
   void absorber(double s);  // at level s (flying focus: the incident field of that level)
 
   DiagSums diagSums(int n0, int n1) const;          // slices / half-cells [n0, n1) and the beam list
+  // the same for a given beam list and freed charge (the MPI pipeline computes them while the next step runs)
+  DiagSums diagSums(int n0, int n1, const std::vector<Particle>& beamList, const std::vector<double>& freedQ) const;
   void report(const DiagSums& D, bool files);       // console, tables, files
   void readCheckpoint(const std::string& path);
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt
