@@ -36,22 +36,26 @@ def pulse(xc, yc, w, amp, k, x0, x1, n=240):
     car = [(x, yc + (y - yc) * math.sin(k * (x - xc))) for x, y in env]
     return poly(car), poly(env + [(x, 2 * yc - y) for x, y in reversed(env)]) + ' Z'
 
-def mark(ink):
+def mark(ink, bold=False):
     """letter G as a ring (gap from 8 to 52 deg) with its crossbar on the axis; inside: laser pulse,
-    nested bubble sheaths of the wake behind it, witness bunch in the first bubble"""
+    nested bubble sheaths of the wake behind it, witness bunch in the first bubble.
+    bold: avatar geometry (thicker lines, fewer sheaths) that stays legible at small sizes"""
+    sheaths = [(18, 4, .7), (28, 5, .55), (38, 6, .45)] if bold else [(16, 1.8, .75), (23, 2.3, .62), (30, 2.8, .52), (37, 3.3, .44)]
+    r, sw, pw, k = (82, 20, 5, 0.5) if bold else (84, 14, 4.2, 0.75)
+    beads = [(74, 6, 8.5), (88, 5.5, 7.2)] if bold else [(76, 4.6, 6.5), (87, 4.2, 5.6)]
     s = f'<g fill="none" stroke="{ink}">'
-    for a, w, o in [(16, 1.8, .75), (23, 2.3, .62), (30, 2.8, .52), (37, 3.3, .44)]:
+    for a, w, o in sheaths:
         cx = 104 - a    # every sheath closes at the pulse, x = 104
         s += (f'<path d="M104 100 C {104 - .3 * a:.1f} {100 - a:.1f}, {cx - .55 * a:.1f} {100 - a:.1f}, {cx - a:.1f} 100 '
               f'C {cx - .55 * a:.1f} {100 + a:.1f}, {104 - .3 * a:.1f} {100 + a:.1f}, 104 100 Z" stroke-width="{w}" opacity="{o}"/>')
     s += '</g>'
-    r, (g0, g1) = 84, (math.radians(52), math.radians(368))
+    g0, g1 = math.radians(52), math.radians(368)
     s += (f'<path d="M{100 + r * math.cos(g0):.2f} {100 - r * math.sin(g0):.2f} A{r} {r} 0 1 0 {100 + r * math.cos(g1):.2f} '
-          f'{100 - r * math.sin(g1):.2f}" fill="none" stroke="{ink}" stroke-width="14"/>')
-    s += f'<rect x="150" y="93" width="41" height="14" fill="{ink}"/>'
-    car, env = pulse(127, 100, 11, 20, 0.75, 104, 150)
-    s += f'<path d="{env}" fill="{ACC}" opacity="0.22"/><path d="{car}" fill="none" stroke="{ACC}" stroke-width="4.2" stroke-linecap="round"/>'
-    s += ''.join(f'<ellipse cx="{c}" cy="100" rx="{a}" ry="{b}" fill="{ACC}"/>' for c, a, b in [(76, 4.6, 6.5), (87, 4.2, 5.6)])
+          f'{100 - r * math.sin(g1):.2f}" fill="none" stroke="{ink}" stroke-width="{sw}"/>')
+    s += f'<rect x="150" y="{100 - sw / 2:g}" width="{r + sw / 2 - 50:g}" height="{sw}" fill="{ink}"/>'
+    car, env = pulse(127, 100, 12 if bold else 11, 22 if bold else 20, k, 104, 150)
+    s += f'<path d="{env}" fill="{ACC}" opacity="0.22"/><path d="{car}" fill="none" stroke="{ACC}" stroke-width="{pw}" stroke-linecap="round"/>'
+    s += ''.join(f'<ellipse cx="{c}" cy="100" rx="{a}" ry="{b}" fill="{ACC}"/>' for c, a, b in beads)
     return s
 
 def svg(w, h, body, title):
@@ -71,7 +75,13 @@ def logo(dark):
     b += f'<path d="{word}" fill="{ink}"/><path d="{tag}" fill="{sub}"/>'
     return svg(W, H, b, 'GEM-PIC-RZ – Galilean electromagnetic PIC in RZ')
 
-files = {'gempic-rz-logo-dark.svg': logo(True), 'gempic-rz-logo-light.svg': logo(False)}
+def avatar(dark):   # square avatar (GitHub, slides): the G mark alone
+    bg, ink = ('#0B0F18', '#EEF1F4') if dark else ('#F4F5F2', '#1F3A5F')
+    return svg(512, 512, f'<rect width="512" height="512" fill="{bg}"/>'
+               f'<svg x="56" y="56" width="400" height="400" viewBox="-6 -6 212 212">{mark(ink, bold=True)}</svg>', 'GEM-PIC-RZ')
+
+files = {'gempic-rz-logo-dark.svg': logo(True), 'gempic-rz-logo-light.svg': logo(False),
+         'gempic-rz-avatar-dark.svg': avatar(True), 'gempic-rz-avatar-light.svg': avatar(False)}
 for n, s in files.items():
     open(os.path.join(OUT, n), 'w', encoding='utf-8').write(s)
 print('\n'.join(files))
