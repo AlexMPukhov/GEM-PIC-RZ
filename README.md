@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/gempic-rz-logo-dark.svg">
+    <img src="docs/logo/gempic-rz-logo-light.svg" alt="GEM-PIC-RZ: Galilean electromagnetic PIC in RZ" width="600">
+  </picture>
+</p>
+
 # GEM-PIC-RZ
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23600178.svg)](https://doi.org/10.5281/zenodo.23600178)
@@ -854,3 +861,10 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
   dependent; `benchmarks/downramp_fbpic`). Attributed to the GT2 frame of the particles; GT1 should describe it but
   produces stripes in the fields where plasma particles reach the next slow-time level inside the window. No solution
   yet; to be discussed before work starts.
+
+## Logo
+
+`docs/logo/`: light and dark versions of the logo (SVG with the lettering converted to outlines, and PNG at
+twice the size), in the style of the [QUARZ](https://github.com/AlexMPukhov/QUARZ) logo. The G ring holds a
+laser pulse on the axis, the bubble sheaths of its wake and a witness bunch; the amber sparks mark that it was
+made with Claude. `make_logo.py` regenerates the SVGs (fonts: Space Grotesk and IBM Plex Mono, OFL).
