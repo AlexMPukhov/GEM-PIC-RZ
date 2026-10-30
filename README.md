@@ -867,5 +867,7 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
 `docs/logo/`: light and dark versions of the logo (SVG with the lettering converted to outlines, and PNG at
 twice the size), in the style of the [QUARZ](https://github.com/AlexMPukhov/QUARZ) logo. The G ring holds a
 laser pulse on the axis, the bubble sheaths of its wake and a witness bunch; the amber sparks mark that it was
-made with Claude. `gempic-rz-avatar-{light,dark}.{svg,png}`: the G mark alone as a square 512 x 512 avatar
-(thicker lines for small sizes). `make_logo.py` regenerates the SVGs (fonts: Space Grotesk and IBM Plex Mono, OFL).
+made with Claude. `gempic-rz-mark-{light,dark}`: the G alone on a transparent background;
+`gempic-rz-avatar-{light,dark}`: a square 512 x 512 avatar (thicker lines for small sizes). File list and colours:
+[`docs/logo/README.md`](docs/logo/README.md); `make_logo.py` regenerates the SVGs (fonts: Space Grotesk and
+IBM Plex Mono, OFL).
