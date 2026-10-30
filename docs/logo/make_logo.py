@@ -81,6 +81,8 @@ def avatar(dark):   # square avatar (GitHub, slides): the G mark alone
                f'<svg x="56" y="56" width="400" height="400" viewBox="-6 -6 212 212">{mark(ink, bold=True)}</svg>', 'GEM-PIC-RZ')
 
 files = {'gempic-rz-logo-dark.svg': logo(True), 'gempic-rz-logo-light.svg': logo(False),
+         'gempic-rz-mark-dark.svg': svg(212, 212, f'<g transform="translate(6 6)">{mark("#EEF1F4")}</g>', 'GEM-PIC-RZ'),
+         'gempic-rz-mark-light.svg': svg(212, 212, f'<g transform="translate(6 6)">{mark("#1F3A5F")}</g>', 'GEM-PIC-RZ'),
          'gempic-rz-avatar-dark.svg': avatar(True), 'gempic-rz-avatar-light.svg': avatar(False)}
 for n, s in files.items():
     open(os.path.join(OUT, n), 'w', encoding='utf-8').write(s)
