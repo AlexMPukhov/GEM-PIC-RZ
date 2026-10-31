@@ -126,16 +126,53 @@ struct LaserConfig {
 // In a uniform background plasma (omega_p^2 = background) k_perp^2 = 2 omega kappa - kappa^2 - omega_p^2.
 // a(omega) Gaussian: on the axis E_x = a0 omega0 exp(-(zeta - zeta_c)^2 / L^2) cos(...). It is fed through the
 // radial absorber layer (total-field / scattered-field): there R relaxes to the incident field, and only the
-// difference (what the plasma radiates or scatters) is absorbed. Linear polarization along x, mode m = 1.
+// difference (what the plasma radiates or scatters) is absorbed. Default: linear polarization along x, mode m = 1.
+// Several components (beat_* keys): U = sum_c U_c, U_c = A_c e^{i psi_c} e^{-i kappa_c s} sum_omega a(omega)
+// J_|l_c|(k_c(omega) r) e^{i omega (zeta - zeta_c) + i cep}, Bessel order l_c (azimuthal phase e^{i l_c phi}), cone
+// angle theta_c; every component moves at c, two of them beat with the period 2 pi / |kappa_1 - kappa_0| in s.
+// Physical field: linear E_x = Re sum_c U_c e^{i l_c phi}; circular with helicity h E_x + i h E_y = sum_c U_c e^{i l_c phi}.
+// With W = e^{-i phi} (E_x + i E_y) = sum_n w_n e^{i n phi}: R_r,m = w_m + conj(w_-m), R_phi,m = -i (w_m - conj(w_-m))
+// (as envelopeToR in laser_file.cpp). Helicity +1 gives w_{l-1} = U_c, helicity -1 gives w_{-(l+1)} = conj(U_c);
+// linear polarization is the mean of both. terms() lists these contributions.
 struct FlyingFocusConfig {
+  struct Component {
+    int order = 0;         // Bessel order l
+    double theta = 0.05;   // cone angle at omega0 [rad]
+    double amp = 1.0;      // amplitude relative to a0
+    double phase = 0.0;    // psi_c
+    double kappa() const { return 1.0 - std::cos(theta); }  // omega0 (1 - cos theta), code units
+  };
+  // contribution of component comp to mode m: Y = U_c or conj(U_c) (conj), U_c = G_c e^{-i kappa_c s} at level s;
+  // R_r,m += w Y, R_phi,m += i rps w Y
+  struct Term { int comp, m; bool conj; double w, rps; };
   bool present = false;
   double a0 = 1.0;
-  double theta = 0.05;     // cone angle at omega0 [rad]
   double length_1e = 10.0; // 1/e half length of the on-axis field envelope
   double zeta_center = 0;
   double cep = 0;
   double background = 0;   // density [n_c] of a uniform plasma in which the incident field propagates (0: vacuum)
-  double kappa() const { return 1.0 - std::cos(theta); }  // omega0 (1 - cos theta), code units
+  bool circular = false;
+  int helicity = 1;
+  std::vector<Component> comps;  // comps[0]: cone_angle, order (amplitude 1); then the beat_* components
+  double thetaMax() const {
+    double t = 0.0;
+    for (const auto& c : comps) t = std::max(t, c.theta);
+    return t;
+  }
+  // all terms, also those of modes m > m_max (the caller drops them)
+  std::vector<Term> terms() const {
+    std::vector<Term> T;
+    const double w = circular ? 1.0 : 0.5;
+    for (int c = 0; c < int(comps.size()); ++c)
+      for (int h : {1, -1}) {
+        if (circular && h != helicity) continue;
+        const int n = h > 0 ? comps[c].order - 1 : -(comps[c].order + 1);
+        const bool cu = h < 0;                            // w_n = conj(U_c)
+        if (n >= 0) T.push_back({c, n, cu, w, -1.0});     // w_m, m = n
+        if (n <= 0) T.push_back({c, -n, !cu, w, 1.0});    // conj(w_-m), m = -n
+      }
+    return T;
+  }
 };
 
 // ---------------------------------------------------------------- plasma

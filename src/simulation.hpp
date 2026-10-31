@@ -146,14 +146,26 @@ class Simulation {
   void beginStep();  // Delta of this step, matrices of the field solver
 
   void initLasers();
-  // flying focus (cfg.flying_focus): incident field G(r, zeta) of R_r,1 at s = 0 on the faces (n (N+1) + i) and
-  // centres (n N + i); at level s, R_r,1 = Re(G e^{-i kappa s}) and R_phi,1 = i R_r,1
+  // flying focus (cfg.flying_focus): incident field G_c(r, zeta) of every component c at s = 0 on the faces
+  // (c ffStrideF + n (N+1) + i) and centres (c ffStrideC + n N + i); at level s U_c = G_c e^{-i kappa_c s}, and
+  // the terms ffTerms (modes m <= M) give R_r,m and R_phi,m (FlyingFocusConfig)
   std::vector<cd> ffGf, ffGc;
+  std::vector<FlyingFocusConfig::Term> ffTerms;
+  size_t ffStrideF = 0, ffStrideC = 0;
   int ffN0 = 0;  // first slice of ffGf, ffGc (stored slices only)
   void setupFlyingFocus();
-  double ffInc(bool face, int n, int i, double s) const {
-    const cd G = face ? ffGf[size_t(n - ffN0) * (g.N + 1) + i] : ffGc[size_t(n - ffN0) * g.N + i];
-    return (G * std::polar(1.0, -cfg.flying_focus.kappa() * s)).real();
+  // incident R_r,m (face) or R_phi,m (centre) of the flying focus at level s
+  cd ffInc(int m, bool face, int n, int i, double s) const {
+    cd R = 0.0;
+    for (const auto& t : ffTerms) {
+      if (t.m != m) continue;
+      const cd G = face ? ffGf[t.comp * ffStrideF + size_t(n - ffN0) * (g.N + 1) + i]
+                        : ffGc[t.comp * ffStrideC + size_t(n - ffN0) * g.N + i];
+      cd Y = G * std::polar(1.0, -cfg.flying_focus.comps[t.comp].kappa() * s);
+      if (t.conj) Y = std::conj(Y);
+      R += face ? t.w * Y : cd(0.0, t.rps * t.w) * Y;
+    }
+    return R;
   }
   // lasers from LASY / openPMD envelope files (laser.file): field evaluators (null for the other lasers)
   std::vector<std::unique_ptr<LaserFileField>> fileFields;

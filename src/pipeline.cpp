@@ -390,14 +390,14 @@ void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
     for (int i = 0; i <= S.g.N; ++i) {
       const double d = damp(S.g.rho[i]);
       if (d == 1.0) continue;
-      const cd inc = ((ff && m == 1) ? cd(S.ffInc(true, n, i, s)) : cd(0.0)) + S.incidentF(m, n, i);
+      const cd inc = (ff ? S.ffInc(m, true, n, i, s) : cd(0.0)) + S.incidentF(m, n, i);
       cd& R = F.Rr[F.f(m, n, i)];
       R = inc + d * (R - inc);
     }
     for (int i = 0; i < S.g.N; ++i) {
       const double d = damp(S.g.c[i]);
       if (d == 1.0) continue;
-      const cd inc = ((ff && m == 1) ? cd(0.0, 1.0) * S.ffInc(false, n, i, s) : cd(0.0)) + S.incidentC(m, n, i);
+      const cd inc = (ff ? S.ffInc(m, false, n, i, s) : cd(0.0)) + S.incidentC(m, n, i);
       cd& R = F.Rp[F.c(m, n, i)];
       R = inc + d * (R - inc);
     }

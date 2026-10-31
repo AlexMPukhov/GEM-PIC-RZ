@@ -5,6 +5,7 @@
 //  check_physics ioncollapse <axis_00001.txt>  (tests/ion_collapse.deck)
 //  check_physics ionH        <ionization.txt>  (tests/ionization_H.deck)
 //  check_physics ionN        <ionization.txt>  (tests/ionization_N.deck)
+//  check_physics ffbeat      <map> ...         (tests/flying_focus_beat.sh)
 //  The ionization references integrate the ADK rate (adkRateSI, NIST energies)
 //  over the analytic laser field E = a0 exp(-r^2/w0^2) exp(-zeta^2/L^2) cos(zeta)
 //  (single level: 1 - exp(-int w dt); two levels: exact rate equations per
@@ -12,6 +13,9 @@
 //  Exit code 0 on success.
 // ============================================================================
 #include <cmath>
+#include <complex>
+#include <cstdlib>
+#include <map>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -149,6 +153,97 @@ int main(int argc, char** argv) {
         if (!ok) ++fails;
       }
     }
+  } else if (mode == "ffbeat") {
+    // flying focus of several luminal Bessel components (tests/flying_focus_beat.sh), map at y = 0:
+    //   ffbeat <map> <tol> <a0> <L_1e[um]> <zeta_c[um]> then per component <theta[rad]> <l> <amplitude> <phase>
+    // E_x(x, 0, zeta, s) = Re sum_c U_c e^{i l_c phi} (linear and circular polarization alike; phi = 0, pi), with
+    // U_c = a0 A_c e^{i psi_c} int dw a(w) J_|l|(k_c(w) r) e^{i w (zeta - zeta_c) - i kappa_c s},
+    // a(w) = L/(2 sqrt(pi)) e^{-(w-1)^2 L^2/4}, kappa_c = 1 - cos theta_c, k_c^2 = 2 w kappa_c - kappa_c^2 (vacuum),
+    // integrated here on 401 frequencies over +-8/L. Compared within |zeta - zeta_c| < 2 L, r < 40 um: the whole
+    // field and its part odd in x (the components of odd l), relative to a0; and the x of the intensity maximum
+    // (E_x^2 summed over |zeta - zeta_c| < L/2) near the axis: the beat displaces it by x_b cos(...).
+    if (argc < 11 || (argc - 7) % 4 != 0) { std::fprintf(stderr, "ffbeat: wrong arguments\n"); return 2; }
+    const double tol = std::atof(argv[3]), a0 = std::atof(argv[4]), L = std::atof(argv[5]) / k0inv_um,
+                 zc = std::atof(argv[6]) / k0inv_um;
+    struct C { double th; int l; double A, psi; };
+    std::vector<C> cs;
+    for (int a = 7; a + 3 < argc; a += 4)
+      cs.push_back({std::atof(argv[a]), std::atoi(argv[a + 1]), std::atof(argv[a + 2]), std::atof(argv[a + 3])});
+    double s = 0;
+    {
+      std::ifstream in(argv[2]);
+      std::string head;
+      std::getline(in, head);
+      const auto p = head.find("z = ");
+      if (p == std::string::npos) { std::fprintf(stderr, "no z in the map header\n"); return 2; }
+      s = std::atof(head.c_str() + p + 4) * 1e3 / k0inv_um;
+    }
+    const int nw = 401;
+    auto ref = [&](double x, double zeta) {
+      const double r = std::fabs(x);
+      double ex = 0.0;
+      for (const auto& c : cs) {
+        const double kap = 1.0 - std::cos(c.th), dw = 16.0 / L / (nw - 1);
+        std::complex<double> U = 0.0;
+        for (int j = 0; j < nw; ++j) {
+          const double w = 1.0 - 8.0 / L + j * dw;
+          const double a = L / (2.0 * std::sqrt(M_PI)) * std::exp(-0.25 * (w - 1) * (w - 1) * L * L) * dw;
+          const double kr = std::sqrt(std::max(0.0, 2.0 * w * kap - kap * kap));
+          U += a * std::cyl_bessel_j(double(std::abs(c.l)), kr * r) * std::polar(1.0, w * (zeta - zc) - kap * s);
+        }
+        U *= a0 * c.A * std::polar(1.0, c.psi);
+        ex += (U * std::polar(1.0, x < 0 ? c.l * M_PI : 0.0)).real();
+      }
+      return ex;
+    };
+    // rows: zeta x Ex ...; pair x with -x (the map has both signs on the same centres)
+    double d2 = 0, n2 = 0, o2 = 0, od2 = 0;
+    long cnt = 0;
+    std::map<std::pair<long, long>, double> E;  // (zeta, x) in 1e-4 um -> Ex
+    for (const auto& r : rows) E[{std::lround(r[0] * 1e4), std::lround(r[1] * 1e4)}] = r[2];
+    std::map<long, double> Ic, Ir;  // intensity vs x (code, reference)
+    for (const auto& r : rows) {
+      const double zeta = r[0] / k0inv_um, x = r[1] / k0inv_um;
+      if (std::fabs(zeta - zc) > 2 * L || std::fabs(r[1]) > 40.0) continue;
+      const double e = ref(x, zeta);
+      d2 += (r[2] - e) * (r[2] - e);
+      n2 += e * e;
+      ++cnt;
+      if (std::fabs(zeta - zc) < 0.5 * L && std::fabs(r[1]) < 3.0) {
+        Ic[std::lround(r[1] * 1e4)] += r[2] * r[2];
+        Ir[std::lround(r[1] * 1e4)] += e * e;
+      }
+      if (r[1] > 0) {  // odd part: (E(x) - E(-x)) / 2
+        const auto it = E.find({std::lround(r[0] * 1e4), std::lround(-r[1] * 1e4)});
+        if (it == E.end()) continue;
+        const double oc = 0.5 * (r[2] - it->second), orf = 0.5 * (e - ref(-x, zeta));
+        o2 += orf * orf;
+        od2 += (oc - orf) * (oc - orf);
+      }
+    }
+    if (cnt == 0) { std::fprintf(stderr, "no map points in the window\n"); return 2; }
+    // x of the maximum: parabola through the largest node and its neighbours
+    auto peak = [](const std::map<long, double>& I) {
+      auto best = I.begin();
+      for (auto it = I.begin(); it != I.end(); ++it)
+        if (it->second > best->second) best = it;
+      if (best == I.begin() || std::next(best) == I.end()) return best->first * 1e-4;
+      const auto lo = std::prev(best), hi = std::next(best);
+      const double x0 = lo->first * 1e-4, x1 = best->first * 1e-4, x2 = hi->first * 1e-4;
+      const double y0 = lo->second, y1 = best->second, y2 = hi->second;
+      const double den = (x0 - x1) * (x0 - x2) * (x1 - x2);
+      const double A = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den;
+      const double B = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
+      return -B / (2 * A);
+    };
+    const double rel = std::sqrt(d2 / cnt) / a0, relodd = std::sqrt(od2 / std::max(o2, 1e-300));
+    const bool ok = rel < tol && relodd < 10 * tol;
+    std::printf("%s z = %.4f mm: rms(E_x - reference)/a0 = %.2e (tolerance %.1e), rms E_x/a0 = %.3f; odd part "
+                "(beat components): rms difference / rms = %.2e (tolerance %.1e), rms/a0 = %.3e; intensity maximum "
+                "at x = %.4f um (reference %.4f um)\n",
+                ok ? "OK  " : "FAIL", s * k0inv_um * 1e-3, rel, tol, std::sqrt(n2 / cnt) / a0, relodd, 10 * tol,
+                std::sqrt(o2 / std::max(1L, cnt / 2)) / a0, peak(Ic), peak(Ir));
+    if (!ok) ++fails;
   } else {
     std::fprintf(stderr, "unknown mode %s\n", mode.c_str());
     return 2;
