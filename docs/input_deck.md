@@ -282,7 +282,20 @@ so that the driver neither dephases nor depletes. It is fed in from the side.
   k_⊥² = 2ωκ − κ² − ω_p², and the pattern moves at exactly c:
   E_x = Re[e^{−iκs} Σ_ω a(ω) J0(k_⊥(ω) r) e^{iω(ζ−ζc)+i·cep}].
 - **Spectrum and polarization:** a(ω) is Gaussian, so on the axis E_x = a0 exp(−(ζ−ζc)²/L²) cos(…). The
-  polarization is linear along x (mode m = 1).
+  polarization is linear along x (mode m = 1) by default, or circular (`polarization = circular`, `helicity` as
+  in the `laser` block; a0 is then the amplitude of each of E_x, E_y).
+- **Several components (beats):** `beat_cone_angle`, `beat_order`, `beat_amplitude`, `beat_phase` add components
+  U_c = A_c e^{iψ_c} e^{−iκ_c s} Σ_ω a(ω) J_|l_c|(k_⊥,c(ω) r) e^{iω(ζ−ζc)+i·cep}, κ_c = ω0(1 − cos θ_c), of Bessel order
+  l_c (azimuthal phase e^{i l_c φ}), with the same spectrum, each moving at c. The physical field is
+  E_x = Re Σ_c U_c e^{i l_c φ} (linear) or E_x + i h E_y = Σ_c U_c e^{i l_c φ} (circular, helicity h); the main
+  component has `order` (default 0), `cone_angle` and amplitude 1. Two components beat with the period
+  2π/|κ_1 − κ_0| ≈ 4π/(k(θ_1² − θ_0²)) in z. A J0 core with a weak J1 e^{iφ} component (amplitude A ≪ 1) has its
+  intensity maximum displaced by x_b ≈ A θ_1/(k θ_0²) from the axis, turning around the axis with that period: the
+  driver of a helical bubble (a bubble whose axis winds helically in the lab).
+- **Azimuthal modes:** with circular polarization and helicity h a component of order l lives in the single mode
+  m = |l − h|; linear polarization puts it into m = |l − 1| and |l + 1|. So a J0 core plus J1 e^{ihφ} needs only
+  m_max = 1 (core in m = 1, J1 part in m = 0); the summary lists the modes of every component, and modes above
+  `m_max` are left out (warning).
 - **Boundary condition (total field / scattered field):** in the radial absorber layer
   r_absorber < r < r_max, R relaxes to the incident field, R ← R_inc + d(r)(R − R_inc). The layer therefore feeds
   the converging wave and absorbs only what the plasma adds.
@@ -296,16 +309,24 @@ so that the driver neither dephases nor depletes. It is fed in from the side.
 | `tau_fwhm` *or* `length_1e` | time / length | — | on-axis intensity FWHM, or 1/e half length of the field |
 | `zeta_center` | length | — | centre of the on-axis envelope |
 | `cep` | angle | 0 | carrier-envelope phase |
-| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ |
+| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ for every component |
+| `order` | integer | 0 | Bessel order l of the main component (J_\|l\| e^{ilφ}) |
+| `polarization` | `linear` \| `circular` | `linear` | linear along x, or circular |
+| `helicity` | +1 \| −1 | +1 | circular polarization: sense of rotation (as in the `laser` block) |
+| `beat_cone_angle` | angles | — | cone angles of up to 3 further components |
+| `beat_order` | integers | 0 | their Bessel orders l_c |
+| `beat_amplitude` | numbers | 1 | their amplitudes relative to a0 |
+| `beat_phase` | angles | 0 | their phases ψ_c (at s = 0) |
 
 Requirements and checks:
-- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere. The conical wave has the same transverse wavelength at every
+- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere (θ the largest cone angle). The conical wave has the same transverse wavelength at every
   radius, so the grid cannot coarsen outward.
 - **Window:** it must reach ζc + 3L + r_max θ/2. The rings at radius r run ahead of the axial focus by about rθ/2.
 - **Layer:** it must not contain plasma that differs from `background_density`, such as a neutral gas that gets
   ionized there.
 - **Tests:** `benchmarks/flying_focus/` (vacuum: on-axis amplitude within 2 % over 2 mm, constant phase offset
-  0.08 rad, group velocity c to 3·10⁻⁵).
+  0.08 rad, group velocity c to 3·10⁻⁵). Several components: ctest `flying_focus_beat`
+  (`benchmarks/flying_focus/beat_vacuum.deck`, results there).
 - **Backends:** serial, OpenMP and MPI give identical results; the GPU kernel is the OpenMP one and compiles with nvcc, but has not been run on a GPU yet.
 
 ## `plasma` (0 or 1 block)
