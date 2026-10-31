@@ -145,6 +145,18 @@ class Simulation {
 
   void beginStep();  // Delta of this step, matrices of the field solver
 
+  // metal wall (block 'wall'): the solver boundary of level s, particles are lost at r >= rWall (r_max without a
+  // wall); maskWall zeroes the stored fields outside the wall
+  double rWall = 0.0;
+  void setWall(double s);
+  void maskWall(Fields& F) const;
+  // the wall moved outwards past faces this step: wallFrom = its last face K0 at s^0 (-1: it did not). The field at
+  // the old wall continues into the opened annulus (zeros there would make a jump of E_r, B_phi, B_z and radiate
+  // high TM modes): faces K0+1..K1 take E_r, B_phi, B_z of face K0, the centres K0+1..K1 the wall value of E_z,
+  // R_phi, L_phi stay 0 (E_phi is tangential).
+  int wallFrom = -1;
+  void extendWall(Fields& F) const;
+
   void initLasers();
   // flying focus (cfg.flying_focus): incident field G(r, zeta) of R_r,1 at s = 0 on the faces (n (N+1) + i) and
   // centres (n N + i); at level s, R_r,1 = Re(G e^{-i kappa s}) and R_phi,1 = i R_r,1

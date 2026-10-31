@@ -268,6 +268,12 @@ double UndulatorConfig::resonance(double gamma) const {
   return period * (1.0 + kk) / (2.0 * gamma * gamma);
 }
 
+double WallConfig::at(double z) const {
+  if (!fn.empty()) return fn({z});
+  if (!z_points.empty()) return interpTable(z_points, r_points, z);
+  return radius;
+}
+
 double PlasmaConfig::longitudinal(double z) const {
   if (z_points.empty()) return 1.0;
   return interpTable(z_points, z_values, z);
@@ -671,6 +677,35 @@ void readFlyingFocus(const Block& b, const Deck& d, const Units& u, const GridCo
   if (F.zeta_center + 3.0 * F.length_1e + 0.5 * g.r_max * F.theta > g.window())
     warn.push_back(b.label() + ": the converging wave at r_max (r theta / 2 ahead) and the pulse need room in front "
                    "of zeta_center: window too short");
+}
+
+// block 'wall': perfectly conducting wall at r = r_w(z) inside the grid; it switches the radial absorber off
+void readWall(const Block& b, const Deck& d, const Units& u, GridConfig& g, WallConfig& W) {
+  BlockReader r(b, d, u);
+  W.present = true;
+  const int given = int(r.has("radius")) + int(r.has("z_points")) + int(r.has("radius_function"));
+  if (given != 1) r.error(b.line, b.label() + " needs exactly one of 'radius', 'z_points' (with 'r_points') or 'radius_function'");
+  if (r.has("radius")) {
+    W.radius = r.num("radius", Dim::Length);
+    if (!(W.radius > 0.0 && W.radius < g.r_max)) r.failKey("radius", "must lie between 0 and grid.r_max");
+  } else if (r.has("z_points")) {
+    W.z_points = r.vec("z_points", Dim::Length);
+    W.r_points = r.vec("r_points", Dim::Length);
+    if (W.z_points.size() != W.r_points.size() || W.z_points.empty())
+      r.failKey("r_points", "must have as many entries as z_points");
+    for (size_t i = 1; i < W.z_points.size(); ++i)
+      if (!(W.z_points[i] > W.z_points[i - 1])) r.failKey("z_points", "must be strictly increasing");
+    for (double rw : W.r_points)
+      if (!(rw > 0.0 && rw < g.r_max)) r.failKey("r_points", "must lie between 0 and grid.r_max");
+  } else {
+    W.fn = r.expr("radius_function", {"z"});  // checked at every step (Simulation::setWall)
+  }
+  // the wall reflects; an absorber in front of it would damp the guided field
+  const Block* gb = d.single("grid");
+  const BlockReader gr(*gb, d, u);
+  if (gr.has("r_absorber") && g.r_absorber < g.r_max)
+    gr.failKey("r_absorber", "a wall block switches the radial absorber off: remove r_absorber or set it >= r_max");
+  g.r_absorber = g.r_max;
 }
 
 void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
@@ -1379,7 +1414,7 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
   deck.checkBlockNames({"constants", "grid", "laser", "flying_focus", "plasma", "ion", "bunch", "undulator", "quadrupole",
-                        "plasma_lens", "solenoid", "chicane", "output", "numerics"});
+                        "plasma_lens", "solenoid", "chicane", "wall", "output", "numerics"});
   Config c;
   g_consts = &c.constants;  // the expressions of all blocks see the constants
   struct Reset { ~Reset() { g_consts = nullptr; } } reset;
@@ -1389,6 +1424,7 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
 
   if (const Block* b = deck.single("constants")) readConstants(*b, deck, c.units, c.constants);
   readGrid(*grid, deck, c.units, c.grid, warn);
+  if (const Block* b = deck.single("wall")) readWall(*b, deck, c.units, c.grid, c.wall);
   for (const Block* b : deck.all("laser")) {
     LaserConfig L;
     readLaser(*b, deck, c.units, c.grid, L, warn);
@@ -1472,6 +1508,9 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   if (c.output.lasy && c.grid.M < 1)
     throw DeckError(deck.source + ": output.lasy needs the laser modes: set grid.m_max >= 1");
   if (const Block* b = deck.single("numerics")) readNumerics(*b, deck, c.units, c.numerics);
+  if (c.wall.present && c.numerics.theta_stiff > 0 && (!c.wall.fn.empty() || c.wall.z_points.size() > 1))
+    throw DeckError(deck.where(deck.single("wall")->line) +
+                    ": a wall of varying radius cannot be combined with numerics.theta_stiff yet (a constant radius can)");
   deck.checkAllUsed();
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
   for (const auto& A : c.boxAdvice()) {
@@ -1580,6 +1619,17 @@ std::string Config::summary() const {
   } else {
     line("       dz = %.4g um, z_end = %.4g mm (%d steps); absorber r > %.4g um, strength %.3g", g.dz * um,
          g.z_end * um * 1e-3, g.stepsFrom(0.0), g.r_absorber * um, g.absorber_strength);
+  }
+  if (wall.present) {
+    if (!wall.fn.empty())
+      line("wall : perfectly conducting, r_w(z) = %s; r_w(0) = %.4g um (absorber off)", wall.fn.text().c_str(),
+           wall.at(0.0) * um);
+    else if (!wall.z_points.empty())
+      line("wall : perfectly conducting, r_w(z) linear between %zu points, %.4g .. %.4g um (absorber off)",
+           wall.z_points.size(), *std::min_element(wall.r_points.begin(), wall.r_points.end()) * um,
+           *std::max_element(wall.r_points.begin(), wall.r_points.end()) * um);
+    else
+      line("wall : perfectly conducting, r_w = %.4g um (absorber off)", wall.radius * um);
   }
   for (size_t i = 0; i < lasers.size(); ++i) {
     const auto& L = lasers[i];

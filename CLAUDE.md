@@ -91,4 +91,11 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     default (bit-identical when off). Open: beam_consistent in the MPI pipeline (needs c1b at half-cell b and the
     flux across block edges); team-parallel band solves on the GPU. Private context: CLAUDE-notes
     gem-pic-rz/self_field/HANDOVER.md.
+  - **Metal wall** (branch `metal-wall`; block `wall`, README "Metal walls", ctest wall_*): perfectly conducting
+    wall r = r_w(z) inside the grid (FieldSolver::setWall: last face K, ghost centre of E_z at r_w, zero B_z flux,
+    fields outside zero; absorber off). Sloped wall: E_z = -r_w' E_r at the wall (kept in e[K]); widening wall: the
+    field continues into the opened annulus (Simulation/Engine::extendWall). Serial, engine, pipeline and MPI.
+    Against the modal theory of the tube (tests/wall.py, the scheme's dispersion relation): 0.8 % straight, 1.0 %
+    12 -> 9 um taper. Open: varying radius with theta_stiff; reflections (backward waves) are outside the model.
+    Asked for by Alexander (waveguides of variable radius); dielectric structures were discussed, not started.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

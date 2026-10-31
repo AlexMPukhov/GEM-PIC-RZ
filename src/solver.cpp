@@ -5,6 +5,8 @@
 #include "solver.hpp"
 
 #include <map>
+#include <stdexcept>
+#include <string>
 
 namespace gem {
 
@@ -31,25 +33,84 @@ void FieldSolver::setup(const RadialGrid& grid, int M_) {
   for (auto* v : {&Er1, &Bp1, &Pr, &Qr, &tf1, &tf2, &rf}) v->assign(N + 1, 0.0);
   for (auto* v : {&Ep1, &Br1, &Pp, &Qp, &tc1, &tc2, &rc}) v->assign(N, 0.0);
   for (auto* v : {&e0t, &b0t, &et, &bt, &sx}) v->assign(N + 1, 0.0);
-  const auto& rho = grid.rho; const auto& c = grid.c;
+  wK = N; wR = grid.c[N]; wAf = 0.0; wNeu = false; wallChanged = false;
+  buildPoisson();
+}
+
+FieldSolver::Row FieldSolver::rowC(int m, int i) const {
+  Row R;
+  if (i >= wK) { R.in = false; return R; }
+  const auto& rho = g->rho; const auto& c = g->c;
+  R.up = i + 1 < wK;
+  R.a = rho[i + 1] / ((R.up ? c[i + 1] : wR) - c[i]) / g->Ac[i];  // last row: to the ghost centre (E_z = 0)
+  if (i > 0) { R.low = true; R.bb = rho[i] / (c[i] - c[i - 1]) / g->Ac[i]; }
+  R.mm = double(m * m) / (c[i] * c[i]);
+  return R;
+}
+
+FieldSolver::Row FieldSolver::rowF(int m, int i) const {
+  Row R;
+  if (i > wK || (i == wK && !wNeu)) { R.in = false; return R; }  // no wall: B_z(rho_N) = 0
+  const auto& rho = g->rho; const auto& c = g->c;
+  if (i == 0) {  // axis row, m = 0 only
+    R.a = c[0] / rho[1] / g->Af[0];
+    R.up = true;
+    return R;
+  }
+  const bool edge = (i == wK);  // wall: no flux through rw, control volume [c_{K-1}, rw]
+  R.a = edge ? 0.0 : c[i] / (rho[i + 1] - rho[i]) / g->Af[i];
+  R.bb = c[i - 1] / (rho[i] - rho[i - 1]) / (edge ? wAf : g->Af[i]);
+  R.mm = double(m * m) / (rho[i] * rho[i]);
+  R.up = !edge && i + 1 <= N - 1;
+  R.low = i - 1 >= ((m == 0) ? 0 : 1);
+  return R;
+}
+
+void FieldSolver::buildPoisson() {
   Tp.assign(M + 1, Tridiag());
   for (int m = 0; m <= M; ++m) {
-    // Poisson operator -Lap^c_m on the centres (ghost psi = 0 beyond c_{N-1})
+    // Poisson operator -Lap^c_m on the centres (ghost psi = 0 at the ghost centre; outside the wall psi = rho)
     Tridiag& Pm = Tp[m];
     Pm.i0 = 0; Pm.n = N;
     Pm.a.assign(N, 0.0); Pm.b.assign(N, 0.0); Pm.cc.assign(N, 0.0);
     for (int i = 0; i < N; ++i) {
-      double a = rho[i + 1] / (c[i + 1] - c[i]) / grid.Ac[i];
-      double Ld = -a, Lsub = 0, Lsup = (i + 1 < N) ? a : 0.0;
-      if (i > 0) {
-        double bb = rho[i] / (c[i] - c[i - 1]) / grid.Ac[i];
-        Ld -= bb; Lsub = bb;
-      }
-      Ld -= double(m * m) / (c[i] * c[i]);
+      const Row R = rowC(m, i);
+      if (!R.in) { Pm.b[i] = 1.0; continue; }
+      double Ld = -R.a, Lsub = 0, Lsup = R.up ? R.a : 0.0;
+      if (R.low) { Ld -= R.bb; Lsub = R.bb; }
+      Ld -= R.mm;
       Pm.b[i] = -Ld; Pm.a[i] = -Lsub; Pm.cc[i] = -Lsup;
     }
     Pm.factor();
   }
+}
+
+bool FieldSolver::setWall(double rw, double slope) {
+  if (rw < 0.0) slope = 0.0;
+  int K = N;
+  double R = g->c[N], A = 0.0;
+  bool neu = false;
+  if (rw >= 0.0) {
+    K = 0;
+    while (K < N && g->rho[K + 1] <= rw) ++K;  // rho_K <= rw < rho_{K+1}
+    if (K < 2 || K > N - 1)
+      throw std::runtime_error("wall: radius " + std::to_string(rw) + " (code units) must lie between rho_2 = " +
+                               std::to_string(g->rho[2]) + " and r_max = " + std::to_string(g->rho[N]));
+    R = rw;
+    A = g->rho[K] * (rw - g->c[K - 1]);
+    neu = true;
+  }
+  if (K == wK && R == wR && neu == wNeu && slope == wSlope) return false;  // the engine copies all of them
+  wK = K; wR = R; wAf = A; wNeu = neu; wSlope = slope;
+  wallChanged = true;
+  buildPoisson();
+  return true;
+}
+
+void FieldSolver::maskWall(cd* Rr, cd* Lr, cd* Rp, cd* Lp, cd* e, cd* b) const {
+  if (!wNeu) return;
+  for (int i = wK + 1; i <= N; ++i) { Rr[i] = 0.0; Lr[i] = 0.0; b[i] = 0.0; }
+  for (int i = wK; i < N; ++i) { Rp[i] = 0.0; Lp[i] = 0.0; if (i > wK) e[i] = 0.0; }
 }
 
 bool FieldSolver::prepare(double D_, const ZetaGrid& zg) {
@@ -70,50 +131,52 @@ bool FieldSolver::prepare(double D_, const ZetaGrid& zg) {
     }
     nCls = int(hCls.size());
   }
-  if (!newWindow && D_ == D) return false;
+  if (!newWindow && D_ == D && !wallChanged) return false;
   D = D_;
+  wallChanged = false;
   ++ver;
-  const auto& rho = g->rho; const auto& c = g->c;
   Tf.assign(size_t(nCls) * (M + 1), Tridiag());
+  wA.assign(size_t(nCls) * (M + 1), 0.0);
   Tc.assign(size_t(nCls) * (M + 1), Tridiag());
   for (int q = 0; q < nCls; ++q) {
     const double h = hCls[q];
     const double w = h * (4.0 * theta * D + h);  // h (2 Delta + h) for the trapezoid
     for (int m = 0; m <= M; ++m) {
-      // --- faces: rows i0..N-1 (B_z(rho_N) = 0; for m>=1 also B_z(0) = 0)
+      // --- faces: rows i0..N-1 (B_z(rho_N) = 0, or zero flux at the wall; for m>=1 also B_z(0) = 0); rows
+      //     outside the wall are decoupled (16 b = rhs, zeroed afterwards)
       Tridiag& T = Tf[size_t(q) * (M + 1) + m];
       T.i0 = (m == 0) ? 0 : 1;
       T.n = N - T.i0;
       T.a.assign(T.n, 0.0); T.b.assign(T.n, 0.0); T.cc.assign(T.n, 0.0);
       for (int r = 0; r < T.n; ++r) {
-        int i = T.i0 + r;
-        double Ld, Lsub = 0, Lsup = 0;
-        if (i == 0) {  // axis row, m = 0 only
-          double a = c[0] / rho[1] / g->Af[0];
-          Ld = -a; Lsup = a;
+        const int i = T.i0 + r;
+        const Row R = rowF(m, i);
+        double Ld = 0, Lsub = 0, Lsup = 0;
+        if (!R.in) {
+        } else if (i == 0) {  // axis row, m = 0 only
+          Ld = -R.a; Lsup = R.a;
         } else {
-          double a = c[i] / (rho[i + 1] - rho[i]) / g->Af[i];
-          double bb = c[i - 1] / (rho[i] - rho[i - 1]) / g->Af[i];
-          Ld = -a - bb - double(m * m) / (rho[i] * rho[i]);
-          Lsup = (i + 1 <= N - 1) ? a : 0.0;
-          Lsub = (i - 1 >= T.i0) ? bb : 0.0;
+          Ld = -R.a - R.bb - R.mm;
+          Lsup = R.up ? R.a : 0.0;
+          Lsub = R.low ? R.bb : 0.0;
         }
         T.b[r] = 16.0 - w * Ld; T.a[r] = -w * Lsub; T.cc[r] = -w * Lsup;
       }
       T.factor();
-      // --- centres: rows 0..N-1 (ghost E_z = 0 beyond c_{N-1})
+      // --- centres: rows 0..N-1 (E_z = 0 at the ghost centre: c_N, or the wall)
       Tridiag& C = Tc[size_t(q) * (M + 1) + m];
       C.i0 = 0; C.n = N;
       C.a.assign(N, 0.0); C.b.assign(N, 0.0); C.cc.assign(N, 0.0);
       for (int i = 0; i < N; ++i) {
-        double a = rho[i + 1] / (c[i + 1] - c[i]) / g->Ac[i];
-        double Ld = -a, Lsub = 0, Lsup = (i + 1 < N) ? a : 0.0;
-        if (i > 0) {
-          double bb = rho[i] / (c[i] - c[i - 1]) / g->Ac[i];
-          Ld -= bb; Lsub = bb;
+        const Row R = rowC(m, i);
+        double Ld = 0, Lsub = 0, Lsup = 0;
+        if (R.in) {
+          Ld = -R.a; Lsup = R.up ? R.a : 0.0;
+          if (R.low) { Ld -= R.bb; Lsub = R.bb; }
+          Ld -= R.mm;
         }
-        Ld -= double(m * m) / (c[i] * c[i]);
         C.b[i] = 16.0 - w * Ld; C.a[i] = -w * Lsub; C.cc[i] = -w * Lsup;
+        if (wNeu && i == wK - 1) wA[size_t(q) * (M + 1) + m] = w * R.a;
       }
       C.factor();
     }
@@ -128,27 +191,24 @@ bool FieldSolver::prepare(double D_, const ZetaGrid& zg) {
       F.a.assign(F.n, 0.0); F.b.assign(F.n, 0.0); F.cc.assign(F.n, 0.0);
       for (int r = 0; r < F.n; ++r) {
         const int i = F.i0 + r;
+        const Row R = rowF(m, i);
+        if (!R.in) continue;
         if (i == 0) {
-          const double a = c[0] / rho[1] / g->Af[0];
-          F.b[r] = -a; F.cc[r] = a;
+          F.b[r] = -R.a; F.cc[r] = R.a;
         } else {
-          const double a = c[i] / (rho[i + 1] - rho[i]) / g->Af[i];
-          const double bb = c[i - 1] / (rho[i] - rho[i - 1]) / g->Af[i];
-          F.b[r] = -a - bb - double(m * m) / (rho[i] * rho[i]);
-          F.cc[r] = (i + 1 <= N - 1) ? a : 0.0;
-          F.a[r] = (i - 1 >= F.i0) ? bb : 0.0;
+          F.b[r] = -R.a - R.bb - R.mm;
+          F.cc[r] = R.up ? R.a : 0.0;
+          F.a[r] = R.low ? R.bb : 0.0;
         }
       }
       C.i0 = 0; C.n = N;
       C.a.assign(N, 0.0); C.b.assign(N, 0.0); C.cc.assign(N, 0.0);
       for (int i = 0; i < N; ++i) {
-        const double a = rho[i + 1] / (c[i + 1] - c[i]) / g->Ac[i];
-        C.b[i] = -a - double(m * m) / (c[i] * c[i]);
-        C.cc[i] = (i + 1 < N) ? a : 0.0;
-        if (i > 0) {
-          const double bb = rho[i] / (c[i] - c[i - 1]) / g->Ac[i];
-          C.b[i] -= bb; C.a[i] = bb;
-        }
+        const Row R = rowC(m, i);
+        if (!R.in) continue;
+        C.b[i] = -R.a - R.mm;
+        C.cc[i] = R.up ? R.a : 0.0;
+        if (R.low) { C.b[i] -= R.bb; C.a[i] = R.bb; }
       }
     }
     // per class and mode: S = 1 - a Lap and the implicit matrix 16 - al1 Lap + al2 Lap^2,
@@ -225,21 +285,25 @@ void FieldSolver::stiffSolve(Stiff& S, bool faces, int m, const cd* rhs, cd* x) 
   B.solve(x + L.i0);
 }
 
-void FieldSolver::poisson(int m, const cd* rho, cd* psi) { Tp[m].solve(rho, psi); }
+void FieldSolver::poisson(int m, const cd* rho, cd* psi) {
+  Tp[m].solve(rho, psi);
+  for (int i = wK; i < N; ++i) psi[i] = 0.0;  // outside the wall
+}
 
 void FieldSolver::gradient(int m, const cd* psi, cd* Er, cd* Ep) const {
   const cd im(0.0, double(m));
   opG(psi, Er);
   for (int i = 0; i <= N; ++i) Er[i] = -Er[i];
-  for (int i = 0; i < N; ++i) Ep[i] = -(im / g->c[i]) * psi[i];
+  for (int i = 0; i < N; ++i) Ep[i] = (i < wK) ? -(im / g->c[i]) * psi[i] : cd(0.0);
 }
 
-void FieldSolver::opG(const cd* e, cd* out) const {  // ghost e_N = 0
+void FieldSolver::opG(const cd* e, cd* out) const {  // ghost e = 0 at wR (c_N, or the wall); zero outside
   const auto& c = g->c;
   out[0] = 0.0;
   for (int i = 1; i <= N; ++i) {
-    cd ei = (i < N) ? e[i] : cd(0.0);
-    out[i] = (ei - e[i - 1]) / (c[i] - c[i - 1]);
+    if (i > wK) { out[i] = 0.0; continue; }
+    cd ei = (i < wK || wNeu) ? e[i] : cd(0.0);  // wall: e[K] holds E_z at the wall
+    out[i] = (ei - e[i - 1]) / ((i < wK ? c[i] : wR) - c[i - 1]);
   }
 }
 void FieldSolver::opg(const cd* b, cd* out) const {
@@ -253,7 +317,11 @@ void FieldSolver::opMf(const cd* b, cd* out, cd im) const {
 void FieldSolver::opCE(const cd* Er, const cd* Ep, cd* out, cd im) const {
   const auto& c = g->c; const auto& rho = g->rho; const auto& Af = g->Af;
   out[0] = c[0] * Ep[0] / Af[0];
-  for (int i = 1; i < N; ++i) out[i] = (c[i] * Ep[i] - c[i - 1] * Ep[i - 1]) / Af[i] - im / rho[i] * Er[i];
+  for (int i = 1; i < N; ++i) {
+    if (i < wK) out[i] = (c[i] * Ep[i] - c[i - 1] * Ep[i - 1]) / Af[i] - im / rho[i] * Er[i];
+    else if (i == wK) out[i] = (cd(0.0) - c[i - 1] * Ep[i - 1]) / wAf - im / rho[i] * Er[i];  // E_phi = 0 at the wall
+    else out[i] = 0.0;
+  }
   out[N] = 0.0;
 }
 void FieldSolver::opCB(const cd* Bp, const cd* Br, cd* out, cd im) const {
@@ -264,7 +332,7 @@ void FieldSolver::opCB(const cd* Bp, const cd* Br, cd* out, cd im) const {
   }
 }
 
-void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Rp0, const cd* e0, const cd* b0, const cd* Rr1,
+void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Lr0, const cd* Rp0, const cd* e0, const cd* b0, const cd* Rr1,
                              const cd* Lr1, const cd* Rp1, const cd* Lp1, const cd* e1, const cd* b1, const cd* jr,
                              const cd* jp, const cd* jz, const cd* Jr, const cd* Jp, cd* Rr, cd* Lr, cd* Rp,
                              cd* Lp, cd* e, cd* b) {
@@ -311,8 +379,15 @@ void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Rp0, const c
   opCB(Bp1.data(), Br1.data(), rc.data(), im);
   opCB(tf1.data(), tc1.data(), tc2.data(), im);
   for (int i = 0; i < N; ++i) rc[i] = 16.0 * e1[i] + 8.0 * h * (rc[i] + tc2[i]) - 16.0 * h * jz[i];
+  // sloped wall: E_z = -slope E_r at the wall (E_r of level s^0, same slice); its part of the Laplacian of row K-1
+  cd ew = 0.0;
+  if (wNeu && wSlope != 0.0) {
+    ew = -wSlope * 0.5 * (Rr0[wK] + Lr0[wK]);
+    rc[wK - 1] += wA[T] * ew;
+  }
   if (S) stiffSolve(*S, false, m, rc.data(), e);
   else Tc[T].solve(rc.data(), e);
+  if (wNeu) e[wK] = ew;
 
   // explicit transverse update (thetaStiff: R with Theta e, Theta b)
   const cd *eR = e, *bR = b;
@@ -332,6 +407,7 @@ void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Rp0, const c
   for (int i = 0; i < N; ++i) Rp[i] = Pp[i] + w1 * D * (im / c[i] * eR[i] - tc1[i]);
   opg(b, tc1.data());
   for (int i = 0; i < N; ++i) Lp[i] = Qp[i] - 0.25 * h * (im / c[i] * e[i] + tc1[i]);
+  maskWall(Rr, Lr, Rp, Lp, e, b);
 }
 
 }  // namespace gem
