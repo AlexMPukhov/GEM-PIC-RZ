@@ -326,7 +326,10 @@ Requirements and checks:
   ionized there.
 - **Tests:** `benchmarks/flying_focus/` (vacuum: on-axis amplitude within 2 % over 2 mm, constant phase offset
   0.08 rad, group velocity c to 3·10⁻⁵). Several components: ctest `flying_focus_beat`
-  (`benchmarks/flying_focus/beat_vacuum.deck`, results there).
+  (`benchmarks/flying_focus/beat_vacuum.deck`, results there): E_x within 0.15 % of a0, the J1 part within 8 %, the
+  turning intensity maximum within 0.04 µm after 120 µm.
+- **Half-step lag:** the field fed at level s is, after the step, the incident field of s − Δz/2: each component
+  carries the extra phase κ_c Δz/2, so a beat pattern is turned by the constant angle (κ_1 − κ_0)Δz/2.
 - **Backends:** serial, OpenMP and MPI give identical results; the GPU kernel is the OpenMP one and compiles with nvcc, but has not been run on a GPU yet.
 
 ## `plasma` (0 or 1 block)

@@ -19,6 +19,30 @@ wavelength 16 µm), r_max = 60–80 µm, dr = 0.5 µm, Δζ = λ/24, 2 CPU cores
 Figures: `gas_out.png`, `plasma_out.png` (`python3 plot_gas.py <dir>`); numbers: `python3 check_wake.py <dir>`,
 `python3 check_axis.py <dir> 2 0.05 50 90`.
 
+**Several components (beats), `beat_vacuum.deck`** (ctest `flying_focus_beat`): J0 at 40 mrad + 0.2 J1 e^{iφ} at
+100 mrad, circularly polarized (core in mode 1, J1 part in mode 0), a0 = 1, 30 fs, dr = 0.4 µm, Δz = 5 µm, 0.12 mm.
+The intensity maximum near the axis turns around the axis on a circle of 1.15 µm with the beat period
+2π/(κ₁ − κ₀) = 190.7 µm: a helically winding driver. Against an independent quadrature of the analytic field
+(`check_physics ffbeat`, E_x in the plane y = 0, |ζ − ζc| < 2L, r < 40 µm):
+
+| z | rms(E_x − ref)/a0 | J1 part: rms diff / its rms | intensity maximum x (ref) |
+|---|---|---|---|
+| 40 µm | 6.0·10⁻⁴ | 3.0 % | 0.575 µm (0.551) |
+| 80 µm | 1.0·10⁻³ | 5.4 % | −1.017 µm (−1.032) |
+| 120 µm | 1.5·10⁻³ | 7.8 % | −1.024 µm (−0.985) |
+
+- The reference is taken at s − Δz/2: the field fed through the layer at level s equals, after the step, the incident
+  field of s − Δz/2 (a half-step lag of the feeding; it also exists for a single component and is part of the
+  0.08 rad carrier phase offset of `vacuum.deck`). Against the level s itself the J1 part is off by its phase κ₁Δz/2
+  (12 % at 40 µm with Δz = 5 µm, 6 % with 2.5 µm); against s − Δz/2 the difference no longer depends on Δz.
+- The growth of the J1 difference with z (~6·10⁻⁴ per µm, independent of Δz) is numerical dispersion of the
+  100 mrad cone (~1.5 % in κ₁: radial (k⊥dr)²/12 and ζ discretization). The beat period is therefore right to ~2 %.
+- Helicity −1 with Bessel order −1 (again mode 0) gives the same E_x; linear polarization (J1 part in modes 0 and 2,
+  m_max = 2) agrees to the same accuracy. Real GPU (RTX 5090): the same numbers.
+- Steep cones: at 150 mrad and Δz = 5 µm a single J0 or J1 component differs from the analytic pulse at the level s
+  by ~25 % of its rms after 20 µm (half of it at Δz = 2.5 µm); the half-step lag (phase κΔz/2 = 0.22 rad) accounts
+  for ~22 % of it. For a beat the lag only turns the pattern by the constant angle (κ₁ − κ₀)Δz/2.
+
 **Why real hydrogen needs a different boundary.** The incident intensity falls off as I(r)/I_axis ≈ 2/(π k_⊥ r).
 - Real hydrogen (13.6 eV) is ionized by a 50 fs pulse already at a ≈ 0.005, about 5·10¹³ W/cm².
 - At a0 = 2 a neutral boundary would therefore have to sit at r ≈ 0.25 m, which is impossible.
