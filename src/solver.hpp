@@ -44,6 +44,20 @@ class FieldSolver {
   // become S (16 - h^2 Lap) - 4 h Delta Lap (theta - a Lap) (pentadiagonal). 0: off (scalar theta).
   double thetaStiff = 0.0;
   bool stiff() const { return thetaStiff > 0.0; }
+  // perfectly conducting wall at r = rw (block 'wall'; rw < 0: none). Inside lie the faces 0..K and the centres
+  // 0..K-1, rho_K <= rw < rho_{K+1}: E_z = 0 at rw (the ghost centre c_K := rw), zero flux of B_z through rw
+  // (E_phi = 0: the control volume of face K ends at rw), all fields outside are zero. Without a wall K = N,
+  // E_z = 0 at the ghost c_N and B_z(rho_N) = 0, as before. Returns true if the matrices change.
+  // slope = d rw / ds of the step: on a sloped wall the tangential field E_z + slope E_r vanishes, so E_z at the
+  // wall is -slope E_r (E_r of face K at level s^0, same slice), kept in the ghost centre e[K]. With E_z = 0 the
+  // moving wall would swallow the radial Poynting flux S_r = slope S_z that pushes the field inwards.
+  bool setWall(double rw, double slope = 0.0);
+  bool hasWall() const { return wNeu; }
+  int wallK() const { return wK; }    // last face inside (N without a wall)
+  double wallR() const { return wR; } // ghost centre of E_z (the wall radius; c_N without a wall)
+  double wallAf() const { return wAf; }
+  // zero the fields of one slice outside the wall (faces > K, centres >= K; E_z: centres > K, e[K] = E_z at the wall)
+  void maskWall(cd* Rr, cd* Lr, cd* Rp, cd* Lp, cd* e, cd* b) const;
   int classes() const { return nCls; }
   int version() const { return ver; }  // increases whenever the matrices change
   int classOf(int n) const { return cls[n]; }
@@ -63,7 +77,7 @@ class FieldSolver {
   void gradient(int m, const cd* psi, cd* Er, cd* Ep) const;
 
   // slice n (step h_n to slice n+1)
-  void solveSlice(int m, int n, const cd* Rr0, const cd* Rp0, const cd* e0, const cd* b0, const cd* Rr1, const cd* Lr1,
+  void solveSlice(int m, int n, const cd* Rr0, const cd* Lr0, const cd* Rp0, const cd* e0, const cd* b0, const cd* Rr1, const cd* Lr1,
                   const cd* Rp1, const cd* Lp1, const cd* e1, const cd* b1, const cd* jr, const cd* jp,
                   const cd* jz, const cd* Jr, const cd* Jp, cd* Rr, cd* Lr, cd* Rp, cd* Lp, cd* e, cd* b);
 
@@ -78,6 +92,20 @@ class FieldSolver {
   std::vector<int> cls;         // class of half-cell n
   int nCls = 0;
   int ver = 0;
+  // wall (setWall): last face inside, ghost centre, control volume of face K, wall present (B_z: zero flux)
+  int wK = 0;
+  double wR = 0.0, wAf = 0.0, wSlope = 0.0;
+  std::vector<double> wA;  // per class and mode: w a of centre row K-1 (the wall value of E_z enters its right-hand side)
+  bool wNeu = false, wallChanged = false;
+  // coefficients of the radial Laplacians in row i (flux coefficient a to the next node or the wall, bb to the
+  // previous node, m^2 / r^2; up / low: the neighbour is an unknown; in: the row lies inside the wall)
+  struct Row {
+    double a = 0.0, bb = 0.0, mm = 0.0;
+    bool up = false, low = false, in = true;
+  };
+  Row rowC(int m, int i) const;  // centres (E_z, Poisson)
+  Row rowF(int m, int i) const;  // faces (B_z)
+  void buildPoisson();
   std::vector<Tridiag> Tf, Tc;  // per class and mode (index cls * (M+1) + m): faces (B_z), centres (E_z)
   std::vector<Tridiag> Tp;      // per mode: -Lap^c_m (Poisson problem)
   std::vector<cd> Er1, Ep1, Bp1, Br1, Pr, Pp, Qr, Qp, tf1, tf2, tc1, tc2, rf, rc;

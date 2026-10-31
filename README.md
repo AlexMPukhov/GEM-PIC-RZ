@@ -703,6 +703,60 @@ longitudinal space charge of the sharp-edged flat-top (±10 % in γ per mm at he
 and tail to the lens; the shell model, which has no E_z, does not describe that. Both switches are off by default;
 `beam_consistent` is not yet available in the MPI pipeline.
 
+## Metal walls: waveguides and beam pipes of variable radius
+
+The block `wall { … }` puts a perfectly conducting lateral wall at r = r_w(z) (constant, a table or a function of z;
+`docs/input_deck.md`). It models hollow metal waveguides, metal capillaries and beam pipes, also tapered ones.
+
+**Why it fits the method.** With s = z (GT2) a level is the plane z = s: at every step the whole window lies at one
+z, so the wall has one radius for all slices. The wall changes only the radial boundary of the field solver from
+step to step; it is not staircased or tilted in ζ.
+
+**Discretization.** The faces 0…K and centres 0…K−1 lie inside, ρ_K ≤ r_w < ρ_{K+1}; the fields outside are zero.
+- E_z (centres) has its ghost value at r_w itself (the last cell ends at the wall), so the wall can lie anywhere in a
+  cell; the radial Laplacians then have the eigenvalues of the tube: k a = 3.8315 / 7.0129 (TM₁ₙ, exact 3.8317 /
+  7.0156) and 1.8411 / 5.3302 (TE₁ₙ, exact 1.8412 / 5.3314) at a = 60 cells.
+- B_z (faces) has zero flux through r_w (E_φ = 0): the control volume of face K is [c_{K−1}, r_w].
+- **Sloped wall:** on r = r_w(z) the tangential field is E_z + r_w′ E_r, so E_z = −r_w′ E_r at the wall (E_r of face
+  K at level s⁰ in the same slice, r_w′ the slope of the step). This carries the radial Poynting flux
+  S_r = r_w′ S_z that pushes the field away from a narrowing wall. With E_z = 0 the wall swallowed the field of the
+  annulus it cut off at every step: in the test below a third of the energy, the peak 20 % low.
+- **Widening wall:** the field at the old wall (E_r, B_φ, B_z of face K, E_z at the wall) continues into the opened
+  annulus; E_φ there starts at 0. Zeros there made a jump of the normal field that radiated high TM modes (E_z five
+  times too large).
+- Particles are lost at r ≥ r_w(s¹); no plasma is loaded inside the metal. The radial absorber is off.
+
+**Test (`tests/wall.sh`, ctest `wall_serial`, `wall_openmp`, `wall_gpu_emulation`).** A Gaussian laser (λ = 0.8 µm,
+w0 = 5 µm, a0 = 0.01, vacuum) in a 12 µm tube is a mixture of TE₁ₙ and TM₁ₙ modes, which beat (TE₁₁ collects 3 rad,
+TM₁₁ 13 rad over 2 mm; the field changes by 17–32 % rms). The reference `tests/wall.py` decomposes the code's own
+initial field into the modes of the tube, for every Fourier component κ in ζ, and evolves them with the dispersion
+relation of the scheme (paper, Eq. disp); in a taper every mode keeps its normalized amplitude (adiabatic local
+modes). dr = 0.2 µm, dζ = λ/16, dz = 5 µm, 2 mm:
+
+| case | E_x: rms diff / max | E_z: rms diff / max |
+|---|---|---|
+| straight, a = 12 µm (also 11.95, 12.1, 12.17 µm: inside a cell) | 0.8 % | 1.2 % |
+| same, dz = 1 µm | 0.35 % | 0.7 % |
+| narrowing, 12 → 9 µm | 1.0 % (peak 5.4514 vs 5.4486 × 10⁻³) | 2.7 % |
+| narrowing, 12 → 9 µm, dz = 1 µm | 0.5 % | 1.5 % |
+| narrowing, 12 → 7 µm | 1.8 % | 4.8 % |
+| widening, 9 → 12 µm (w0 = 3.5 µm) | 1.4 % | 3.7 % |
+| *no wall (a 12 µm reference)* | *22 %* | *24 %* |
+| *wall at 12.5 µm (a 12 µm reference)* | *23 %* | *27 %* |
+| *narrowing with E_z = 0 on the sloped wall* | *4.7 % (peak 20 % low)* | *6 %* |
+
+Against the continuum relation ω = 2κk⊥²/(4κ² − k⊥²) the straight tube agrees to 6.6 % at dζ = λ/16 and 2.4 % at
+λ/32: that difference is the ζ discretization of the scheme, the same without a wall. A plasma in the tube has the
+deck's density inside and none in the metal. All backends, the pipelined step and MPI on 3 ranks (also the device
+march) agree with the serial run to all printed digits (`tests/mpi.sh`); without a wall block the results are
+bit-identical to the code before.
+
+**Limits.** Backward waves are outside the model (∂_s L is dropped): reflections at steps, irises and corrugations
+(disk-loaded structures, Bragg reflection) are missing, so the radius must change slowly on the scale of the guided
+radiation (|r_w′| ≪ 1, adiabatic tapers). The guided modes must be paraxial, k⊥ = j/r_w ≪ k. Not combined yet: a
+varying radius with `numerics.theta_stiff`; the wall with a `flying_focus` block or `laser.inject = boundary` (they
+need the absorber). Dielectric walls are not modelled.
+
 ## Corrections of earlier versions
 
 1. **Bunch self-fields** (found with the ion-collapse benchmark). Bunches now start with their relativistic vacuum

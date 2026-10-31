@@ -23,6 +23,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | `undulator`| 0 … N   | static undulator fields acting on the particles  |
 | `quadrupole`, `plasma_lens`, `solenoid` | 0 … N | transport elements: static fields acting on the particles |
 | `chicane`  | 0 … N   | thin magnetic chicane (R56, delay) applied to the beam |
+| `wall`     | 0 or 1  | perfectly conducting lateral wall r = r_w(z): waveguides, beam pipes |
 | `output`   | 0 or 1  | diagnostics                                      |
 | `numerics` | 0 or 1  | algorithm parameters                             |
 
@@ -539,6 +540,34 @@ all particles, like the undulators; the field solver does not see them. Several 
   solenoid and a drift: the rms sizes at the end agree with the linear optics to 0.1 % (quadrupole x 0.38409 vs
   0.38374, y 1.64493 vs 1.64531; solenoid r 0.96466 vs 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
   bunch (rms 0.5761 vs 0.5766 µm).
+
+## `wall` (0 or 1 block)
+
+A perfectly conducting lateral wall at r = r_w(z): a hollow metal waveguide, a capillary electrode or a beam pipe of
+variable radius. With s = z (GT2) a level is the plane z = s, so the wall has one radius for the whole window at every
+step; the field solver takes the radius of the new level, r_w(s¹).
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `radius` | length | — | constant radius |
+| `z_points`, `r_points` | lists of lengths | — | r_w(z) linear between the points, constant beyond the ends (z = 0: start of the simulation) |
+| `radius_function` | function of z | — | r_w(z), e.g. `"12 um - 1.5e-3 * z"` (see [Functions](#functions-and-expressions)) |
+
+Exactly one of the three is given. Example: `wall { z_points = 0, 2 mm; r_points = 12, 9 um }`.
+
+- **The wall lies inside the grid:** 0 < r_w < `grid.r_max` everywhere (checked at every step); the cells between the
+  wall and r_max carry no field. Put a few cells beyond the largest radius.
+- **No absorber:** the block switches the radial absorber off (`grid.r_absorber` must not be given, or ≥ r_max).
+  Hence it cannot be combined with a `flying_focus` block or `laser.inject = boundary`, which feed the field through
+  the absorber layer.
+- **Particles:** particles reaching r ≥ r_w(s¹) are lost (absorbed by the wall); no plasma is loaded inside the metal.
+- **Boundary conditions:** E_z = −r_w′ E_r and E_φ = 0 at the wall (the tangential field of the sloped wall; r_w′ is the
+  slope of the step), zero radial flux of B_z; the wall can lie anywhere in a cell (the last cell ends at r_w). When
+  the wall moves outwards, the field at the old wall continues into the opened annulus. README, section "Metal walls",
+  has the details and the tests.
+- **Limits:** backward waves are not described (∂_s L is dropped), so reflections at steps, irises or corrugations are
+  missing: the wall must vary slowly on the scale of the radiation it guides (adiabatic tapers, |r_w′| ≪ 1).
+  A radius that varies cannot yet be combined with `numerics.theta_stiff` (a constant radius can).
 
 ## `output` (0 or 1 block)
 

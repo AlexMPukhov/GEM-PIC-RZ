@@ -474,7 +474,7 @@ void PipelineRun::beamPushSetup() {
 
 bool PipelineRun::pushBeamParticle(Particle& p, const Fields& F0, const Fields* F1, bool count) {
   const auto& num = S.cfg.numerics;
-  const double rmax = S.g.rho[S.g.N];
+  const double rmax = S.rWall;  // r_max, or the wall
   for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
     if (p.zeta < lowZ) { p.sub = sub; return true; }
     double gm = gammaOf(p);
@@ -523,6 +523,7 @@ Buffer PipelineRun::recvFront(int k) {
 void PipelineRun::step(Buffer& F) {
   const int N = S.g.N, M = S.M, Nz = S.Nz;
   S.beginStep();
+  S.extendWall(S.fold);  // metal wall moved outwards: the opened annulus (the device march does it on the device)
   const double Delta = S.Delta;
   const ZetaView& zv = S.zv;
   const double s1 = S.s0 + Delta;
@@ -758,7 +759,7 @@ void PipelineRun::step(Buffer& F) {
         }
         Fields& fo = S.fold;
         Fields& fn = S.fnew;
-        S.solver.solveSlice(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)], &fo.Ez[fo.c(m, n, 0)],
+        S.solver.solveSlice(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Lr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)], &fo.Ez[fo.c(m, n, 0)],
                             &fo.Bz[fo.f(m, n, 0)], &fn.Rr[fn.f(m, n + 1, 0)], &fn.Lr[fn.f(m, n + 1, 0)],
                             &fn.Rp[fn.c(m, n + 1, 0)], &fn.Lp[fn.c(m, n + 1, 0)], &fn.Ez[fn.c(m, n + 1, 0)],
                             &fn.Bz[fn.f(m, n + 1, 0)], S.jr1.data(), S.jp1.data(), S.jz1.data(), S.Jr.data(),
@@ -794,12 +795,13 @@ void PipelineRun::step(Buffer& F) {
                    S.stream.end());
     if (n + 1 <= Nz - 1) {
       const double q = 0.5 * S.cfg.numerics.theta * Delta * zv.wLo(n + 1);
+      const int K = S.solver.wallK();  // inside the wall: faces <= K, centres < K
       for (int m = 0; m <= M; ++m) {
-        for (int i = 1; i <= N; ++i) {
+        for (int i = 1; i <= K; ++i) {
           cd jt = S.c1b.jr[S.c1b.f(m, n, i)] + S.c1s.jr[S.c1s.f(m, n, i)];
           S.fnew.Rr[S.fnew.f(m, n + 1, i)] -= q * (jt - S.predRprev[m * (N + 1) + i]);
         }
-        for (int i = 0; i < N; ++i) {
+        for (int i = 0; i < K; ++i) {
           cd jt = S.c1b.jp[S.c1b.c(m, n, i)] + S.c1s.jp[S.c1s.c(m, n, i)];
           S.fnew.Rp[S.fnew.c(m, n + 1, i)] -= q * (jt - S.predPprev[m * N + i]);
         }
