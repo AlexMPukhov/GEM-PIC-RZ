@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
     // r < 40 um: the whole field (rms difference / a0 < tol_all) and its part odd in x (the components of odd l:
     // rms difference / its rms < tol_odd); and the x of the intensity maximum (E_x^2 summed over |zeta - zeta_c| < L/2)
     // near the axis, which the beat displaces by x_b cos(...) (difference < tol_peak).
-    if (argc < 15 || (argc - 11) % 4 != 0) { std::fprintf(stderr, "ffbeat: wrong arguments\n"); return 2; }
+    if (argc < 14 || (argc - 10) % 4 != 0) { std::fprintf(stderr, "ffbeat: wrong arguments\n"); return 2; }
     const double tol = std::atof(argv[3]), tolOdd = std::atof(argv[4]), tolPeak = std::atof(argv[5]),
                  ds = std::atof(argv[6]) / k0inv_um, a0 = std::atof(argv[7]), L = std::atof(argv[8]) / k0inv_um,
                  zc = std::atof(argv[9]) / k0inv_um;
