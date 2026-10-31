@@ -1620,6 +1620,17 @@ std::string Config::summary() const {
     line("       dz = %.4g um, z_end = %.4g mm (%d steps); absorber r > %.4g um, strength %.3g", g.dz * um,
          g.z_end * um * 1e-3, g.stepsFrom(0.0), g.r_absorber * um, g.absorber_strength);
   }
+  if (wall.present) {
+    if (!wall.fn.empty())
+      line("wall : perfectly conducting, r_w(z) = %s; r_w(0) = %.4g um (absorber off)", wall.fn.text().c_str(),
+           wall.at(0.0) * um);
+    else if (!wall.z_points.empty())
+      line("wall : perfectly conducting, r_w(z) linear between %zu points, %.4g .. %.4g um (absorber off)",
+           wall.z_points.size(), *std::min_element(wall.r_points.begin(), wall.r_points.end()) * um,
+           *std::max_element(wall.r_points.begin(), wall.r_points.end()) * um);
+    else
+      line("wall : perfectly conducting, r_w = %.4g um (absorber off)", wall.radius * um);
+  }
   for (size_t i = 0; i < lasers.size(); ++i) {
     const auto& L = lasers[i];
     if (L.file) {

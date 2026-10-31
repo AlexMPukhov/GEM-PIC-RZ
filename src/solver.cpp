@@ -86,7 +86,7 @@ void FieldSolver::buildPoisson() {
 }
 
 bool FieldSolver::setWall(double rw, double slope) {
-  wSlope = (rw >= 0.0) ? slope : 0.0;
+  if (rw < 0.0) slope = 0.0;
   int K = N;
   double R = g->c[N], A = 0.0;
   bool neu = false;
@@ -100,8 +100,8 @@ bool FieldSolver::setWall(double rw, double slope) {
     A = g->rho[K] * (rw - g->c[K - 1]);
     neu = true;
   }
-  if (K == wK && R == wR && neu == wNeu) return false;
-  wK = K; wR = R; wAf = A; wNeu = neu;
+  if (K == wK && R == wR && neu == wNeu && slope == wSlope) return false;  // the engine copies all of them
+  wK = K; wR = R; wAf = A; wNeu = neu; wSlope = slope;
   wallChanged = true;
   buildPoisson();
   return true;

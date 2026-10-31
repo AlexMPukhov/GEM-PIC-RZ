@@ -748,7 +748,8 @@ modes). dr = 0.2 µm, dζ = λ/16, dz = 5 µm, 2 mm:
 Against the continuum relation ω = 2κk⊥²/(4κ² − k⊥²) the straight tube agrees to 6.6 % at dζ = λ/16 and 2.4 % at
 λ/32: that difference is the ζ discretization of the scheme, the same without a wall. A plasma in the tube has the
 deck's density inside and none in the metal. All backends, the pipelined step and MPI on 3 ranks (also the device
-march) agree with the serial run to all printed digits (`tests/mpi.sh`); without a wall block the results are
+march) agree with the serial run to all printed digits (`tests/mpi.sh`), and so does a real GPU (RTX 5090, ctest
+`wall_cuda`: the same numbers as above); without a wall block the results are
 bit-identical to the code before.
 
 **Limits.** Backward waves are outside the model (∂_s L is dropped): reflections at steps, irises and corrugations
