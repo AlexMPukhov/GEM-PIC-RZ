@@ -244,6 +244,9 @@ if(GEMPIC_HAVE_HDF5)
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)
+  # several luminal Bessel components (beat, circular / linear polarization) against the analytic field
+  add_test(NAME flying_focus_beat
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus_beat.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:check_physics>)
   # lasers from and to LASY envelope files: import, exact propagation, boundary injection, export
   add_test(NAME lasy COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lasy.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(lasy PROPERTIES SKIP_RETURN_CODE 77)

@@ -1898,12 +1898,24 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   if (ra >= rm || n1 <= n0) return;
   const FieldsV fn = E.fview(1 - E.iold);
   const GridV g = P.g;
-  // flying focus: R relaxes to the incident field Re(G e^{-i kappa s1}) (m = 1), see Simulation::absorber
+  // flying focus: R relaxes to the incident field of the terms (Simulation::ffInc, absorber)
   const bool ff = sim.cfg.flying_focus.present;
   const cplx* Gf = ff ? E.ffGf.data() : nullptr;
   const cplx* Gc = ff ? E.ffGc.data() : nullptr;
-  const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
-  const double cph = cos(kph), sph = sin(kph);
+  struct FFTab {
+    int nt = 0;
+    int m[16], conj[16];
+    size_t of[16], oc[16];  // offsets of the component in Gf, Gc
+    double w[16], rps[16], c[16], s[16];  // c + i s = e^{-i kappa_c s1}
+  } T;
+  if (ff) {
+    for (const auto& t : sim.ffTerms) {
+      const int k = T.nt++;
+      const double ph = -sim.cfg.flying_focus.comps[t.comp].kappa() * s1;
+      T.m[k] = t.m; T.conj[k] = t.conj; T.w[k] = t.w; T.rps[k] = t.rps; T.c[k] = cos(ph); T.s[k] = sin(ph);
+      T.of[k] = t.comp * sim.ffStrideF; T.oc[k] = t.comp * sim.ffStrideC;
+    }
+  }
   const bool hinc = sim.hasIncident;
   const int iaF = sim.iaF, iaC = sim.iaC, nLF = sim.nLF, nLC = sim.nLC;
   const cplx* iF = hinc ? E.incF.data() : nullptr;
@@ -1927,30 +1939,32 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
     cplx* pv = pre ? pre + size_t(nn - fn0) * pw + size_t(m) * pm : nullptr;
     if (pv && i >= kF) pv[i - kF] = fn.Rr[fn.f(m, nn, i)];
     if (pv && i < N && i >= kC) pv[size_t(N + 1 - kF) + i - kC] = fn.Rp[fn.c(m, nn, i)];
+    // incident field of the flying focus in mode m: R_r += w Y, R_phi += i rps w Y, Y = G e^{-i kappa s1} or conj
+    auto ffInc = [&](const cplx* G, bool face) {
+      cplx inc;
+      for (int k = 0; k < T.nt; ++k) {
+        if (T.m[k] != m) continue;
+        const cplx Gv = face ? G[T.of[k] + size_t(nn - ffN0) * (N + 1) + i] : G[T.oc[k] + size_t(nn - ffN0) * N + i];
+        const cplx U(Gv.re * T.c[k] - Gv.im * T.s[k], Gv.re * T.s[k] + Gv.im * T.c[k]);
+        const cplx Y = T.conj[k] ? cplx(U.re, -U.im) : U;
+        inc += face ? T.w[k] * Y : cplx(-T.rps[k] * T.w[k] * Y.im, T.rps[k] * T.w[k] * Y.re);
+      }
+      return inc;
+    };
     const double df = dmp(g.rho[i]);
     if (df < 1.0) {
-      double inc = 0.0;
-      if (ff && m == 1) { const cplx G = Gf[size_t(nn - ffN0) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
+      cplx c = ff ? ffInc(Gf, true) : cplx();
+      if (hinc && i >= iaF) c += iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
       const cplx R = fn.Rr[fn.f(m, nn, i)];
-      if (hinc && i >= iaF) {
-        const cplx c = cplx(inc, 0.0) + iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
-        fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
-      } else {
-        fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
-      }
+      fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
     }
     if (i < N) {
       const double dc = dmp(g.c[i]);
       if (dc < 1.0) {
-        double inc = 0.0;  // incident R_phi,1 = i inc
-        if (ff && m == 1) { const cplx G = Gc[size_t(nn - ffN0) * N + i]; inc = G.re * cph - G.im * sph; }
+        cplx c = ff ? ffInc(Gc, false) : cplx();
+        if (hinc && i >= iaC) c += iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
         const cplx R = fn.Rp[fn.c(m, nn, i)];
-        if (hinc && i >= iaC) {
-          const cplx c = cplx(0.0, inc) + iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
-          fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
-        } else {
-          fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
-        }
+        fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
       }
     }
   });

@@ -117,10 +117,11 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   if (restartFile.empty()) {
     initLasers();
     if (cfg.flying_focus.present)  // the incident field of level s0 in the whole box
-      for (int n = sLo; n < sHi; ++n) {
-        for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(1, n, i)] += ffInc(true, n, i, s0);
-        for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(1, n, i)] += I1 * ffInc(false, n, i, s0);
-      }
+      for (int m = 0; m <= M; ++m)
+        for (int n = sLo; n < sHi; ++n) {
+          for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(m, n, i)] += ffInc(m, true, n, i, s0);
+          for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(m, n, i)] += ffInc(m, false, n, i, s0);
+        }
     initBunches();
     initBunchFields();
     maskWall(fold);  // initial laser fields: nothing inside the metal
@@ -1617,14 +1618,14 @@ void Simulation::absorber(double s) {
       for (int i = 0; i <= g.N; ++i) {
         const double d = damp(g.rho[i]);
         if (d == 1.0) continue;
-        const cd inc = ((ff && m == 1) ? cd(ffInc(true, n, i, s)) : cd(0.0)) + incidentF(m, n, i);
+        const cd inc = (ff ? ffInc(m, true, n, i, s) : cd(0.0)) + incidentF(m, n, i);
         cd& R = fnew.Rr[fnew.f(m, n, i)];
         R = inc + d * (R - inc);
       }
       for (int i = 0; i < g.N; ++i) {
         const double d = damp(g.c[i]);
         if (d == 1.0) continue;
-        const cd inc = ((ff && m == 1) ? I1 * ffInc(false, n, i, s) : cd(0.0)) + incidentC(m, n, i);
+        const cd inc = (ff ? ffInc(m, false, n, i, s) : cd(0.0)) + incidentC(m, n, i);
         cd& R = fnew.Rp[fnew.c(m, n, i)];
         R = inc + d * (R - inc);
       }
@@ -1660,27 +1661,20 @@ void Simulation::prepareIncident(double s, int n0, int n1) {
   incN1 = n1;
 }
 
-// incident field of the flying focus at s = 0: G(r, zeta) = sum_j c_j J0(k_j r) e^{i w_j (zeta - zeta_c) + i cep},
-// c_j the Gaussian spectrum of the on-axis envelope, k_j = sqrt(2 w_j kappa - kappa^2) (k_z = w_j - kappa)
+// incident field of the flying focus at s = 0, per component c:
+// G_c(r, zeta) = A_c e^{i psi_c} sum_j c_j J_|l_c|(k_cj r) e^{i w_j (zeta - zeta_c) + i cep},
+// c_j the Gaussian spectrum of the on-axis envelope, k_cj = sqrt(2 w_j kappa_c - kappa_c^2) (k_z = w_j - kappa_c)
 void Simulation::setupFlyingFocus() {
   const auto& F = cfg.flying_focus;
-  const double kap = F.kappa(), Lz = F.length_1e, amp = F.a0;  // a0 omega0, omega0 = 1
-  const int nw = 241;
+  const double Lz = F.length_1e, amp = F.a0;  // a0 omega0, omega0 = 1
+  const int nw = 241, nc = int(F.comps.size());
   const double w0 = 1.0 - 6.0 / Lz, w1 = 1.0 + 6.0 / Lz, dw = (w1 - w0) / (nw - 1);
   std::vector<double> wj(nw), kj(nw);
   std::vector<cd> cj(nw);
-  for (int j = 0; j < nw; ++j) {
-    wj[j] = w0 + dw * j;
-    kj[j] = std::sqrt(std::max(0.0, 2.0 * wj[j] * kap - kap * kap - F.background));
-    // int dw (L / (2 sqrt(pi))) e^{-(w - 1)^2 L^2 / 4} e^{i w d} = e^{i d} e^{-d^2 / L^2}
-    cj[j] = amp * dw * Lz / (2.0 * std::sqrt(PI)) * std::exp(-0.25 * (wj[j] - 1.0) * (wj[j] - 1.0) * Lz * Lz) *
-            std::polar(1.0, F.cep);
-  }
-  auto fill = [&](std::vector<cd>& G, const std::vector<double>& rr, int nr, int i0) {
-    G.assign(size_t(sHi - sLo) * nr, cd(0.0));
+  auto fill = [&](std::vector<cd>& G, size_t off, const std::vector<double>& rr, int nr, int i0, int l) {
     std::vector<double> J(size_t(nr) * nw);
     for (int i = i0; i < nr; ++i)
-      for (int j = 0; j < nw; ++j) J[size_t(i) * nw + j] = std::cyl_bessel_j(0.0, kj[j] * rr[i]);
+      for (int j = 0; j < nw; ++j) J[size_t(i) * nw + j] = std::cyl_bessel_j(double(std::abs(l)), kj[j] * rr[i]);
     std::vector<cd> e(nw);
     for (int n = sLo; n < sHi; ++n) {
       const double d = zv.node(n) - F.zeta_center;
@@ -1689,14 +1683,32 @@ void Simulation::setupFlyingFocus() {
         cd sum = 0.0;
         const double* Ji = &J[size_t(i) * nw];
         for (int j = 0; j < nw; ++j) sum += Ji[j] * e[j];
-        G[size_t(n - sLo) * nr + i] = sum;
+        G[off + size_t(n - sLo) * nr + i] = sum;
       }
     }
   };
   std::vector<double> rf(g.rho.begin(), g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
   ffN0 = sLo;
-  fill(ffGf, rf, g.N + 1, 1);
-  fill(ffGc, rc, g.N, 0);
+  ffStrideF = size_t(sHi - sLo) * (g.N + 1);
+  ffStrideC = size_t(sHi - sLo) * g.N;
+  ffGf.assign(nc * ffStrideF, cd(0.0));
+  ffGc.assign(nc * ffStrideC, cd(0.0));
+  for (int c = 0; c < nc; ++c) {
+    const auto& C = F.comps[c];
+    const double kap = C.kappa();
+    for (int j = 0; j < nw; ++j) {
+      wj[j] = w0 + dw * j;
+      kj[j] = std::sqrt(std::max(0.0, 2.0 * wj[j] * kap - kap * kap - F.background));
+      // int dw (L / (2 sqrt(pi))) e^{-(w - 1)^2 L^2 / 4} e^{i w d} = e^{i d} e^{-d^2 / L^2}
+      cj[j] = amp * C.amp * dw * Lz / (2.0 * std::sqrt(PI)) * std::exp(-0.25 * (wj[j] - 1.0) * (wj[j] - 1.0) * Lz * Lz) *
+              std::polar(1.0, F.cep + C.phase);
+    }
+    fill(ffGf, c * ffStrideF, rf, g.N + 1, 1, C.order);
+    fill(ffGc, c * ffStrideC, rc, g.N, 0, C.order);
+  }
+  ffTerms.clear();
+  for (const auto& t : F.terms())
+    if (t.m <= M) ffTerms.push_back(t);
 }
 
 bool Simulation::finite() const {

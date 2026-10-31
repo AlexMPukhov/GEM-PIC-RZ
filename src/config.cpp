@@ -650,8 +650,46 @@ void readFlyingFocus(const Block& b, const Deck& d, const Units& u, const GridCo
   BlockReader r(b, d, u);
   F.present = true;
   F.a0 = r.num("a0", Dim::None);
-  F.theta = r.num("cone_angle", Dim::Angle);
-  if (!(F.theta > 0 && F.theta < 0.5)) r.failKey("cone_angle", "must be between 0 and 0.5 rad");
+  FlyingFocusConfig::Component c0;
+  c0.theta = r.num("cone_angle", Dim::Angle);
+  if (!(c0.theta > 0 && c0.theta < 0.5)) r.failKey("cone_angle", "must be between 0 and 0.5 rad");
+  c0.order = int(r.integer("order", 0));
+  F.comps = {c0};
+  F.circular = r.word("polarization", "linear", {"linear", "circular"}) == "circular";
+  F.helicity = int(r.integer("helicity", 1));
+  if (F.helicity != 1 && F.helicity != -1) r.failKey("helicity", "must be +1 or -1");
+  if (r.has("helicity") && !F.circular) r.failKey("helicity", "only with polarization = circular");
+  // further components that beat with the main one
+  if (r.has("beat_cone_angle")) {
+    const auto th = r.vec("beat_cone_angle", Dim::Angle);
+    if (th.size() > 3) r.failKey("beat_cone_angle", "at most 3 further components");
+    auto list = [&](const char* key, Dim dim, double def) {
+      std::vector<double> v = r.has(key) ? r.vec(key, dim) : std::vector<double>(th.size(), def);
+      if (v.size() != th.size()) r.failKey(key, "must have as many entries as beat_cone_angle");
+      return v;
+    };
+    const auto ord = list("beat_order", Dim::None, 0.0), amp = list("beat_amplitude", Dim::None, 1.0),
+               ph = list("beat_phase", Dim::Angle, 0.0);
+    for (size_t k = 0; k < th.size(); ++k) {
+      FlyingFocusConfig::Component c;
+      c.theta = th[k];
+      if (!(c.theta > 0 && c.theta < 0.5)) r.failKey("beat_cone_angle", "must be between 0 and 0.5 rad");
+      if (ord[k] != std::round(ord[k])) r.failKey("beat_order", "must be integers");
+      c.order = int(ord[k]);
+      c.amp = amp[k];
+      c.phase = ph[k];
+      F.comps.push_back(c);
+    }
+  } else {
+    for (const char* k : {"beat_order", "beat_amplitude", "beat_phase"})
+      if (r.has(k)) r.failKey(k, "needs beat_cone_angle");
+  }
+  for (const auto& t : F.terms())
+    if (t.m > g.M) {
+      warn.push_back(b.label() + ": a component of Bessel order " + std::to_string(F.comps[t.comp].order) +
+                     " has field in azimuthal mode " + std::to_string(t.m) + " > m_max: it is left out");
+      break;
+    }
   if (r.oneOf("tau_fwhm", "length_1e") == 0)
     F.length_1e = r.num("tau_fwhm", Dim::Time) / std::sqrt(2.0 * std::log(2.0));
   else
@@ -662,19 +700,20 @@ void readFlyingFocus(const Block& b, const Deck& d, const Units& u, const GridCo
   F.cep = r.num("cep", Dim::Angle, 0.0);
   F.background = r.num("background_density", Dim::Density, 0.0);
   if (F.background < 0) r.failKey("background_density", "must be >= 0");
-  if (2.0 * F.kappa() - F.kappa() * F.kappa() <= F.background)
-    r.failKey("background_density", "too high for this cone angle: no conical wave (k_perp^2 < 0); "
-                                    "needs omega_p^2 < omega^2 sin^2(theta)");
+  for (const auto& c : F.comps)
+    if (2.0 * c.kappa() - c.kappa() * c.kappa() <= F.background)
+      r.failKey("background_density", "too high for this cone angle: no conical wave (k_perp^2 < 0); "
+                                      "needs omega_p^2 < omega^2 sin^2(theta)");
   if (g.M < 1) r.error(b.line, "a flying focus needs azimuthal mode 1: set grid.m_max >= 1");
   if (!(g.r_absorber < g.r_max))
     r.error(b.line, "the flying focus is fed through the radial absorber layer: set grid.r_absorber < r_max");
   // the conical wave has the transverse wavelength 2 pi / (k sin theta) at every radius
-  const double lperp = 2.0 * PI / std::sin(F.theta);
+  const double lperp = 2.0 * PI / std::sin(F.thetaMax());
   if (g.dr_max > lperp / 10.0)
     warn.push_back(b.label() + ": dr_max = " + std::to_string(g.dr_max / lperp).substr(0, 5) +
                    " transverse wavelengths 2 pi / (k sin theta): use dr <= 1/10 of it everywhere");
   // the rings ahead of the axial focus: at radius r the converging wave is ~ r theta / 2 ahead in zeta
-  if (F.zeta_center + 3.0 * F.length_1e + 0.5 * g.r_max * F.theta > g.window())
+  if (F.zeta_center + 3.0 * F.length_1e + 0.5 * g.r_max * F.thetaMax() > g.window())
     warn.push_back(b.label() + ": the converging wave at r_max (r theta / 2 ahead) and the pulse need room in front "
                    "of zeta_center: window too short");
 }
@@ -1813,10 +1852,27 @@ std::string Config::summary() const {
   }
   if (flying_focus.present) {
     const auto& F = flying_focus;
+    const double th = F.comps[0].theta;
     line("flying focus: luminal Bessel pulse, a0 = %.4g on the axis, cone angle %.4g mrad (core radius %.4g um, "
          "transverse wavelength %.4g um), length_1e = %.4g um at zeta = %.4g um; fed through the absorber layer r > %.4g um",
-         F.a0, F.theta * 1e3, 2.405 / std::sin(F.theta) * um, 2.0 * PI / std::sin(F.theta) * um, F.length_1e * um,
+         F.a0, th * 1e3, 2.405 / std::sin(th) * um, 2.0 * PI / std::sin(th) * um, F.length_1e * um,
          F.zeta_center * um, grid.r_absorber * um);
+    if (F.circular) line("        circular polarization, helicity %+d", F.helicity);
+    const auto T = F.terms();
+    for (size_t c = 0; c < F.comps.size(); ++c) {
+      const auto& C = F.comps[c];
+      std::string modes;
+      for (const auto& t : T)
+        if (t.comp == int(c) && modes.find(std::to_string(t.m)) == std::string::npos)
+          modes += (modes.empty() ? "" : ", ") + std::to_string(t.m) + (t.m > grid.M ? " (left out)" : "");
+      line("        component %zu: J_%d e^{i %d phi}, cone angle %.4g mrad, amplitude %.4g, phase %.4g rad: modes m = %s",
+           c, std::abs(C.order), C.order, C.theta * 1e3, C.amp, C.phase, modes.c_str());
+      if (c > 0) {
+        const double dk = C.kappa() - F.comps[0].kappa();
+        line("        beat with component 0: period 2 pi / |kappa_%zu - kappa_0| = %.5g um in z", c,
+             2.0 * PI / std::abs(dk) * um);
+      }
+    }
     if (F.background > 0) line("        incident field in a uniform plasma of %.4g n_c", F.background);
   }
   if (output.fel)
