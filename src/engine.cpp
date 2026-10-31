@@ -1851,6 +1851,16 @@ void Engine::march(const MarchSpec& ms) {
 //  E.incF / incC hold the incident field of the level (sim.prepareIncident). keep: the values before the
 //  absorber of faces >= iF and centres >= iC go to E.preAbs (MPI block, beam_field = mean)
 // ----------------------------------------------------------------------------
+namespace dev {
+// terms of the flying focus at one level (FlyingFocusConfig::terms, Simulation::ffInc), passed by value to the kernel
+struct FFTab {
+  int nt = 0;
+  int m[16], conj[16];
+  size_t of[16], oc[16];                // offsets of the component in ffGf, ffGc
+  double w[16], rps[16], c[16], s[16];  // c + i s = e^{-i kappa_c s1}
+};
+}  // namespace dev
+
 void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   using namespace dev;
   EngineState& E = *st;
@@ -1864,12 +1874,7 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   const bool ff = sim.cfg.flying_focus.present;
   const cplx* Gf = ff ? E.ffGf.data() : nullptr;
   const cplx* Gc = ff ? E.ffGc.data() : nullptr;
-  struct FFTab {
-    int nt = 0;
-    int m[16], conj[16];
-    size_t of[16], oc[16];  // offsets of the component in Gf, Gc
-    double w[16], rps[16], c[16], s[16];  // c + i s = e^{-i kappa_c s1}
-  } T;
+  FFTab T;
   if (ff) {
     for (const auto& t : sim.ffTerms) {
       const int k = T.nt++;
