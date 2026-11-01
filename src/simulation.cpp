@@ -113,15 +113,18 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
     incC.assign(size_t(M + 1) * nInc * std::max(nLC, 0), cd(0.0));
     incS = std::numeric_limits<double>::quiet_NaN();
   }
+  setWall(s0);  // the bunch fields of the first level see the wall
   if (restartFile.empty()) {
     initLasers();
     if (cfg.flying_focus.present)  // the incident field of level s0 in the whole box
-      for (int n = sLo; n < sHi; ++n) {
-        for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(1, n, i)] += ffInc(true, n, i, s0);
-        for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(1, n, i)] += I1 * ffInc(false, n, i, s0);
-      }
+      for (int m = 0; m <= M; ++m)
+        for (int n = sLo; n < sHi; ++n) {
+          for (int i = 1; i <= g.N; ++i) fold.Rr[fold.f(m, n, i)] += ffInc(m, true, n, i, s0);
+          for (int i = 0; i < g.N; ++i) fold.Rp[fold.c(m, n, i)] += ffInc(m, false, n, i, s0);
+        }
     initBunches();
     initBunchFields();
+    maskWall(fold);  // initial laser fields: nothing inside the metal
   } else {
     readCheckpoint(restartFile);  // fields, currents, particles, random generator, counters
     trimTables();
@@ -1027,7 +1030,7 @@ void Simulation::remeanBeam() {
 void Simulation::pushBeamParticle(Particle& p) {
   const int nsub = std::max(1, int(std::ceil(Delta / cfg.numerics.beam_dz_max)));
   const double dz = Delta / nsub;
-  const double rmax = g.rho[g.N];
+  const double rmax = rWall;  // r_max, or the wall
   {
     for (int sub = 0; sub < nsub && p.status == 0; ++sub) {
       double gm = gammaOf(p);
@@ -1080,6 +1083,7 @@ void Simulation::loadFresh() {
     const int nph = ax ? std::max(P.ppc_phi, P.ppc_phi_axis) : P.ppc_phi;
     for (int j = 0; j < npr; ++j) {
       double r = std::sqrt(r2a + (j + 0.5) / npr * (r2b - r2a));
+      if (r >= rWall) break;  // no plasma inside the metal wall
       const double nAx = P.density(r, zmid);  // axisymmetric part n0 f(z) g(r)
       if (nAx <= 0.0) {  // nothing to load here unless an own ion profile is positive (axisymmetric part)
         bool need = false;
@@ -1247,7 +1251,7 @@ void Simulation::pushStreamParticle(Particle& p, int n, double s1, Currents& C, 
   p.zeta = zeta_end;
   // streaming current: W = q dt / Delta, into half-cell n
   deposit(C, n, 1.0, 0.5 * (xo + p.x), 0.5 * (yo + p.y), vx, vy, vz, p.q * dt / Delta, ion, kc);
-  if (std::hypot(p.x, p.y) >= g.rho[g.N]) p.status = 2;
+  if (std::hypot(p.x, p.y) >= rWall) p.status = 2;  // r_max, or the wall
   // field ionization with the mid-step field (after the deposit: the new
   // charge state acts from the next half-cell on)
   if (ionizing && p.status == 0)
@@ -1318,7 +1322,43 @@ void Simulation::ionize(Particle& p, double E1, double E0, double dt, std::vecto
 // ============================================================================
 void Simulation::beginStep() {
   Delta = cfg.grid.stepAt(s0);
+  const int K0 = solver.wallK();
+  setWall(s0 + Delta);  // the wall of the new level (s = z: one radius for the whole window)
+  wallFrom = (solver.wallK() > K0) ? K0 : -1;
   solver.prepare(Delta, zg);
+}
+
+void Simulation::setWall(double s) {
+  if (!cfg.wall.present) { rWall = g.rho[g.N]; return; }
+  rWall = cfg.wall.at(s);
+  // slope of the step s^0 -> s (zero at the start): E_z + slope E_r = 0 on the sloped wall
+  const double slope = (s > s0) ? (rWall - cfg.wall.at(s0)) / (s - s0) : 0.0;
+  solver.setWall(rWall, slope);
+}
+
+void Simulation::extendWall(Fields& F) const {
+  if (wallFrom < 0) return;
+  const int K0 = wallFrom, K1 = solver.wallK();
+  for (int n = F.n0; n < F.n0 + F.ns; ++n)
+    for (int m = 0; m <= M; ++m) {
+      const size_t f = F.f(m, n, 0), c = F.c(m, n, 0);
+      for (int i = K0 + 1; i <= K1; ++i) {
+        F.Rr[f + i] = F.Rr[f + K0];
+        F.Lr[f + i] = F.Lr[f + K0];
+        F.Bz[f + i] = F.Bz[f + K0];
+        F.Ez[c + i] = F.Ez[c + K0];
+      }
+    }
+}
+
+void Simulation::maskWall(Fields& F) const {
+  if (!solver.hasWall()) return;
+  for (int n = F.n0; n < F.n0 + F.ns; ++n)
+    for (int m = 0; m <= M; ++m) {
+      solver.maskWall(&F.Rr[F.f(m, n, 0)], &F.Lr[F.f(m, n, 0)], &F.Rp[F.c(m, n, 0)], &F.Lp[F.c(m, n, 0)],
+                      &F.Ez[F.c(m, n, 0)], &F.Bz[F.f(m, n, 0)]);
+      F.Ez[F.c(m, n, solver.wallK())] = 0.0;  // E_z at the wall (straight at the start)
+    }
 }
 
 // thin chicanes passed in the last step (z_a, z_b]: the beam particles move by
@@ -1389,6 +1429,7 @@ void Simulation::step() {
     return;
   }
   const double s1 = s0 + Delta;
+  extendWall(fold);
   march(s1);
   if (cfg.numerics.beam_field == BEAM_FIELD_MEAN) remeanBeam();
   // charge states of the ions leaving the rear of the window
@@ -1505,7 +1546,7 @@ void Simulation::march(double s1) {
           jp1[i] = (consistent ? half(bjp, i) : c1b.jp[c1b.c(m, n, i)]) + c1s.jp[c1s.c(m, n, i)];
           jz1[i] = (consistent ? half(bjz, i) : c1b.jz[c1b.c(m, n, i)]) + c1s.jz[c1s.c(m, n, i)];
         }
-        solver.solveSlice(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)], &fold.Ez[fold.c(m, n, 0)],
+        solver.solveSlice(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Lr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)], &fold.Ez[fold.c(m, n, 0)],
                           &fold.Bz[fold.f(m, n, 0)], &fnew.Rr[fnew.f(m, n + 1, 0)], &fnew.Lr[fnew.f(m, n + 1, 0)],
                           &fnew.Rp[fnew.c(m, n + 1, 0)], &fnew.Lp[fnew.c(m, n + 1, 0)],
                           &fnew.Ez[fnew.c(m, n + 1, 0)], &fnew.Bz[fnew.f(m, n + 1, 0)], jr1.data(), jp1.data(),
@@ -1544,12 +1585,13 @@ void Simulation::march(double s1) {
     // half-cell n is now final: correct R at slice n+1 for its predicted j^1_{n+1/2}
     if (n + 1 <= Nz - 1) {
       const double q = 0.5 * cfg.numerics.theta * Delta * zv.wLo(n + 1);
+      const int K = solver.wallK();  // inside the wall: faces <= K, centres < K (K = N without a wall)
       for (int m = 0; m <= M; ++m) {
-        for (int i = 1; i <= N; ++i) {
+        for (int i = 1; i <= K; ++i) {
           cd jt = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
           fnew.Rr[fnew.f(m, n + 1, i)] -= q * (jt - predRprev[m * (N + 1) + i]);
         }
-        for (int i = 0; i < N; ++i) {
+        for (int i = 0; i < K; ++i) {
           cd jt = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
           fnew.Rp[fnew.c(m, n + 1, i)] -= q * (jt - predPprev[m * N + i]);
         }
@@ -1576,14 +1618,14 @@ void Simulation::absorber(double s) {
       for (int i = 0; i <= g.N; ++i) {
         const double d = damp(g.rho[i]);
         if (d == 1.0) continue;
-        const cd inc = ((ff && m == 1) ? cd(ffInc(true, n, i, s)) : cd(0.0)) + incidentF(m, n, i);
+        const cd inc = (ff ? ffInc(m, true, n, i, s) : cd(0.0)) + incidentF(m, n, i);
         cd& R = fnew.Rr[fnew.f(m, n, i)];
         R = inc + d * (R - inc);
       }
       for (int i = 0; i < g.N; ++i) {
         const double d = damp(g.c[i]);
         if (d == 1.0) continue;
-        const cd inc = ((ff && m == 1) ? I1 * ffInc(false, n, i, s) : cd(0.0)) + incidentC(m, n, i);
+        const cd inc = (ff ? ffInc(m, false, n, i, s) : cd(0.0)) + incidentC(m, n, i);
         cd& R = fnew.Rp[fnew.c(m, n, i)];
         R = inc + d * (R - inc);
       }
@@ -1619,27 +1661,20 @@ void Simulation::prepareIncident(double s, int n0, int n1) {
   incN1 = n1;
 }
 
-// incident field of the flying focus at s = 0: G(r, zeta) = sum_j c_j J0(k_j r) e^{i w_j (zeta - zeta_c) + i cep},
-// c_j the Gaussian spectrum of the on-axis envelope, k_j = sqrt(2 w_j kappa - kappa^2) (k_z = w_j - kappa)
+// incident field of the flying focus at s = 0, per component c:
+// G_c(r, zeta) = A_c e^{i psi_c} sum_j c_j J_|l_c|(k_cj r) e^{i w_j (zeta - zeta_c) + i cep},
+// c_j the Gaussian spectrum of the on-axis envelope, k_cj = sqrt(2 w_j kappa_c - kappa_c^2) (k_z = w_j - kappa_c)
 void Simulation::setupFlyingFocus() {
   const auto& F = cfg.flying_focus;
-  const double kap = F.kappa(), Lz = F.length_1e, amp = F.a0;  // a0 omega0, omega0 = 1
-  const int nw = 241;
+  const double Lz = F.length_1e, amp = F.a0;  // a0 omega0, omega0 = 1
+  const int nw = 241, nc = int(F.comps.size());
   const double w0 = 1.0 - 6.0 / Lz, w1 = 1.0 + 6.0 / Lz, dw = (w1 - w0) / (nw - 1);
   std::vector<double> wj(nw), kj(nw);
   std::vector<cd> cj(nw);
-  for (int j = 0; j < nw; ++j) {
-    wj[j] = w0 + dw * j;
-    kj[j] = std::sqrt(std::max(0.0, 2.0 * wj[j] * kap - kap * kap - F.background));
-    // int dw (L / (2 sqrt(pi))) e^{-(w - 1)^2 L^2 / 4} e^{i w d} = e^{i d} e^{-d^2 / L^2}
-    cj[j] = amp * dw * Lz / (2.0 * std::sqrt(PI)) * std::exp(-0.25 * (wj[j] - 1.0) * (wj[j] - 1.0) * Lz * Lz) *
-            std::polar(1.0, F.cep);
-  }
-  auto fill = [&](std::vector<cd>& G, const std::vector<double>& rr, int nr, int i0) {
-    G.assign(size_t(sHi - sLo) * nr, cd(0.0));
+  auto fill = [&](std::vector<cd>& G, size_t off, const std::vector<double>& rr, int nr, int i0, int l) {
     std::vector<double> J(size_t(nr) * nw);
     for (int i = i0; i < nr; ++i)
-      for (int j = 0; j < nw; ++j) J[size_t(i) * nw + j] = std::cyl_bessel_j(0.0, kj[j] * rr[i]);
+      for (int j = 0; j < nw; ++j) J[size_t(i) * nw + j] = std::cyl_bessel_j(double(std::abs(l)), kj[j] * rr[i]);
     std::vector<cd> e(nw);
     for (int n = sLo; n < sHi; ++n) {
       const double d = zv.node(n) - F.zeta_center;
@@ -1648,14 +1683,32 @@ void Simulation::setupFlyingFocus() {
         cd sum = 0.0;
         const double* Ji = &J[size_t(i) * nw];
         for (int j = 0; j < nw; ++j) sum += Ji[j] * e[j];
-        G[size_t(n - sLo) * nr + i] = sum;
+        G[off + size_t(n - sLo) * nr + i] = sum;
       }
     }
   };
   std::vector<double> rf(g.rho.begin(), g.rho.begin() + g.N + 1), rc(g.c.begin(), g.c.begin() + g.N);
   ffN0 = sLo;
-  fill(ffGf, rf, g.N + 1, 1);
-  fill(ffGc, rc, g.N, 0);
+  ffStrideF = size_t(sHi - sLo) * (g.N + 1);
+  ffStrideC = size_t(sHi - sLo) * g.N;
+  ffGf.assign(nc * ffStrideF, cd(0.0));
+  ffGc.assign(nc * ffStrideC, cd(0.0));
+  for (int c = 0; c < nc; ++c) {
+    const auto& C = F.comps[c];
+    const double kap = C.kappa();
+    for (int j = 0; j < nw; ++j) {
+      wj[j] = w0 + dw * j;
+      kj[j] = std::sqrt(std::max(0.0, 2.0 * wj[j] * kap - kap * kap - F.background));
+      // int dw (L / (2 sqrt(pi))) e^{-(w - 1)^2 L^2 / 4} e^{i w d} = e^{i d} e^{-d^2 / L^2}
+      cj[j] = amp * C.amp * dw * Lz / (2.0 * std::sqrt(PI)) * std::exp(-0.25 * (wj[j] - 1.0) * (wj[j] - 1.0) * Lz * Lz) *
+              std::polar(1.0, F.cep + C.phase);
+    }
+    fill(ffGf, c * ffStrideF, rf, g.N + 1, 1, C.order);
+    fill(ffGc, c * ffStrideC, rc, g.N, 0, C.order);
+  }
+  ffTerms.clear();
+  for (const auto& t : F.terms())
+    if (t.m <= M) ffTerms.push_back(t);
 }
 
 bool Simulation::finite() const {

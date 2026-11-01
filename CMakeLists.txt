@@ -244,6 +244,9 @@ if(GEMPIC_HAVE_HDF5)
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)
+  # several luminal Bessel components (beat, circular / linear polarization) against the analytic field
+  add_test(NAME flying_focus_beat
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus_beat.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:check_physics>)
   # lasers from and to LASY envelope files: import, exact propagation, boundary injection, export
   add_test(NAME lasy COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lasy.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(lasy PROPERTIES SKIP_RETURN_CODE 77)
@@ -257,6 +260,16 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME thin_ring_gpu_emulation
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/thin_ring.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
     set_tests_properties(thin_ring_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+  # metal wall: a laser in a straight, a narrowing and a widening perfectly conducting tube against the modal theory
+  # of the guide; plasma inside the tube; per backend
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME wall_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wall.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(wall_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME wall_gpu_emulation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wall.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
+    set_tests_properties(wall_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
   endif()
   # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
   add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)

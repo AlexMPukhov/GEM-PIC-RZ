@@ -1,0 +1,23 @@
+# Flying focus of two luminal Bessel components in vacuum (tests/flying_focus_beat.sh): a J0 core (cone angle 40 mrad,
+# core radius 7.7 um) and a J1 e^{i phi} component (100 mrad, amplitude 0.2), circularly polarized (helicity +1, the
+# default): the J0 part lives in mode m = 1, the J1 part in m = 0, so m_max = 1 holds the whole field. The two beat
+# with the period 2 pi / (kappa_1 - kappa_0) = 190.7 um in z: the intensity maximum near the axis turns around the
+# axis at a radius of 1.15 um (A theta_1 / (k theta_0^2) = 1.6 um for A << 1), a helix fixed in the lab.
+grid {
+  lambda0       = 0.8 um
+  m_max         = 1
+  radial_grid   = uniform
+  dr            = 0.4 um          # <= lambda / (10 sin theta_1) = 0.8 um
+  r_max         = 60 um
+  r_absorber    = 40 um           # feeding / absorbing layer 40 ... 60 um
+  absorber_strength = 1
+  dzeta         = 0.03333 um      # lambda / 24
+  window_length = 64 um
+  dz            = 5 um
+  z_end         = 0.12 mm
+}
+flying_focus { a0 = 1; cone_angle = 40 mrad; tau_fwhm = 30 fs; zeta_center = 32 um
+               polarization = circular
+               beat_cone_angle = 100 mrad; beat_order = 1; beat_amplitude = 0.2 }
+output { dir = beat_out; every = 8; maps = true; map_stride = 6; particles = false }
+numerics { iterations = 1 }

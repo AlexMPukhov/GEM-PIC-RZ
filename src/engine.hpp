@@ -104,6 +104,7 @@ class Engine {
   struct MarchSpec;
   void march(const MarchSpec& ms);  // the zeta march over slices ms.nHi ... ms.nLo (engine.cpp)
   void absorbSlices(int n0, int n1, double s1, bool keep);  // radial absorber of fnew on [n0, n1)
+  void extendWall();  // the field at the old wall into the annulus opened this step (Simulation::extendWall)
 
  private:
   Simulation& sim;

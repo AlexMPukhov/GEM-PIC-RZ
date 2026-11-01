@@ -15,6 +15,7 @@
 #   8. the march of the blocks on the device (Engine::marchBlock; GPU emulation build, or a CUDA build with a
 #      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run, also with the
 #      per-step diagnostics computed during the next step (steps without output)
+#   9. metal wall (tests/wall.deck): steep narrowing and widening tubes on 3 ranks (also on the device) = serial
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -120,6 +121,20 @@ if [ -n "$DEV" ]; then
 else
   echo "  device march of the blocks skipped: no GPU emulation build and no GPU"
 fi
+# metal wall (tests/wall.deck): steep narrowing and widening tubes (the wall crosses a face every ~4 steps), the
+# sloped-wall E_z and the field continued into the opened annulus: 3 ranks = serial, also on the device
+for wl in "12 9" "9 12"; do
+  sed "s/^wall.*/wall { z_points = 0 0.3 mm; r_points = $wl um }/" "$SRC/tests/wall.deck" > wall.deck
+  WL="grid.z_end=0.3mm laser.waist=3.5um output.every=60 numerics.backend=serial"
+  "$EXE" wall.deck $WL output.dir=wser > wser.log
+  run 3 wall.deck $WL output.dir=wmp > wmp.log
+  "$CMP" wser/map_00060.txt wmp/map_00060.txt 1e-6 1e-9
+  if [ -n "$DEV" ]; then
+    GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 3 "$DEV" wall.deck $WL $DB output.dir=wdv > wdv.log
+    "$CMP" wser/map_00060.txt wdv/map_00060.txt 1e-6 1e-9
+  fi
+done
+echo "  metal wall, narrowing and widening tube: 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device")"
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi

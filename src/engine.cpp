@@ -159,6 +159,11 @@ struct Params {
   int vay;         // beam list: Vay pusher (else Boris)
   double beamDzMax;  // numerics.beam_dz_max (sub-steps of the beam push)
   GridV g;
+  // metal wall (FieldSolver::setWall): last face inside, ghost centre, control volume of face K, wall present,
+  // slope of the step, w a of centre row K-1 per class and mode; particles are lost at r >= rWall (r_max without a wall)
+  int wK, wNeu;
+  double wR, wAf, wSlope, rWall;
+  const double* wA;
   int nIons;
   const IonV* ions;
   const AdkV* adk;
@@ -430,7 +435,7 @@ GEM_HD inline void pushStream(const Params& P, const FieldsV& F, const CurrV& C,
   p.ux = ux; p.uy = uy; p.uz = uz;
   p.zeta = zeta_end;
   deposit<Atomic>(P, C, kdep, n, 1.0, 0.5 * (xo + p.x), 0.5 * (yo + p.y), vx, vy, vz, p.q * dt / P.Delta, ion);
-  if (hypot(p.x, p.y) >= P.g.rho[P.g.N]) p.status = 2;
+  if (hypot(p.x, p.y) >= P.rWall) p.status = 2;  // r_max, or the wall
   if (ionizing && p.status == 0) ionize(P, p, norm3(f1), norm3(f0), dt, Z);
 }
 
@@ -449,7 +454,7 @@ GEM_HD inline void streamParticle(const Params& P, const FieldsV& F, const CurrV
 // (Simulation::pushBeam, one particle); F = fold, or (1 - a2) F + a2 F2 (numerics.beam_field = mean)
 GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle& p, int nsub, double dz,
                                     unsigned long long* lcnt, const FieldsV& F2, double a2) {
-  const double rmax = P.g.rho[P.g.N];
+  const double rmax = P.rWall;  // r_max, or the wall
   for (int sub = 0; sub < nsub && p.status == 0; ++sub) {
     double gm = gammaOf(p);
     const double vz = p.uz / gm;
@@ -480,7 +485,7 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
 // continue on the rank behind (zeta < lowZ; p.sub = the next sub-step), else p.sub = 0
 GEM_HD inline bool pushBeamCont(const Params& P, const FieldsV& F, Particle& p, int nsub, double dz, double lowZ,
                                 const FieldsV& F2, double a2) {
-  const double rmax = P.g.rho[P.g.N];
+  const double rmax = P.rWall;
   for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
     if (p.zeta < lowZ) { p.sub = sub; return true; }
     double gm = gammaOf(p);
@@ -772,10 +777,10 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   };
 
   // discrete operators (FieldSolver::opG ... opCB), one entry each
-  auto opG = [&](const cplx* x, int i) -> cplx {
-    if (i == 0) return cplx();
-    const cplx xi = (i < N) ? x[i] : cplx();
-    return (xi - x[i - 1]) / (g.c[i] - g.c[i - 1]);
+  auto opG = [&](const cplx* x, int i) -> cplx {  // ghost at P.wR (c_N, or the wall: x[K] = E_z there)
+    if (i == 0 || i > P.wK) return cplx();
+    const cplx xi = (i < P.wK || P.wNeu) ? x[i] : cplx();
+    return (xi - x[i - 1]) / ((i < P.wK ? g.c[i] : P.wR) - g.c[i - 1]);
   };
   auto opg = [&](const cplx* x, int i) { return (x[i + 1] - x[i]) / (g.rho[i + 1] - g.rho[i]); };
   auto opMf = [&](const cplx* x, int i) -> cplx {
@@ -784,7 +789,8 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   };
   auto opCE = [&](const cplx* Er, const cplx* Ep, int i) -> cplx {
     if (i == 0) return g.c[0] * Ep[0] / g.Af[0];
-    if (i == N) return cplx();
+    if (i == N || i > P.wK) return cplx();
+    if (i == P.wK) return (cplx() - g.c[i - 1] * Ep[i - 1]) / P.wAf - (im / g.rho[i]) * Er[i];  // E_phi = 0 at the wall
     return (g.c[i] * Ep[i] - g.c[i - 1] * Ep[i - 1]) / g.Af[i] - (im / g.rho[i]) * Er[i];
   };
   auto opCB = [&](const cplx* Bp, const cplx* Br, int i) -> cplx {
@@ -837,11 +843,23 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     rc[i] = 16.0 * e1[i] + 8.0 * h * (opCB(Bp1, Br1, i) + opCB(tf1, tc1, i)) - 16.0 * h * jz1(i);
   });
   t.barrier();
+  // sloped wall (FieldSolver::solveSlice): E_z = -slope E_r at the wall, E_r of level s^0 at face K
+  const bool sloped = P.wNeu && P.wSlope != 0.0;
+  const cplx ew = sloped ? -P.wSlope * 0.5 * (Rr0[P.wK] + fo.Lr[fo.f(m, n, P.wK)]) : cplx();
+  if (sloped) {
+    if (t.leader()) rc[P.wK - 1] += P.wA[T] * ew;
+    t.barrier();
+  }
   if (stiff) {
     if (t.leader()) stiffSolve(false, rc, e);
     t.barrier();
   } else {
     triSolveTeam(t, Tc[T], rc, e, dp, pu, pv);
+  }
+  if (P.wNeu) {
+    t.barrier();
+    if (t.leader()) e[P.wK] = ew;
+    t.barrier();
   }
   // explicit transverse update (theta_stiff: R with Theta e, Theta b)
   const cplx *eR = e, *bR = b;
@@ -865,6 +883,16 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     Rp[i] = Pp[i] + w1 * D * ((im / g.c[i]) * eR[i] - opg(bR, i));
     Lp[i] = Qp[i] - 0.25 * h * (ie + gg);
   });
+  if (P.wNeu) {  // nothing inside the metal (FieldSolver::maskWall)
+    t.barrier();
+    par::teamFor(t, N + 1, [&](int i) {
+      if (i > P.wK) { Rr[i] = cplx(); Lr[i] = cplx(); b[i] = cplx(); }
+    });
+    par::teamFor(t, N, [&](int i) {
+      if (i >= P.wK) { Rp[i] = cplx(); Lp[i] = cplx(); }
+      if (i > P.wK) e[i] = cplx();
+    });
+  }
 }
 
 // (1,2,1) filter of the beam current along zeta over the half-cells [k0, k1) (default: the stored range;
@@ -963,6 +991,7 @@ struct EngineState {
   par::Array<dev::AdkV> adk;
   par::Array<dev::LevelV> levels;
   par::Array<double> triData, partData;
+  par::Array<double> wAd;  // FieldSolver::wA (metal wall)
   par::Array<dev::TriV> Tf, Tc;
   int triVersion = -1;  // FieldSolver::version() of the uploaded matrices
   par::Array<double> zz, zhs, zzc, zwlo, zwhi;  // longitudinal grid
@@ -1070,6 +1099,11 @@ struct EngineState {
       if (!pd.empty()) par::upload(partData.data(), pd.data(), pd.size());
     }
     triVersion = fs.version();
+    // metal wall of the level (FieldSolver::setWall)
+    wAd.assign(fs.wA.data(), fs.wA.size());
+    P.wK = fs.wK; P.wNeu = fs.wNeu ? 1 : 0;
+    P.wR = fs.wR; P.wAf = fs.wAf; P.wSlope = fs.wSlope;
+    P.wA = wAd.data();
     // numerics.theta_stiff: a, the pentadiagonal LU factors, the factors of S and the Laplacians (StiffV)
     P.stiff = dev::StiffV{0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
                           nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
@@ -1268,6 +1302,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   // parameters
   dev::Params& P = E.P;
   P.M = M; P.Nz = Nz; P.N = N; P.Delta = sim.Delta;
+  P.rWall = sim.rWall;
   P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   P.trapGamma = sim.cfg.numerics.trap_gamma;
   P.theta = sim.cfg.numerics.theta;
@@ -1386,8 +1421,10 @@ void Engine::step() {
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, E.P.M);
+  extendWall();
   const Params P = E.P;
   const int M = P.M, Nz = P.Nz, N = P.N;
   const double Delta = P.Delta;
@@ -1818,12 +1855,13 @@ void Engine::march(const MarchSpec& ms) {
         const double q = 0.5 * P.theta * Delta * P.zv.wLo(n + 1);
         par::teamFor(t, int(npf), [&](int idx) {
           const int m = idx / (N + 1), i = idx % (N + 1);
-          if (i == 0) return;
+          if (i == 0 || i > P.wK) return;  // inside the wall: faces <= K
           const cplx jt = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
           fn.Rr[fn.f(m, n + 1, i)] -= q * (jt - predRprev[idx]);
         });
         par::teamFor(t, int(npc), [&](int idx) {
           const int m = idx / N, i = idx % N;
+          if (i >= P.wK) return;  // centres < K
           const cplx jt = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
           fn.Rp[fn.c(m, n + 1, i)] -= q * (jt - predPprev[idx]);
         });
@@ -1852,6 +1890,16 @@ void Engine::march(const MarchSpec& ms) {
 //  E.incF / incC hold the incident field of the level (sim.prepareIncident). keep: the values before the
 //  absorber of faces >= iF and centres >= iC go to E.preAbs (MPI block, beam_field = mean)
 // ----------------------------------------------------------------------------
+namespace dev {
+// terms of the flying focus at one level (FlyingFocusConfig::terms, Simulation::ffInc), passed by value to the kernel
+struct FFTab {
+  int nt = 0;
+  int m[16], conj[16];
+  size_t of[16], oc[16];                // offsets of the component in ffGf, ffGc
+  double w[16], rps[16], c[16], s[16];  // c + i s = e^{-i kappa_c s1}
+};
+}  // namespace dev
+
 void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   using namespace dev;
   EngineState& E = *st;
@@ -1861,12 +1909,19 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   if (ra >= rm || n1 <= n0) return;
   const FieldsV fn = E.fview(1 - E.iold);
   const GridV g = P.g;
-  // flying focus: R relaxes to the incident field Re(G e^{-i kappa s1}) (m = 1), see Simulation::absorber
+  // flying focus: R relaxes to the incident field of the terms (Simulation::ffInc, absorber)
   const bool ff = sim.cfg.flying_focus.present;
   const cplx* Gf = ff ? E.ffGf.data() : nullptr;
   const cplx* Gc = ff ? E.ffGc.data() : nullptr;
-  const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
-  const double cph = cos(kph), sph = sin(kph);
+  FFTab T;
+  if (ff) {
+    for (const auto& t : sim.ffTerms) {
+      const int k = T.nt++;
+      const double ph = -sim.cfg.flying_focus.comps[t.comp].kappa() * s1;
+      T.m[k] = t.m; T.conj[k] = t.conj; T.w[k] = t.w; T.rps[k] = t.rps; T.c[k] = cos(ph); T.s[k] = sin(ph);
+      T.of[k] = t.comp * sim.ffStrideF; T.oc[k] = t.comp * sim.ffStrideC;
+    }
+  }
   const bool hinc = sim.hasIncident;
   const int iaF = sim.iaF, iaC = sim.iaC, nLF = sim.nLF, nLC = sim.nLC;
   const cplx* iF = hinc ? E.incF.data() : nullptr;
@@ -1890,30 +1945,32 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
     cplx* pv = pre ? pre + size_t(nn - fn0) * pw + size_t(m) * pm : nullptr;
     if (pv && i >= kF) pv[i - kF] = fn.Rr[fn.f(m, nn, i)];
     if (pv && i < N && i >= kC) pv[size_t(N + 1 - kF) + i - kC] = fn.Rp[fn.c(m, nn, i)];
+    // incident field of the flying focus in mode m: R_r += w Y, R_phi += i rps w Y, Y = G e^{-i kappa s1} or conj
+    auto ffInc = [&](const cplx* G, bool face) {
+      cplx inc;
+      for (int k = 0; k < T.nt; ++k) {
+        if (T.m[k] != m) continue;
+        const cplx Gv = face ? G[T.of[k] + size_t(nn - ffN0) * (N + 1) + i] : G[T.oc[k] + size_t(nn - ffN0) * N + i];
+        const cplx U(Gv.re * T.c[k] - Gv.im * T.s[k], Gv.re * T.s[k] + Gv.im * T.c[k]);
+        const cplx Y = T.conj[k] ? cplx(U.re, -U.im) : U;
+        inc += face ? T.w[k] * Y : cplx(-T.rps[k] * T.w[k] * Y.im, T.rps[k] * T.w[k] * Y.re);
+      }
+      return inc;
+    };
     const double df = dmp(g.rho[i]);
     if (df < 1.0) {
-      double inc = 0.0;
-      if (ff && m == 1) { const cplx G = Gf[size_t(nn - ffN0) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
+      cplx c = ff ? ffInc(Gf, true) : cplx();
+      if (hinc && i >= iaF) c += iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
       const cplx R = fn.Rr[fn.f(m, nn, i)];
-      if (hinc && i >= iaF) {
-        const cplx c = cplx(inc, 0.0) + iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
-        fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
-      } else {
-        fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
-      }
+      fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
     }
     if (i < N) {
       const double dc = dmp(g.c[i]);
       if (dc < 1.0) {
-        double inc = 0.0;  // incident R_phi,1 = i inc
-        if (ff && m == 1) { const cplx G = Gc[size_t(nn - ffN0) * N + i]; inc = G.re * cph - G.im * sph; }
+        cplx c = ff ? ffInc(Gc, false) : cplx();
+        if (hinc && i >= iaC) c += iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
         const cplx R = fn.Rp[fn.c(m, nn, i)];
-        if (hinc && i >= iaC) {
-          const cplx c = cplx(0.0, inc) + iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
-          fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
-        } else {
-          fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
-        }
+        fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
       }
     }
   });
@@ -2118,6 +2175,7 @@ void Engine::pushBeams(std::vector<Particle>& ps, double lowZ, double wMean, std
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;  const Params P = E.P;
   const size_t n = ps.size();
   cont.assign(n, 0);
@@ -2224,9 +2282,11 @@ void Engine::marchBlock(const BlockMarch& bm) {
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, M);
   E.prof.start();
+  extendWall();
   E.Cs[1 - E.iold].zero();
   par::zero(E.freed.data(), E.freed.capacity());
   // streaming particles (received, fresh, waiting) and the room for freed electrons
@@ -2293,6 +2353,25 @@ void Engine::marchBlock(const BlockMarch& bm) {
   par::download(reinterpret_cast<cplx*>(sim.predPprev.data()), E.predP[1 - E.ip].data(), npc);
   if (!sim.freedCharge.empty()) par::download(sim.freedCharge.data(), E.freed.data(), sim.freedCharge.size());
 }
+// the wall moved outwards past faces: the field at the old wall continues into the opened annulus of level s^0
+// (Simulation::extendWall)
+void Engine::extendWall() {
+  if (sim.wallFrom < 0) return;
+  EngineState& E = *st;
+  const dev::FieldsV fo = E.fview(E.iold);
+  const int K0 = sim.wallFrom, K1 = sim.solver.wallK(), ns = fo.ns;
+  par::forN(long(sim.M + 1) * ns, GEM_LAMBDA(long col) {
+    const int m = int(col / ns), n = fo.n0 + int(col % ns);
+    for (int i = K0 + 1; i <= K1; ++i) {
+      fo.Rr[fo.f(m, n, i)] = fo.Rr[fo.f(m, n, K0)];
+      fo.Lr[fo.f(m, n, i)] = fo.Lr[fo.f(m, n, K0)];
+      fo.Bz[fo.f(m, n, i)] = fo.Bz[fo.f(m, n, K0)];
+      fo.Ez[fo.c(m, n, i)] = fo.Ez[fo.c(m, n, K0)];
+    }
+  });
+  par::fence();
+}
+
 // ----------------------------------------------------------------------------
 void Engine::downloadFull() {
   download();

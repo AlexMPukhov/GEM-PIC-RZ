@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/gempic-rz-logo-dark.svg">
+    <img src="docs/logo/gempic-rz-logo-light.svg" alt="GEM-PIC-RZ: Galilean electromagnetic PIC in RZ" width="600">
+  </picture>
+</p>
+
 # GEM-PIC-RZ
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23600178.svg)](https://doi.org/10.5281/zenodo.23600178)
@@ -174,6 +181,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
 | `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
+| `tests/flying_focus_beat.sh` | flying focus of two luminal Bessel components (J0 + J1 e^{±iφ}; circular polarization with both helicities in m ≤ 1, linear with m = 2) against the analytic field: E_x in the plane y = 0 and the intensity maximum that turns around the axis (`check_physics ffbeat`) |
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
@@ -697,6 +705,61 @@ longitudinal space charge of the sharp-edged flat-top (±10 % in γ per mm at he
 and tail to the lens; the shell model, which has no E_z, does not describe that. Both switches are off by default;
 `beam_consistent` is not yet available in the MPI pipeline.
 
+## Metal walls: waveguides and beam pipes of variable radius
+
+The block `wall { … }` puts a perfectly conducting lateral wall at r = r_w(z) (constant, a table or a function of z;
+`docs/input_deck.md`). It models hollow metal waveguides, metal capillaries and beam pipes, also tapered ones.
+
+**Why it fits the method.** With s = z (GT2) a level is the plane z = s: at every step the whole window lies at one
+z, so the wall has one radius for all slices. The wall changes only the radial boundary of the field solver from
+step to step; it is not staircased or tilted in ζ.
+
+**Discretization.** The faces 0…K and centres 0…K−1 lie inside, ρ_K ≤ r_w < ρ_{K+1}; the fields outside are zero.
+- E_z (centres) has its ghost value at r_w itself (the last cell ends at the wall), so the wall can lie anywhere in a
+  cell; the radial Laplacians then have the eigenvalues of the tube: k a = 3.8315 / 7.0129 (TM₁ₙ, exact 3.8317 /
+  7.0156) and 1.8411 / 5.3302 (TE₁ₙ, exact 1.8412 / 5.3314) at a = 60 cells.
+- B_z (faces) has zero flux through r_w (E_φ = 0): the control volume of face K is [c_{K−1}, r_w].
+- **Sloped wall:** on r = r_w(z) the tangential field is E_z + r_w′ E_r, so E_z = −r_w′ E_r at the wall (E_r of face
+  K at level s⁰ in the same slice, r_w′ the slope of the step). This carries the radial Poynting flux
+  S_r = r_w′ S_z that pushes the field away from a narrowing wall. With E_z = 0 the wall swallowed the field of the
+  annulus it cut off at every step: in the test below a third of the energy, the peak 20 % low.
+- **Widening wall:** the field at the old wall (E_r, B_φ, B_z of face K, E_z at the wall) continues into the opened
+  annulus; E_φ there starts at 0. Zeros there made a jump of the normal field that radiated high TM modes (E_z five
+  times too large).
+- Particles are lost at r ≥ r_w(s¹); no plasma is loaded inside the metal. The radial absorber is off.
+
+**Test (`tests/wall.sh`, ctest `wall_serial`, `wall_openmp`, `wall_gpu_emulation`).** A Gaussian laser (λ = 0.8 µm,
+w0 = 5 µm, a0 = 0.01, vacuum) in a 12 µm tube is a mixture of TE₁ₙ and TM₁ₙ modes, which beat (TE₁₁ collects 3 rad,
+TM₁₁ 13 rad over 2 mm; the field changes by 17–32 % rms). The reference `tests/wall.py` decomposes the code's own
+initial field into the modes of the tube, for every Fourier component κ in ζ, and evolves them with the dispersion
+relation of the scheme (paper, Eq. disp); in a taper every mode keeps its normalized amplitude (adiabatic local
+modes). dr = 0.2 µm, dζ = λ/16, dz = 5 µm, 2 mm:
+
+| case | E_x: rms diff / max | E_z: rms diff / max |
+|---|---|---|
+| straight, a = 12 µm (also 11.95, 12.1, 12.17 µm: inside a cell) | 0.8 % | 1.2 % |
+| same, dz = 1 µm | 0.35 % | 0.7 % |
+| narrowing, 12 → 9 µm | 1.0 % (peak 5.4514 vs 5.4486 × 10⁻³) | 2.7 % |
+| narrowing, 12 → 9 µm, dz = 1 µm | 0.5 % | 1.5 % |
+| narrowing, 12 → 7 µm | 1.8 % | 4.8 % |
+| widening, 9 → 12 µm (w0 = 3.5 µm) | 1.4 % | 3.7 % |
+| *no wall (a 12 µm reference)* | *22 %* | *24 %* |
+| *wall at 12.5 µm (a 12 µm reference)* | *23 %* | *27 %* |
+| *narrowing with E_z = 0 on the sloped wall* | *4.7 % (peak 20 % low)* | *6 %* |
+
+Against the continuum relation ω = 2κk⊥²/(4κ² − k⊥²) the straight tube agrees to 6.6 % at dζ = λ/16 and 2.4 % at
+λ/32: that difference is the ζ discretization of the scheme, the same without a wall. A plasma in the tube has the
+deck's density inside and none in the metal. All backends, the pipelined step and MPI on 3 ranks (also the device
+march) agree with the serial run to all printed digits (`tests/mpi.sh`), and so does a real GPU (RTX 5090, ctest
+`wall_cuda`: the same numbers as above); without a wall block the results are
+bit-identical to the code before.
+
+**Limits.** Backward waves are outside the model (∂_s L is dropped): reflections at steps, irises and corrugations
+(disk-loaded structures, Bragg reflection) are missing, so the radius must change slowly on the scale of the guided
+radiation (|r_w′| ≪ 1, adiabatic tapers). The guided modes must be paraxial, k⊥ = j/r_w ≪ k. Not combined yet: a
+varying radius with `numerics.theta_stiff`; the wall with a `flying_focus` block or `laser.inject = boundary` (they
+need the absorber). Dielectric walls are not modelled.
+
 ## Corrections of earlier versions
 
 1. **Bunch self-fields** (found with the ion-collapse benchmark). Bunches now start with their relativistic vacuum
@@ -843,6 +906,7 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
 - **Laser focusing in vacuum:** a pulse started 0.2 mm before focus (w0 = 5 µm, zR = 98 µm) follows a0/√(1+((z−z_f)/zR)²) to within 3% over 0.4 mm. At focus it reaches 0.098 instead of 0.100.
 - **Bunch initialization:** the initial rms sizes, emittances, energy spread and flat-top length agree with the deck.
 - **Function profiles:** a deck with the plasma ramp, the Gaussian laser and a flat-top bunch written as functions (`tests/functions.sh`) reproduces the built-in profiles to rounding. In a tapered undulator, K = 0.5 → 0.8, the slippage is 8.83 µm against 8.78 µm from ∫(1 + K²/2)/(2γ²)dz.
+- **Flying focus of several components (beats):** a J0 core (40 mrad) plus 0.2 J1 e^{iφ} (100 mrad), circularly polarized, fed through the absorber layer in vacuum, against an independent quadrature of the analytic field (`tests/flying_focus_beat.sh`): after 40/80/120 µm the rms difference of E_x is 0.06/0.10/0.15 % of a0, that of the J1 part 3/5/8 % of its rms (numerical dispersion of the 100 mrad cone, ~1.5 % in κ), and the intensity maximum, which turns around the axis on a circle of 1.15 µm with the beat period 190.7 µm, is within 0.04 µm of the reference. Both helicities (J1 part in mode 0, m_max = 1) and linear polarization (modes 0 and 2) agree; the same on a real GPU (RTX 5090). The field fed at level s is, after the step, the incident field of s − Δz/2 (a half-step lag of the feeding, also for a single component): the comparison is made there; without the shift the J1 part differs by κ₁Δz/2 in phase (10 % at Δz = 5 µm). For a beat the lag only turns the pattern by the constant angle (κ₁ − κ₀)Δz/2.
 - **Sign checks:** in the PWFA example the electron witness is accelerated and focused. The same bunch as positrons is decelerated and defocused.
 
 ## Known limitations
@@ -855,3 +919,13 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
   dependent; `benchmarks/downramp_fbpic`). Attributed to the GT2 frame of the particles; GT1 should describe it but
   produces stripes in the fields where plasma particles reach the next slow-time level inside the window. No solution
   yet; to be discussed before work starts.
+
+## Logo
+
+`docs/logo/`: light and dark versions of the logo (SVG with the lettering converted to outlines, and PNG at
+twice the size), in the style of the [QUARZ](https://github.com/AlexMPukhov/QUARZ) logo. The G ring holds a
+laser pulse on the axis, the bubble sheaths of its wake and a witness bunch; the amber sparks mark that it was
+made with Claude. `gempic-rz-mark-{light,dark}`: the G alone on a transparent background;
+`gempic-rz-avatar-{light,dark}`: a square 512 x 512 avatar (thicker lines for small sizes). File list and colours:
+[`docs/logo/README.md`](docs/logo/README.md); `make_logo.py` regenerates the SVGs (fonts: Space Grotesk and
+IBM Plex Mono, OFL).

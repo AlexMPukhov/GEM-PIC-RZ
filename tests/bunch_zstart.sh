@@ -33,9 +33,10 @@ import sys
 import h5py
 import numpy as np
 ok = True
-def parts(f):
+def parts(f):  # sorted by (zeta, x, y): the GPU appends particles in a nondeterministic order
     g = f["particles/beam"]
-    return np.stack([g[c][()] for c in ("x", "y", "zeta", "ux", "uy", "uz")], 1)
+    p = np.stack([g[c][()] for c in ("x", "y", "zeta", "ux", "uy", "uz")], 1)
+    return p[np.lexsort((p[:, 1], p[:, 0], p[:, 2]))]
 with h5py.File("late/data_00004.h5") as A:  # z = 0.08 mm: before the loading
     n = len(A["particles/beam/x"][()])
     f = max(abs(A["fields"][k][()]).max() for k in A["fields"])

@@ -23,6 +23,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | `undulator`| 0 … N   | static undulator fields acting on the particles  |
 | `quadrupole`, `plasma_lens`, `solenoid` | 0 … N | transport elements: static fields acting on the particles |
 | `chicane`  | 0 … N   | thin magnetic chicane (R56, delay) applied to the beam |
+| `wall`     | 0 or 1  | perfectly conducting lateral wall r = r_w(z): waveguides, beam pipes |
 | `output`   | 0 or 1  | diagnostics                                      |
 | `numerics` | 0 or 1  | algorithm parameters                             |
 
@@ -282,7 +283,20 @@ so that the driver neither dephases nor depletes. It is fed in from the side.
   k_⊥² = 2ωκ − κ² − ω_p², and the pattern moves at exactly c:
   E_x = Re[e^{−iκs} Σ_ω a(ω) J0(k_⊥(ω) r) e^{iω(ζ−ζc)+i·cep}].
 - **Spectrum and polarization:** a(ω) is Gaussian, so on the axis E_x = a0 exp(−(ζ−ζc)²/L²) cos(…). The
-  polarization is linear along x (mode m = 1).
+  polarization is linear along x (mode m = 1) by default, or circular (`polarization = circular`, `helicity` as
+  in the `laser` block; a0 is then the amplitude of each of E_x, E_y).
+- **Several components (beats):** `beat_cone_angle`, `beat_order`, `beat_amplitude`, `beat_phase` add components
+  U_c = A_c e^{iψ_c} e^{−iκ_c s} Σ_ω a(ω) J_|l_c|(k_⊥,c(ω) r) e^{iω(ζ−ζc)+i·cep}, κ_c = ω0(1 − cos θ_c), of Bessel order
+  l_c (azimuthal phase e^{i l_c φ}), with the same spectrum, each moving at c. The physical field is
+  E_x = Re Σ_c U_c e^{i l_c φ} (linear) or E_x + i h E_y = Σ_c U_c e^{i l_c φ} (circular, helicity h); the main
+  component has `order` (default 0), `cone_angle` and amplitude 1. Two components beat with the period
+  2π/|κ_1 − κ_0| ≈ 4π/(k(θ_1² − θ_0²)) in z. A J0 core with a weak J1 e^{iφ} component (amplitude A ≪ 1) has its
+  intensity maximum displaced by x_b ≈ A θ_1/(k θ_0²) from the axis, turning around the axis with that period: the
+  driver of a helical bubble (a bubble whose axis winds helically in the lab).
+- **Azimuthal modes:** with circular polarization and helicity h a component of order l lives in the single mode
+  m = |l − h|; linear polarization puts it into m = |l − 1| and |l + 1|. So a J0 core plus J1 e^{ihφ} needs only
+  m_max = 1 (core in m = 1, J1 part in m = 0); the summary lists the modes of every component, and modes above
+  `m_max` are left out (warning).
 - **Boundary condition (total field / scattered field):** in the radial absorber layer
   r_absorber < r < r_max, R relaxes to the incident field, R ← R_inc + d(r)(R − R_inc). The layer therefore feeds
   the converging wave and absorbs only what the plasma adds.
@@ -296,16 +310,27 @@ so that the driver neither dephases nor depletes. It is fed in from the side.
 | `tau_fwhm` *or* `length_1e` | time / length | — | on-axis intensity FWHM, or 1/e half length of the field |
 | `zeta_center` | length | — | centre of the on-axis envelope |
 | `cep` | angle | 0 | carrier-envelope phase |
-| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ |
+| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ for every component |
+| `order` | integer | 0 | Bessel order l of the main component (J_\|l\| e^{ilφ}) |
+| `polarization` | `linear` \| `circular` | `linear` | linear along x, or circular |
+| `helicity` | +1 \| −1 | +1 | circular polarization: sense of rotation (as in the `laser` block) |
+| `beat_cone_angle` | angles | — | cone angles of up to 3 further components |
+| `beat_order` | integers | 0 | their Bessel orders l_c |
+| `beat_amplitude` | numbers | 1 | their amplitudes relative to a0 |
+| `beat_phase` | angles | 0 | their phases ψ_c (at s = 0) |
 
 Requirements and checks:
-- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere. The conical wave has the same transverse wavelength at every
+- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere (θ the largest cone angle). The conical wave has the same transverse wavelength at every
   radius, so the grid cannot coarsen outward.
 - **Window:** it must reach ζc + 3L + r_max θ/2. The rings at radius r run ahead of the axial focus by about rθ/2.
 - **Layer:** it must not contain plasma that differs from `background_density`, such as a neutral gas that gets
   ionized there.
 - **Tests:** `benchmarks/flying_focus/` (vacuum: on-axis amplitude within 2 % over 2 mm, constant phase offset
-  0.08 rad, group velocity c to 3·10⁻⁵).
+  0.08 rad, group velocity c to 3·10⁻⁵). Several components: ctest `flying_focus_beat`
+  (`benchmarks/flying_focus/beat_vacuum.deck`, results there): E_x within 0.15 % of a0, the J1 part within 8 %, the
+  turning intensity maximum within 0.04 µm after 120 µm.
+- **Half-step lag:** the field fed at level s is, after the step, the incident field of s − Δz/2: each component
+  carries the extra phase κ_c Δz/2, so a beat pattern is turned by the constant angle (κ_1 − κ_0)Δz/2.
 - **Backends:** serial, OpenMP and MPI give identical results; the GPU kernel is the OpenMP one and compiles with nvcc, but has not been run on a GPU yet.
 
 ## `plasma` (0 or 1 block)
@@ -539,6 +564,34 @@ all particles, like the undulators; the field solver does not see them. Several 
   solenoid and a drift: the rms sizes at the end agree with the linear optics to 0.1 % (quadrupole x 0.38409 vs
   0.38374, y 1.64493 vs 1.64531; solenoid r 0.96466 vs 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
   bunch (rms 0.5761 vs 0.5766 µm).
+
+## `wall` (0 or 1 block)
+
+A perfectly conducting lateral wall at r = r_w(z): a hollow metal waveguide, a capillary electrode or a beam pipe of
+variable radius. With s = z (GT2) a level is the plane z = s, so the wall has one radius for the whole window at every
+step; the field solver takes the radius of the new level, r_w(s¹).
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `radius` | length | — | constant radius |
+| `z_points`, `r_points` | lists of lengths | — | r_w(z) linear between the points, constant beyond the ends (z = 0: start of the simulation) |
+| `radius_function` | function of z | — | r_w(z), e.g. `"12 um - 1.5e-3 * z"` (see [Functions](#functions-and-expressions)) |
+
+Exactly one of the three is given. Example: `wall { z_points = 0, 2 mm; r_points = 12, 9 um }`.
+
+- **The wall lies inside the grid:** 0 < r_w < `grid.r_max` everywhere (checked at every step); the cells between the
+  wall and r_max carry no field. Put a few cells beyond the largest radius.
+- **No absorber:** the block switches the radial absorber off (`grid.r_absorber` must not be given, or ≥ r_max).
+  Hence it cannot be combined with a `flying_focus` block or `laser.inject = boundary`, which feed the field through
+  the absorber layer.
+- **Particles:** particles reaching r ≥ r_w(s¹) are lost (absorbed by the wall); no plasma is loaded inside the metal.
+- **Boundary conditions:** E_z = −r_w′ E_r and E_φ = 0 at the wall (the tangential field of the sloped wall; r_w′ is the
+  slope of the step), zero radial flux of B_z; the wall can lie anywhere in a cell (the last cell ends at r_w). When
+  the wall moves outwards, the field at the old wall continues into the opened annulus. README, section "Metal walls",
+  has the details and the tests.
+- **Limits:** backward waves are not described (∂_s L is dropped), so reflections at steps, irises or corrugations are
+  missing: the wall must vary slowly on the scale of the radiation it guides (adiabatic tapers, |r_w′| ≪ 1).
+  A radius that varies cannot yet be combined with `numerics.theta_stiff` (a constant radius can).
 
 ## `output` (0 or 1 block)
 

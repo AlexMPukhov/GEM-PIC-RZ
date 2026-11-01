@@ -1,0 +1,13 @@
+# Metal wall (tests/wall.sh): a laser in a perfectly conducting circular waveguide, vacuum.
+# The Gaussian (w0 = 5 um) is no mode of the 12 um tube: it is a mixture of TE_1n and TM_1n modes, which beat
+# (TE_11 collects 3 rad, TM_11 13 rad over 2 mm). tests/wall.py compares the field with the modal theory.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 0.2 um;  r_max = 14 um
+  dzeta = 0.05 um;  window_length = 40 um
+  dz = 5 um;  z_end = 2 mm
+}
+laser { a0 = 0.01; waist = 5 um; length_1e = 6 um; zeta_center = 20 um; polarization = linear }
+wall { radius = 12 um }
+output { dir = wall; every = 400; format = text; map_stride = 1; particles = false }
+numerics { backend = serial }
