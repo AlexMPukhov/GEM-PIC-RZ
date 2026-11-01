@@ -155,19 +155,22 @@ int main(int argc, char** argv) {
     }
   } else if (mode == "ffbeat") {
     // flying focus of several luminal Bessel components (tests/flying_focus_beat.sh), map at y = 0:
-    //   ffbeat <map> <tol> <a0> <L_1e[um]> <zeta_c[um]> then per component <theta[rad]> <l> <amplitude> <phase>
+    //   ffbeat <map> <tol_all> <tol_odd> <tol_peak[um]> <ds[um]> <a0> <L_1e[um]> <zeta_c[um]>
+    //          then per component <theta[rad]> <l> <amplitude> <phase>
     // E_x(x, 0, zeta, s) = Re sum_c U_c e^{i l_c phi} (linear and circular polarization alike; phi = 0, pi), with
     // U_c = a0 A_c e^{i psi_c} int dw a(w) J_|l|(k_c(w) r) e^{i w (zeta - zeta_c) - i kappa_c s},
     // a(w) = L/(2 sqrt(pi)) e^{-(w-1)^2 L^2/4}, kappa_c = 1 - cos theta_c, k_c^2 = 2 w kappa_c - kappa_c^2 (vacuum),
-    // integrated here on 401 frequencies over +-8/L. Compared within |zeta - zeta_c| < 2 L, r < 40 um: the whole
-    // field and its part odd in x (the components of odd l), relative to a0; and the x of the intensity maximum
-    // (E_x^2 summed over |zeta - zeta_c| < L/2) near the axis: the beat displaces it by x_b cos(...).
-    if (argc < 11 || (argc - 7) % 4 != 0) { std::fprintf(stderr, "ffbeat: wrong arguments\n"); return 2; }
-    const double tol = std::atof(argv[3]), a0 = std::atof(argv[4]), L = std::atof(argv[5]) / k0inv_um,
-                 zc = std::atof(argv[6]) / k0inv_um;
+    // integrated here on 401 frequencies over +-8/L, at the level s = z + ds. Compared within |zeta - zeta_c| < 2 L,
+    // r < 40 um: the whole field (rms difference / a0 < tol_all) and its part odd in x (the components of odd l:
+    // rms difference / its rms < tol_odd); and the x of the intensity maximum (E_x^2 summed over |zeta - zeta_c| < L/2)
+    // near the axis, which the beat displaces by x_b cos(...) (difference < tol_peak).
+    if (argc < 14 || (argc - 10) % 4 != 0) { std::fprintf(stderr, "ffbeat: wrong arguments\n"); return 2; }
+    const double tol = std::atof(argv[3]), tolOdd = std::atof(argv[4]), tolPeak = std::atof(argv[5]),
+                 ds = std::atof(argv[6]) / k0inv_um, a0 = std::atof(argv[7]), L = std::atof(argv[8]) / k0inv_um,
+                 zc = std::atof(argv[9]) / k0inv_um;
     struct C { double th; int l; double A, psi; };
     std::vector<C> cs;
-    for (int a = 7; a + 3 < argc; a += 4)
+    for (int a = 10; a + 3 < argc; a += 4)
       cs.push_back({std::atof(argv[a]), std::atoi(argv[a + 1]), std::atof(argv[a + 2]), std::atof(argv[a + 3])});
     double s = 0;
     {
@@ -176,7 +179,7 @@ int main(int argc, char** argv) {
       std::getline(in, head);
       const auto p = head.find("z = ");
       if (p == std::string::npos) { std::fprintf(stderr, "no z in the map header\n"); return 2; }
-      s = std::atof(head.c_str() + p + 4) * 1e3 / k0inv_um;
+      s = std::atof(head.c_str() + p + 4) * 1e3 / k0inv_um + ds;
     }
     const int nw = 401;
     auto ref = [&](double x, double zeta) {
@@ -237,12 +240,13 @@ int main(int argc, char** argv) {
       return -B / (2 * A);
     };
     const double rel = std::sqrt(d2 / cnt) / a0, relodd = std::sqrt(od2 / std::max(o2, 1e-300));
-    const bool ok = rel < tol && relodd < 10 * tol;
-    std::printf("%s z = %.4f mm: rms(E_x - reference)/a0 = %.2e (tolerance %.1e), rms E_x/a0 = %.3f; odd part "
-                "(beat components): rms difference / rms = %.2e (tolerance %.1e), rms/a0 = %.3e; intensity maximum "
-                "at x = %.4f um (reference %.4f um)\n",
-                ok ? "OK  " : "FAIL", s * k0inv_um * 1e-3, rel, tol, std::sqrt(n2 / cnt) / a0, relodd, 10 * tol,
-                std::sqrt(o2 / std::max(1L, cnt / 2)) / a0, peak(Ic), peak(Ir));
+    const double pc = peak(Ic), pr = peak(Ir);
+    const bool ok = rel < tol && relodd < tolOdd && std::fabs(pc - pr) < tolPeak;
+    std::printf("%s z = %.4f mm (reference at s = %.4f mm): rms(E_x - reference)/a0 = %.2e (tolerance %.1e), "
+                "rms E_x/a0 = %.3f; odd part (beat components): rms difference / rms = %.2e (tolerance %.2g), "
+                "rms/a0 = %.3e; intensity maximum at x = %.4f um (reference %.4f um, tolerance %.2g um)\n",
+                ok ? "OK  " : "FAIL", (s - ds) * k0inv_um * 1e-3, s * k0inv_um * 1e-3, rel, tol,
+                std::sqrt(n2 / cnt) / a0, relodd, tolOdd, std::sqrt(o2 / std::max(1L, cnt / 2)) / a0, pc, pr, tolPeak);
     if (!ok) ++fails;
   } else {
     std::fprintf(stderr, "unknown mode %s\n", mode.c_str());
