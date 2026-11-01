@@ -15,5 +15,7 @@ for n in ${*:-1 4 16 64}; do
     --gpus-per-node="$GPUS_PER_NODE" --cpus-per-task="$CPUS_PER_TASK" --time=$t \
     --export=ALL,NGPU=$n benchmarks/jupiter/scaling.sbatch
 done
-sbatch --account="$ACCOUNT" --partition="$CPU_PARTITION" --time=04:00:00 benchmarks/jupiter/cpu_reference.sbatch
+# the CPU reference (skip it with NO_CPU=1, e.g. when only the GPU code changed)
+[ -n "${NO_CPU:-}" ] || sbatch --account="$ACCOUNT" --partition="$CPU_PARTITION" --time=04:00:00 \
+  benchmarks/jupiter/cpu_reference.sbatch
 echo "results accumulate in $RUNS/scaling.txt; table: sh benchmarks/jupiter/collect.sh"

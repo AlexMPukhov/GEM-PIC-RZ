@@ -95,6 +95,10 @@ class Engine {
   std::vector<Particle> trapped(size_t from = 0);  // particles trapped so far in this march (index >= from)
   // values of the absorber layer before the radial absorber, per absorbed slice (layout of PipelineRun::preAbs)
   bool preAbsorber(int n, std::vector<std::complex<double>>& out);
+  // the pre-absorber values of slice n received from the rank behind (a ghost slice of this block)
+  void putPreAbsorber(int n, const std::vector<std::complex<double>>& v);
+  // level 0 <-> the pre-absorber values of all slices that have them (PipelineRun::swapPreAbs on the device)
+  void swapPreAbsorber();
 
   // internal (public only because nvcc does not allow device lambdas in private member functions)
   struct MarchSpec;

@@ -1175,6 +1175,7 @@ struct EngineState {
   std::vector<char> preHave;
   size_t preW = 0;
   int preF = 0, preC = 0;  // first kept face / centre
+  par::Array<int> preIdx;  // slices of swapPreAbsorber
   par::Array<cplx> belowR, belowP;  // MPI block: prediction at slice a
   dev::CurrStore aux[3];            // MPI block: halo deposits H, the front rank's raw current Rw, scratch
   bool auxReady = false;
@@ -2232,6 +2233,45 @@ bool Engine::preAbsorber(int n, std::vector<cd>& out) {
   out.resize(E.preW);
   par::download(reinterpret_cast<cplx*>(out.data()), E.preAbs.data() + j * E.preW, E.preW);
   return true;
+}
+
+void Engine::putPreAbsorber(int n, const std::vector<cd>& v) {
+  EngineState& E = *st;
+  const size_t j = size_t(n - E.fn0);
+  if (n < E.fn0 || j >= E.preHave.size() || v.size() != E.preW) return;
+  par::upload(E.preAbs.data() + j * E.preW, reinterpret_cast<const cplx*>(v.data()), E.preW);
+  E.preHave[j] = 1;
+}
+
+void Engine::swapPreAbsorber() {
+  using namespace dev;
+  EngineState& E = *st;
+  std::vector<int> idx;
+  for (size_t j = 0; j < E.preHave.size(); ++j)
+    if (E.preHave[j]) idx.push_back(E.fn0 + int(j));
+  if (idx.empty()) return;
+  E.preIdx.assign(idx.data(), idx.size());
+  const int M = sim.M, N = sim.g.N, kF = E.preF, kC = E.preC, fn0 = E.fn0;
+  const size_t pw = E.preW, pm = size_t(N + 1 - kF) + size_t(N - kC);
+  const FieldsV fo = E.fview(E.iold);
+  cplx* pre = E.preAbs.data();
+  const int* id = E.preIdx.data();
+  par::forN(long(idx.size()) * (M + 1) * (N + 1), GEM_LAMBDA(long q) {
+    const int i = int(q % (N + 1));
+    const long t = q / (N + 1);
+    const int m = int(t % (M + 1)), nn = id[t / (M + 1)];
+    cplx* pv = pre + size_t(nn - fn0) * pw + size_t(m) * pm;
+    if (i >= kF) {
+      const cplx x = pv[i - kF];
+      pv[i - kF] = fo.Rr[fo.f(m, nn, i)];
+      fo.Rr[fo.f(m, nn, i)] = x;
+    }
+    if (i < N && i >= kC) {
+      const cplx x = pv[size_t(N + 1 - kF) + i - kC];
+      pv[size_t(N + 1 - kF) + i - kC] = fo.Rp[fo.c(m, nn, i)];
+      fo.Rp[fo.c(m, nn, i)] = x;
+    }
+  });
 }
 
 void Engine::marchBlock(const BlockMarch& bm) {
