@@ -1348,6 +1348,7 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.tridiag = td == "thomas" ? NumericsConfig::Tridiag::Thomas
               : td == "partition" ? NumericsConfig::Tridiag::Partition : NumericsConfig::Tridiag::Auto;
   N.iterations = int(r.integer("iterations", N.iterations));
+  N.predictor = (r.word("predictor", "zeta", {"zeta", "level"}) == "zeta") ? 1 : 0;
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
   N.beam_smooth_length = r.num("beam_smooth_length", Dim::Length, 0.0);
@@ -1551,6 +1552,14 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     throw DeckError(deck.where(deck.single("wall")->line) +
                     ": a wall of varying radius cannot be combined with numerics.theta_stiff yet (a constant radius can)");
   deck.checkAllUsed();
+  // long plasma wakes: with the predictor zeta the passes per slice must converge (README, "Long plasma wakes")
+  if (c.plasma.present && c.numerics.predictor == 1 && c.numerics.iterations < 4) {
+    const double periods = c.grid.window() * std::sqrt(c.plasma.n0) / (2.0 * PI);
+    if (periods > 30.0)
+      warn.push_back("the window holds " + std::to_string(int(periods)) +
+                     " plasma periods: long wakes need numerics.iterations = 4 (here " +
+                     std::to_string(c.numerics.iterations) + "), otherwise they grow from step to step");
+  }
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
   for (const auto& A : c.boxAdvice()) {
     if (A.rmax_now < A.rmax_need)
@@ -1908,9 +1917,9 @@ std::string Config::summary() const {
     line("beam self-fields: theta per radial mode %s, consistent beam sources %s",
          numerics.theta_stiff > 0 ? ("on (theta_stiff = " + std::to_string(numerics.theta_stiff) + ")").c_str() : "off",
          numerics.beam_consistent ? "on" : "off");
-  line("output: dir '%s', every %d steps; numerics: %d iterations/slice, theta %.3g, trap advance %.3g dz, beam "
+  line("output: dir '%s', every %d steps; numerics: %d iterations/slice (predictor %s), theta %.3g, trap advance %.3g dz, beam "
        "filter %d, beam pusher %s, beam field %s, seed %lu, backend %s",
-       output.dir.c_str(), output.every, numerics.iterations, numerics.theta, numerics.trap_advance, numerics.beam_filter,
+       output.dir.c_str(), output.every, numerics.iterations, numerics.predictor == 1 ? "zeta" : "level", numerics.theta, numerics.trap_advance, numerics.beam_filter,
        numerics.beam_vay ? "vay" : "boris", numerics.beam_field == BEAM_FIELD_MEAN ? "mean of s^0, s^1" : "s^0",
        numerics.seed,
        numerics.backend == NumericsConfig::Backend::Cuda     ? "cuda"

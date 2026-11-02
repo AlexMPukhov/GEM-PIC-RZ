@@ -159,6 +159,8 @@ foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
   add_test(NAME regression${sfx}
     COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:gempic_rz> -DCMP=$<TARGET_FILE:compare_columns> -DBACKEND=${b}
             -DSRC=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/tests/regression.cmake)
+  add_test(NAME long_wake${sfx}
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/long_wake.sh $<TARGET_FILE:gempic_rz> ${b})
 endforeach()
 if(TARGET gempic_rz_gpuemu)
   # the GPU code paths, emulated on CPU threads, against the serial reference

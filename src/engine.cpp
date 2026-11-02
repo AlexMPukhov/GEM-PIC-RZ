@@ -1177,6 +1177,7 @@ struct EngineState {
   int preF = 0, preC = 0;  // first kept face / centre
   par::Array<int> preIdx;  // slices of swapPreAbsorber
   par::Array<cplx> belowR, belowP;  // MPI block: prediction at slice a
+  par::Array<cplx> frontDR, frontDP;  // MPI block: the front rank's j^1 - j^0 (streaming) at half-cell b
   dev::CurrStore aux[3];            // MPI block: halo deposits H, the front rank's raw current Rw, scratch
   bool auxReady = false;
   par::Array<Particle> plist;       // MPI block: particles of pushBeams / depositBeams
@@ -1221,6 +1222,7 @@ struct Engine::MarchSpec {
   long streamCap, bornCap;
   const BlockMarch* bm;        // MPI block (null: the whole window)
   const cplx *belowR, *belowP;  // MPI block with a rank behind: prediction at slice nLo
+  const cplx *frontDR = nullptr, *frontDP = nullptr;  // MPI block with a rank in front: its j^1 - j^0 at nHi + 1
 };
 bool Engine::gpuBuild() {
 #if defined(GEM_BACKEND_CUDA)
@@ -1650,6 +1652,7 @@ void Engine::march(const MarchSpec& ms) {
   const int M = P.M, Nz = P.Nz, N = P.N;
   const double Delta = P.Delta, s1 = ms.s1;
   const int iters = sim.cfg.numerics.iterations;
+  const bool predZ = sim.cfg.numerics.predictor == 1;  // numerics.predictor = zeta
   const int iold = E.iold, inew = 1 - iold;
   const FieldsV fo = E.fview(iold), fn = E.fview(inew);
   const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
@@ -1807,6 +1810,24 @@ void Engine::march(const MarchSpec& ms) {
         cplx* fs = E.filtScratch.data();
         par::teams(M + 1, GEM_LAMBDA(const Team& t) {
           filterTeam(t, FV, t.league, n, c1s, fs + size_t(t.league) * (4 * size_t(N) + 1));
+        });
+      }
+      // numerics.predictor = zeta (Simulation::march): j^1 of half-cell n-1 = j^0 + the change extrapolated from n, n+1
+      // (half-cell n + 1 above an MPI block: the change sent by the front rank)
+      if (predZ && n > 0 && n + 1 < Nz && (n + 1 <= nHi || ms.frontDR)) {
+        const bool own = n + 1 <= nHi;
+        const cplx *dR = ms.frontDR, *dP = ms.frontDP;
+        par::forN(long(npf), GEM_LAMBDA(long idx) {
+          const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+          const cplx b = (n == nLo && belowR) ? belowR[idx] : c1b.jr[c1b.f(m, n - 1, i)];
+          const cplx d1 = own ? c1s.jr[c1s.f(m, n + 1, i)] - c0s.jr[c0s.f(m, n + 1, i)] : dR[idx];
+          predR[idx] = b + c0s.jr[c0s.f(m, n - 1, i)] + 2.0 * (c1s.jr[c1s.f(m, n, i)] - c0s.jr[c0s.f(m, n, i)]) - d1;
+        });
+        par::forN(long(npc), GEM_LAMBDA(long idx) {
+          const int m = int(idx / N), i = int(idx % N);
+          const cplx b = (n == nLo && belowP) ? belowP[idx] : c1b.jp[c1b.c(m, n - 1, i)];
+          const cplx d1 = own ? c1s.jp[c1s.c(m, n + 1, i)] - c0s.jp[c0s.c(m, n + 1, i)] : dP[idx];
+          predPc[idx] = b + c0s.jp[c0s.c(m, n - 1, i)] + 2.0 * (c1s.jp[c1s.c(m, n, i)] - c0s.jp[c0s.c(m, n, i)]) - d1;
         });
       }
       prof.stop(Profile::PUSH);
@@ -2338,7 +2359,14 @@ void Engine::marchBlock(const BlockMarch& bm) {
     E.preAbs.reserve(size_t(E.fns) * E.preW);
     E.preHave.assign(size_t(E.fns), 0);
   }
-  march(MarchSpec{bm.b - 1, bm.a, bm.s1, streamCap, bornCap, &bm, belowR, belowP});
+  MarchSpec ms{bm.b - 1, bm.a, bm.s1, streamCap, bornCap, &bm, belowR, belowP};
+  if (bm.dFrontR && sim.cfg.numerics.predictor == 1) {
+    E.frontDR.assign(reinterpret_cast<const cplx*>(bm.dFrontR->data()), npf);
+    E.frontDP.assign(reinterpret_cast<const cplx*>(bm.dFrontP->data()), npc);
+    ms.frontDR = E.frontDR.data();
+    ms.frontDP = E.frontDP.data();
+  }
+  march(ms);
   if (bm.absorbFirst) absorbSlices(bm.a, bm.a + 1, bm.s1, keep);
   // results for the host
   E.pullCounters();
