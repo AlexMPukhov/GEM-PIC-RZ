@@ -1093,6 +1093,7 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       if (ps.empty() && Sp_.id < 0) continue;  // no trapped particles: no species
       if (first) { Handle h(Wr.groups(pp), H5Gclose, "group " + pp); first = false; }
       const std::string sg = pp + "/" + Sp_.name;
+      const double MS = ME * ((Sp_.id >= 0) ? S.cfg.bunches[size_t(Sp_.id)].mass : 1.0);  // particle mass [kg]
       { Handle h(Wr.groups(sg), H5Gclose, "group " + sg); }
       const hsize_t np = ps.size();
       std::vector<double> col(np);
@@ -1123,10 +1124,10 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       constant("positionOffset/y", 0.0, L);
       constant("positionOffset/z", S.s0, L);
       record("momentum", unitDim(1, 1, -1, 0), 0u, 1.0);
-      component("momentum/x", [](const Particle& p) { return p.ux; }, ME * C_LIGHT);
-      component("momentum/y", [](const Particle& p) { return p.uy; }, ME * C_LIGHT);
-      component("momentum/z", [](const Particle& p) { return p.uz; }, ME * C_LIGHT);
-      // real particles per macroparticle: |q| Q0 / e (all S.beam particles are electrons or positrons)
+      component("momentum/x", [](const Particle& p) { return p.ux; }, MS * C_LIGHT);
+      component("momentum/y", [](const Particle& p) { return p.uy; }, MS * C_LIGHT);
+      component("momentum/z", [](const Particle& p) { return p.uz; }, MS * C_LIGHT);
+      // real particles per macroparticle: |q| Q0 / e (all S.beam particles carry one elementary charge)
       {
         for (size_t k = 0; k < np; ++k) col[k] = std::fabs(ps[k]->q) * Q0 / E_CHARGE_C;
         Handle ds(Wr.plain(sg + "/weighting", {np}, col.data()), H5Dclose, "weighting");
@@ -1182,7 +1183,7 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
         Writer::attr(h, "timeOffset", 0.0);
         Writer::attrU32(h, "macroWeighted", 0u);
         Writer::attr(h, "weightingPower", 1.0);
-        Writer::attr(h, "value", ME);
+        Writer::attr(h, "value", MS);
         Writer::attr(h, "shape", std::vector<unsigned long long>{np});
         Writer::attr(h, "unitSI", 1.0);
       }

@@ -215,6 +215,10 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME transport_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/transport.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract> ${b})
   endforeach()
+  # proton bunches: mass, charge sign and energy against linear optics
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME proton_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/proton.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
   # beams from files (openPMD, native), selection, resampling, Fawley shot noise
   add_test(NAME beam_import
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/beam_import.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>)

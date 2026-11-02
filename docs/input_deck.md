@@ -410,7 +410,7 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `name` | string | `bunchI` | label in the output |
-| `species` | `electron` \| `positron` | `electron` | |
+| `species` | `electron` \| `positron` \| `proton` | `electron` | `proton`: mass m_p, charge +e (e.g. the SPS bunch of AWAKE). `energy` is then the kinetic energy (γ − 1) m_p c², and `bunches.txt` and the openPMD `mass` use m_p. Bunches from files are electrons or positrons |
 | `charge` | charge | — | total charge. Only the magnitude is used; the sign comes from `species` |
 | `energy` *or* `gamma` | energy / number | — | kinetic energy, or the Lorentz factor |
 | `energy_spread` | number | 0 | relative rms spread of p_z (e.g. `0.1 %`) |
