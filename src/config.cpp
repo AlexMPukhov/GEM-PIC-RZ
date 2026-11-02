@@ -1044,8 +1044,9 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
     readBunchFile(b, d, u, g, B, warn);
     return;
   }
-  const std::string sp = r.word("species", "electron", {"electron", "positron"});
-  B.qm = (sp == "electron") ? -1.0 : 1.0;
+  const std::string sp = r.word("species", "electron", {"electron", "positron", "proton"});
+  B.mass = (sp == "proton") ? MP_OVER_ME : 1.0;
+  B.qm = ((sp == "electron") ? -1.0 : 1.0) / B.mass;
   // charge: magnitude from the deck, sign from the species
   const double q = std::fabs(r.num("charge", Dim::Charge));
   if (!(q > 0)) r.failKey("charge", "must not be zero");
@@ -1054,7 +1055,7 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   const int eg = r.oneOf("energy", "gamma", !r.has("gamma_function"));
   if (eg == 0) {
     const double E = r.num("energy", Dim::Energy);
-    B.gamma = 1.0 + E / MC2_MEV;
+    B.gamma = 1.0 + E / (MC2_MEV * B.mass);  // kinetic energy
   } else if (eg == 1) {
     B.gamma = r.num("gamma", Dim::None);
   } else {
@@ -1594,8 +1595,9 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     if (G.length < 4.0 * c.numerics.beam_dz_max)
       warn.push_back(G.label + ": shorter than 4 sub-steps of the beam push (numerics.beam_dz_max)");
     for (const auto& B : c.bunches) {
-      const double k = (G.kind == MagnetConfig::Kind::Solenoid) ? 0.5 * std::fabs(G.field) / B.gamma
-                                                                  : std::sqrt(std::fabs(G.gradient) / B.gamma);
+      const double qm = std::fabs(B.qm);  // 1 for electrons and positrons
+      const double k = (G.kind == MagnetConfig::Kind::Solenoid) ? 0.5 * qm * std::fabs(G.field) / B.gamma
+                                                                  : std::sqrt(qm * std::fabs(G.gradient) / B.gamma);
       if (k * c.numerics.beam_dz_max > 0.1)
         warn.push_back(G.label + ", bunch '" + B.name + "': numerics.beam_dz_max exceeds 0.1 / k_beta (" +
                        fmtUm(0.1 / k, c.units) + ")");
@@ -1816,7 +1818,7 @@ std::string Config::summary() const {
     const auto& B = bunches[i];
     line("bunch[%zu] '%s': %s, Q = %.4g pC, E = %.5g MeV (gamma %.5g), dE/E = %.3g, sigma_x,y = %.4g, %.4g um, "
          "eps_n = %.4g, %.4g um, %s %.4g um at zeta = %.4g um, %d macroparticles",
-         i, B.name.c_str(), B.qm < 0 ? "electrons" : "positrons", B.charge_pC, (B.gamma - 1.0) * MC2_MEV, B.gamma,
+         i, B.name.c_str(), B.speciesName(), B.charge_pC, (B.gamma - 1.0) * MC2_MEV * B.mass, B.gamma,
          B.energy_spread, B.sigma_x * um, B.sigma_y * um, B.emittance_x * um, B.emittance_y * um,
          B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? "sigma_z" : "length",
          (B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? B.sigma_z : B.length) * um,

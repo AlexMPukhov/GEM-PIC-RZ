@@ -248,7 +248,7 @@ void Simulation::report(const DiagSums& D, bool files) {
     const Stats s = statsOf(D, int(b));
     std::printf("      %-10s N = %6zu  Q = %7.3f pC  E = %9.2f MeV  dE/E = %.2e  sig_x = %.3f um  eps_nx = %.3f um"
                 "  sig_z = %.2f um\n",
-                cfg.bunches[b].name.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV, s.dgrel,
+                cfg.bunches[b].name.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV * cfg.bunches[b].mass, s.dgrel,
                 s.sx * um, s.ex * um, s.sz * um);
   }
   std::fflush(stdout);
@@ -435,13 +435,13 @@ void Simulation::writeBunchTable(const DiagSums& D) {
     std::fprintf(fp,
                  "# step  z[mm]  bunch  N  Q[pC]  E[MeV]  dE/E(rms)  sig_x[um]  sig_y[um]  eps_nx[um]  eps_ny[um]"
                  "  <zeta>[um]  sig_z[um]    (bunch 'trapped' = self-injected plasma electrons)\n");
-  auto row = [&](std::string nm, const Stats& s) {
+  auto row = [&](std::string nm, const Stats& s, double mass = 1.0) {
     std::replace(nm.begin(), nm.end(), ' ', '_');  // keep one column per quantity
     std::fprintf(fp, "%6d %10.5f %-12s %8zu %10.4f %12.4f %10.3e %9.4f %9.4f %9.4f %9.4f %10.3f %9.4f\n", step_no,
-                 s0 * um * 1e-3, nm.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV, s.dgrel, s.sx * um,
+                 s0 * um * 1e-3, nm.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV * mass, s.dgrel, s.sx * um,
                  s.sy * um, s.ex * um, s.ey * um, s.zm * um, s.sz * um);
   };
-  for (size_t b = 0; b < cfg.bunches.size(); ++b) row(cfg.bunches[b].name, statsOf(D, int(b)));
+  for (size_t b = 0; b < cfg.bunches.size(); ++b) row(cfg.bunches[b].name, statsOf(D, int(b)), cfg.bunches[b].mass);
   row("trapped", statsOf(D, SPECIES_TRAPPED));
   for (size_t s = 0; s < cfg.ions.size(); ++s)
     if (cfg.ions[s].ionization)

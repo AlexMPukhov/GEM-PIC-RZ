@@ -234,7 +234,9 @@ struct IonConfig {
 struct BunchConfig {
   enum class Shape { Gaussian, Flattop, Function, File };
   std::string name;
-  double qm = -1.0;         // charge-to-mass ratio: -1 electron, +1 positron
+  double qm = -1.0;         // charge-to-mass ratio [e/m_e]: -1 electron, +1 positron, +m_e/m_p proton
+  double mass = 1.0;        // particle mass [m_e]
+  const char* speciesName() const { return mass > 1.0 ? "protons" : (qm < 0 ? "electrons" : "positrons"); }
   double charge = 0.0;      // total charge [code units], signed
   double charge_pC = 0.0;   // |charge| in pC, for printing
   double gamma = 1000.0;
