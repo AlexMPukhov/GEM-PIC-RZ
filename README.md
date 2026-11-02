@@ -184,6 +184,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/flying_focus_beat.sh` | flying focus of two luminal Bessel components (J0 + J1 e^{±iφ}; circular polarization with both helicities in m ≤ 1, linear with m = 2) against the analytic field: E_x in the plane y = 0 and the intensity maximum that turns around the axis (`check_physics ffbeat`) |
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
+| `tests/long_wake.sh`, `tests/long_wake.deck` | long linear plasma wake (`numerics.predictor`): k_p amplitude of the on-axis E_z against the linear theory, no growth from step to step; the old prediction (`level`) must grow, per backend |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
@@ -601,13 +602,74 @@ one pass damps kh = 0.2 (31 cells per wavelength) by 1%, and kh = π/2 by 50%.
 Such a bunch is under-resolved anyway. `beam_filter = 0` reproduces the
 earlier versions except in the rearmost slice.
 
+## Long plasma wakes: prediction of the plasma current (`numerics.predictor`)
+
+**Problem.** The R update of slice n (Eq. of the method paper, `Discretization`) needs j¹ of the two
+half-cells next to the slice, but the half-cell behind it, n − ½, is pushed only after slice n has been
+solved. Up to version 1.0 its current was predicted by that of the old level, j⁰, and R(n) was corrected
+afterwards; the fields E_z, B_z, L of slice n and the particles pushed with them kept the error
+(Δ/4)(j¹ − j⁰). In a long plasma wake this error drives the plasma at its resonance, and the response adds up
+along ζ: a plasma wave at k ≈ 0.9 k_p grew from the noise by a factor per step that rises with the length of
+the window (×2 for 20 c/ω_p, ×10 for 60, ×35 for 200, at Δ = 200 c/ω_p; AWAKE self-modulation at 7e14 cm⁻³).
+A smaller Δ did not help: within Δh ≤ 4/ω_p² it grew per distance even faster, and at Δ = 2 c/ω_p the mode at
+k_ζ = ω_p/2 took over. The same error is the origin of the "fast
+spurious modes" behind the bubble that the next section treats by smoothing, and it made the wake after the
+first step 28 % too low (5.2 … 5.4 × 10⁻⁶ E0 for Δ = 20 … 200 c/ω_p instead of 7.35 × 10⁻⁶ from the linear theory,
+uniform plasma, n_b/n0 = 10⁻⁵, k_p σ_r = k_p σ_z = 1).
+
+**Remedy** (`numerics.predictor = zeta`, the default): j¹ of half-cell n − ½ is predicted by j⁰ there plus
+the change j¹ − j⁰ extrapolated linearly along ζ from the half-cells n + ½ (this pass) and n + 3/2 (final),
+so the error is (h ∂_ζ)²(j¹ − j⁰) instead of j¹ − j⁰. A steady wake is predicted exactly, as before. The
+R correction after the half-cell is final is unchanged. In the MPI pipeline the front rank sends j¹ − j⁰ of
+its last half-cell with the prediction it already sends; serial, OpenMP, GPU emulation and MPI (2–4 ranks,
+host and engine march) give identical results.
+
+**Passes per slice.** The prediction now depends on half-cell n + ½ of the current pass with the weight 2, so
+the passes must converge: windows of many plasma periods need `numerics.iterations = 4` (a warning above 30
+periods). Uniform plasma, weak driver, window 1000 c/ω_p (160 periods), h = 1/64 c/ω_p, max |E_z| on the axis
+(linear theory 7.35 × 10⁻⁶ E0, noise included):
+
+| Δ [c/ω_p] | 2 passes | 3 passes | 4 passes | 6 passes |
+|---|---|---|---|---|
+| 200 (16 steps) | grows ×8 per step, 2 E0 at step 9 | rises to 2.8 × 10⁻⁴, back to 8.5 × 10⁻⁶ | 8.1 … 8.3 × 10⁻⁶, flat | 8.0 … 8.3 × 10⁻⁶ |
+| 50 (40 steps) | grows ×1.8 per step | 8.2 … 8.4 × 10⁻⁶ | 8.2 … 8.3 × 10⁻⁶ | 8.1 … 8.3 × 10⁻⁶ |
+| 20 (60–80 steps) | grows ×1.4 per 5 steps | 8.2 … 8.3 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ |
+
+With up to ~20 periods (laser wakefield windows) 2 passes are enough.
+
+**Checks.**
+- `tests/long_wake.sh` (window 60 c/ω_p, Δ = 100 c/ω_p, 8 steps): the k_p amplitude of E_z on the axis is
+  3.661 × 10⁻⁷ m c ω0/e against 3.677 × 10⁻⁷ from the linear theory (Keinigs & Jones), flat from step 6 to 8;
+  with `predictor = level` it is 14 000 times larger.
+- LWFA against FBPIC (`benchmarks/lwfa_fbpic`, cold plasma, no smoothing; rms of E_z − E_z(FBPIC) at 100 µm behind
+  the bubble, 2 … 12.5 µm / in the first periods, 14 … 38 µm, in m c ω0/e):
+
+  | Δ | `level` | `zeta` |
+  |---|---|---|
+  | 2.5 µm | 0.0018 / 0.0004 | 0.0005 / 0.0005 |
+  | 1.25 µm | 0.0098 / 0.0005 | 0.0022 / 0.0005 |
+  | 5 µm | 0.0531 / 0.0048 (spikes ±0.5) | 0.0008 / 0.0004 |
+  | 5 µm, smoothing a = 2 k0⁻¹ | 0.0079 / 0.0009 | 0.0008 / 0.0005 |
+
+  The rest at Δ = 1.25 µm is the noise of electrons switching levels (`trap_advance`, next section).
+- Dense plasma (0.01 n_c, `benchmarks/laser_evolution`), cold, without smoothing, at 100 / 300 µm: laser energy
+  W/W0 0.962 / 0.726 (FBPIC 0.967 / 0.731), peak |E_x| 0.797 / 0.373 (FBPIC 0.780 / 0.331); with `level` the
+  peak |E_x| was 1.884 / 0.913. The same with 4 passes and with Δ = 1 µm.
+- `tests/regression.deck` (laser wake, 2 plasma periods, a density ramp): the laser changes by < 0.2 %, the wake
+  ahead of the bubble back by 1 … 2 %; behind it the axis caustic changes (density spike 124 → 50 n0). The
+  reference in `tests/reference` was regenerated.
+
+`numerics.predictor = level` restores the old prediction.
+
 ## Bubble closure: regularization (`plasma.smooth_length`)
 
 **Problem.** Behind the first bubble of a laser wake the on-axis E_z can show oscillations on the scale of the
 laser wavelength that FBPIC does not have (`benchmarks/lwfa_fbpic`, ζ < 13 µm at 100 µm). They come from the back
 of the bubble, where the electrons that close it converge on the axis: for a cold plasma and a perfectly
 axisymmetric driver this is a caustic, with a density that grows without bound as the cells are refined (124 n0
-on the axis in `tests/regression.deck`). Two numerical effects of the scheme act there.
+on the axis in `tests/regression.deck`). Two numerical effects of the scheme act there. (The numbers in this
+section are for the old current prediction, `numerics.predictor = level`. The fast spurious modes came mostly from
+its error; with the default `zeta` the cold plasma matches FBPIC without smoothing, see "Long plasma wakes".)
 - **Fast spurious modes.** The reduced field equations have a resonance at k_ζ = ω_p/2 where ω → ∞ (the
   dispersion relation ω = 2k_ζω_p²/(4k_ζ² − ω_p²)). The trapezoid in s maps such modes onto undamped
   modes that change sign from step to step. With the local ω_p of the density spike they fall on resolved

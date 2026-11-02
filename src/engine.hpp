@@ -82,6 +82,9 @@ class Engine {
     // the front rank's prediction at slice b (the R correction of slice b), when a rank is in front
     const std::vector<std::complex<double>>* predFrontR = nullptr;
     const std::vector<std::complex<double>>* predFrontP = nullptr;
+    // numerics.predictor = zeta: the front rank's change j^1 - j^0 of the streaming current at half-cell b
+    const std::vector<std::complex<double>>* dFrontR = nullptr;
+    const std::vector<std::complex<double>>* dFrontP = nullptr;
     bool absorbFirst = false;  // absorb slice a after the march (rank 0: slice 0)
     int iF = 0, iC = 0;        // pre-absorber values of faces >= iF, centres >= iC are kept (beam_field = mean)
     int callAfter = -1;        // after this many slices: call after() (the R message to the front rank)

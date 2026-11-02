@@ -1,0 +1,30 @@
+# Long linear plasma wake (tests/long_wake.sh): uniform plasma, weak short electron driver, a window of 60 c/omega_p
+# (~10 plasma periods), steps of 100 c/omega_p. Lengths in um; c/omega_p = 200.8486 um at 7e14 cm^-3,
+# lambda0 = lambda_p / 20 (n0 = 0.0025 n_c).
+grid {
+  lambda0       = 63.0986 um
+  m_max         = 0
+  radial_grid   = uniform
+  dr            = 20.0849 um      # 0.1 c/omega_p
+  r_max         = 1205.09 um      # 6 c/omega_p
+  dzeta         = 12.5530 um      # 1/16 c/omega_p
+  window_length = 12050.92 um     # 60 c/omega_p
+  dz            = 20084.86 um     # 100 c/omega_p
+  z_end         = 170721 um       # 8 steps
+}
+plasma {
+  density  = 7.0e14 cm^-3
+  r_max    = 1004.24 um           # 5 c/omega_p
+  ppc_r    = 4;  ppc_phi = 1
+}
+bunch {
+  name           = driver
+  charge         = 0.15 pC        # n_b / n0 = 1.05e-5: linear
+  energy         = 10 GeV
+  sigma_x        = 200.849 um     # 1 c/omega_p
+  emittance_x    = 1 um
+  sigma_z        = 200.849 um
+  zeta_center    = 11046.7 um     # 55 c/omega_p
+  macroparticles = 50000
+}
+output { dir = wake; every = 1; maps = false; particles = false }

@@ -746,7 +746,8 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `backend` | `serial` \| `openmp` \| `cuda` | `cuda` in a GPU build, else `serial` | `serial`: reference implementation, one thread. `openmp`: parallel engine on CPU threads (CPU build; threads from `OMP_NUM_THREADS`). `cuda`: parallel engine on an NVIDIA GPU (build with `-DGEMPIC_CUDA=ON`). With MPI (several ranks): `serial` or `openmp` (threads on every rank); `cuda` is not yet available with MPI. See "Backends" below |
-| `iterations` | integer | 2 | passes per slice (1 = predictor only) |
+| `iterations` | integer | 2 | passes per slice (1 = predictor only). Long plasma wakes (more than ~30 plasma periods in the window) need 4 with `predictor = zeta` (README, "Long plasma wakes") |
+| `predictor` | `zeta` \| `level` | `zeta` | prediction of j¹ of the half-cell behind a slice in its R update: `zeta` = j⁰ plus the change j¹ − j⁰ extrapolated along ζ from the two half-cells in front; `level` = j⁰ (versions ≤ 1.0; unstable in long plasma wakes) |
 | `seed` | integer | 12345 | random seed (plasma loading, bunches, ionization) |
 | `tridiag` | `auto` \| `thomas` \| `partition` | `auto` | tridiagonal solves of the field update in the parallel engine: `thomas`, one thread per azimuthal mode; `partition`, the Thomas/PCR partition method (Laszlo, Giles & Appleyard 2016) on all threads of the block. `auto` uses `partition` on the GPU and `thomas` on CPU threads. Both agree to rounding (1e-12); the serial backend always uses Thomas |
 | `beam_dz_max` | length | 10 k0⁻¹ | largest sub-step of the beam push along s |

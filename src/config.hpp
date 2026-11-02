@@ -375,6 +375,8 @@ struct NumericsConfig {
   Backend backend = Backend::Serial;
 #endif
   int iterations = 2;        // passes per slice (1 = predictor only)
+  int predictor = 1;         // j^1 of the half-cell behind a slice: 1 = zeta (j^0 + the change j^1 - j^0 extrapolated from
+                             // the two half-cells ahead), 0 = level (j^0)
   double beam_smooth_length = 0.0;  // radial smoothing of the beam current (as plasma.smooth_length); 0: off
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
   double trap_gamma = 0.0;       // ... and only if its gamma is at least this (0: any gamma)

@@ -1500,6 +1500,24 @@ void Simulation::march(double s1) {
         pushStreamParticle(p, n, s1);
       }
       smoothStream(c1s, n);
+      // numerics.predictor = zeta: j^1 of half-cell n-1 (not yet pushed) is predicted by j^0 there plus the change
+      // j^1 - j^0 extrapolated linearly from the half-cells n, n+1 of this pass. The change of the current between the
+      // levels enters R(n) with the weight Delta/4; predicted by zero (predictor = level), its error drives the plasma
+      // resonantly and grows from step to step in long wakes (README, "Long plasma wakes")
+      if (cfg.numerics.predictor == 1 && n > 0 && n + 1 < Nz) {
+        for (int m = 0; m <= M; ++m) {
+          for (int i = 0; i <= N; ++i) {
+            auto j1 = [&](int k) { return c1s.jr[c1s.f(m, k, i)]; };
+            auto j0 = [&](int k) { return c0s.jr[c0s.f(m, k, i)]; };
+            predR[m * (N + 1) + i] = c1b.jr[c1b.f(m, n - 1, i)] + j0(n - 1) + 2.0 * (j1(n) - j0(n)) - (j1(n + 1) - j0(n + 1));
+          }
+          for (int i = 0; i < N; ++i) {
+            auto j1 = [&](int k) { return c1s.jp[c1s.c(m, k, i)]; };
+            auto j0 = [&](int k) { return c0s.jp[c0s.c(m, k, i)]; };
+            predP[m * N + i] = c1b.jp[c1b.c(m, n - 1, i)] + j0(n - 1) + 2.0 * (j1(n) - j0(n)) - (j1(n + 1) - j0(n + 1));
+          }
+        }
+      }
       // field solve, all modes
       for (int m = 0; m <= M; ++m) {
         // four-point current sums, weighted by the interpolation to slice n

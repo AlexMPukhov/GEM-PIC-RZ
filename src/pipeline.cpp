@@ -87,6 +87,7 @@ class PipelineRun {
   // particles from the neighbours for the current step
   std::vector<Particle> halo, inContinue, inFinished, inTransfer;
   std::vector<cd> predRfront, predPfront;  // prediction of the front rank at slice b
+  std::vector<cd> dFrontR, dFrontP;  // numerics.predictor = zeta: the front rank's j^1 - j^0 (streaming) at half-cell b
   Currents H;                              // currents of the halo copies (half-cells below a)
   Currents Tr;                             // trapped deposits of the front rank into b-1, b-2
   Currents Rw;                             // raw beam current of the front rank, half-cells b ... b+pf-1
@@ -616,6 +617,8 @@ void PipelineRun::step(Buffer& F) {
     getSlice(B, S.fnew, b);
     predRfront = B.getVec<cd>();
     predPfront = B.getVec<cd>();
+    dFrontR = B.getVec<cd>();
+    dFrontP = B.getVec<cd>();
     getHalf(B, S.c1b, b - 1, true);  // raw beam deposits of the front rank (filtered below)
     getHalf(B, S.c1b, b - 2, true);
     getHalf(B, Tr, b - 1, false);     // its trapped deposits (added after the filter)
@@ -801,6 +804,24 @@ void PipelineRun::step(Buffer& F) {
         }
       }
       S.smoothStream(S.c1s, n);
+      // numerics.predictor = zeta (Simulation::march); half-cell b: the change sent by the front rank
+      if (num.predictor == 1 && n > 0 && n + 1 < S.Nz) {
+        const bool own = n + 1 <= b - 1;
+        for (int m = 0; m <= M; ++m) {
+          for (int i = 0; i <= N; ++i) {
+            const int idx = m * (N + 1) + i;
+            const cd c1 = (n == a && r > 0) ? predBelowR[idx] : S.c1b.jr[S.c1b.f(m, n - 1, i)];
+            const cd d1 = own ? S.c1s.jr[S.c1s.f(m, n + 1, i)] - S.c0s.jr[S.c0s.f(m, n + 1, i)] : dFrontR[idx];
+            S.predR[idx] = c1 + S.c0s.jr[S.c0s.f(m, n - 1, i)] + 2.0 * (S.c1s.jr[S.c1s.f(m, n, i)] - S.c0s.jr[S.c0s.f(m, n, i)]) - d1;
+          }
+          for (int i = 0; i < N; ++i) {
+            const int idx = m * N + i;
+            const cd c1 = (n == a && r > 0) ? predBelowP[idx] : S.c1b.jp[S.c1b.c(m, n - 1, i)];
+            const cd d1 = own ? S.c1s.jp[S.c1s.c(m, n + 1, i)] - S.c0s.jp[S.c0s.c(m, n + 1, i)] : dFrontP[idx];
+            S.predP[idx] = c1 + S.c0s.jp[S.c0s.c(m, n - 1, i)] + 2.0 * (S.c1s.jp[S.c1s.c(m, n, i)] - S.c0s.jp[S.c0s.c(m, n, i)]) - d1;
+          }
+        }
+      }
       for (int m = 0; m <= M; ++m) {
         const int nm = (n > 0) ? n - 1 : 0;  // last slice: half-cell -1 := half-cell 0 (Simulation::step)
         const double wl = zv.wLo(n), wh = zv.wHi(n);
@@ -907,6 +928,29 @@ void PipelineRun::step(Buffer& F) {
     putSlice(B, S.fnew, a);
     B.putVec(S.predRprev);  // = prediction made at slice a
     B.putVec(S.predPprev);
+    {  // numerics.predictor = zeta: j^1 - j^0 of the streaming current at half-cell a (the rear rank's slice a - 1)
+      std::vector<cd> d1r, d1p, d0r, d0p;
+      if (eng) {
+        eng->getHalfJ(Engine::C1S, a, d1r, d1p);
+        eng->getHalfJ(Engine::C0S, a, d0r, d0p);
+      } else {
+        d1r.resize(S.predR.size()); d1p.resize(S.predP.size()); d0r = d1r; d0p = d1p;
+        for (int m = 0; m <= M; ++m) {
+          for (int i = 0; i <= N; ++i) {
+            d1r[m * (N + 1) + i] = S.c1s.jr[S.c1s.f(m, a, i)];
+            d0r[m * (N + 1) + i] = S.c0s.jr[S.c0s.f(m, a, i)];
+          }
+          for (int i = 0; i < N; ++i) {
+            d1p[m * N + i] = S.c1s.jp[S.c1s.c(m, a, i)];
+            d0p[m * N + i] = S.c0s.jp[S.c0s.c(m, a, i)];
+          }
+        }
+      }
+      for (size_t i = 0; i < d1r.size(); ++i) d1r[i] -= d0r[i];
+      for (size_t i = 0; i < d1p.size(); ++i) d1p[i] -= d0p[i];
+      B.putVec(d1r);
+      B.putVec(d1p);
+    }
     putHalf(B, Snap, a - 1);  // raw beam deposits below the block
     putHalf(B, Snap, a - 2);
     putHalf(B, S.c1b, a - 1);  // deposits of the particles trapped here (c1b below a was reset after the filter)
@@ -995,7 +1039,10 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   bm.b = b;
   bm.s1 = s1;
   if (r > 0) { bm.predBelowR = &predBelowR; bm.predBelowP = &predBelowP; }
-  if (r < P - 1) { bm.predFrontR = &predRfront; bm.predFrontP = &predPfront; }
+  if (r < P - 1) {
+    bm.predFrontR = &predRfront; bm.predFrontP = &predPfront;
+    bm.dFrontR = &dFrontR; bm.dFrontP = &dFrontP;
+  }
   bm.absorbFirst = r == 0;
   bm.iF = mean ? iF : N + 1;
   bm.iC = mean ? iC : N;
