@@ -239,6 +239,9 @@ if(GEMPIC_HAVE_HDF5)
   # bunch.axis_refine: more macroparticles near the axis at the same charge density
   add_test(NAME axis_refine
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/axis_refine.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
+  # bunch.azimuthal_copies: a symmetric loading keeps the modes m >= 1 of a centred bunch at round-off
+  add_test(NAME azimuthal_copies
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/azimuthal_copies.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
   # bunch.distribution_r = function, ux_function, uy_function: a helical ring on its matched orbits
   add_test(NAME bunch_functions
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_functions.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})

@@ -1162,6 +1162,11 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   B.macroparticles = int(r.integer("macroparticles", 10000));
   if (B.macroparticles < 1) r.failKey("macroparticles", "must be >= 1");
   readShotNoise(r, B);
+  B.azimuthal_copies = int(r.integer("azimuthal_copies", 1));
+  if (B.azimuthal_copies < 1 || B.azimuthal_copies > 64) r.failKey("azimuthal_copies", "must be 1 ... 64");
+  if (B.macroparticles % (B.azimuthal_copies * (B.fawley ? B.beamlet : 1)) != 0)
+    r.failKey("macroparticles", "must be a multiple of azimuthal_copies" +
+                                    std::string(B.fawley ? " x beamlet" : ""));
 
   const double half = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
   if (B.zeta_center - half < 0 || B.zeta_center + half > g.window())
@@ -1830,6 +1835,9 @@ std::string Config::summary() const {
     if (B.fawley)
       line("        shot noise: %s beamlets of %d macroparticles at %.4g um", B.quiet ? "quiet (noise-free)" : "Fawley",
            B.beamlet, B.noise_wavelength * um);
+    if (B.azimuthal_copies > 1)
+      line("        azimuthal copies: %d per sampled particle, turned by 360/%d deg about the bunch axis (modes 1 ... %d "
+           "of the bunch vanish there)", B.azimuthal_copies, B.azimuthal_copies, B.azimuthal_copies - 1);
     if (B.axis_refine > 1)
       line("        axis refinement: %d times the macroparticles at r < %s, with 1/%d of the charge", B.axis_refine,
            B.axis_radius > 0 ? (std::to_string(B.axis_radius * um) + " um").c_str() : "4 radial cells",
