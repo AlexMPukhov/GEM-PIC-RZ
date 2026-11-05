@@ -162,6 +162,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/zgrid.hpp` | longitudinal grid of the window: slices, half-cells, location of particles, interpolation weights of the R equation |
 | `src/fields.hpp` | mode fields and currents |
 | `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step); pentadiagonal with the per-mode implicitness `numerics.theta_stiff` |
+| `src/dielectric.cpp` | the slice equations with a dielectric ε(r): polarization current, coupled pentadiagonal (B_z, E_z) system per mode |
 | `src/smoothing.*` | radial smoothing of the plasma sources (`plasma.smooth_length`): vector and scalar filters (1 − a²∇²)⁻¹ that commute with the discrete divergence |
 | `src/particles.hpp` | particle record, Boris pusher |
 | `src/simulation.*` | laser and bunch initialization, plasma loading, pushers, deposition, time step (serial reference) |
@@ -839,7 +840,83 @@ bit-identical to the code before.
 (disk-loaded structures, Bragg reflection) are missing, so the radius must change slowly on the scale of the guided
 radiation (|r_w′| ≪ 1, adiabatic tapers). The guided modes must be paraxial, k⊥ = j/r_w ≪ k. Not combined yet: a
 varying radius with `numerics.theta_stiff`; the wall with a `flying_focus` block or `laser.inject = boundary` (they
-need the absorber). Dielectric walls are not modelled.
+need the absorber). Dielectric linings: section "Dielectric media".
+
+## Dielectric media: dielectric-lined tubes, Cherenkov radiation, lasers in media
+
+The block `dielectric { … }` puts a medium of constant permittivity ε(r, z) into the field equations (layers or a
+function of r and z; `docs/input_deck.md`). With a `wall` as the metal jacket it models a dielectric wakefield
+accelerator (DWA); an open medium gives Cherenkov radiation; a laser in a gas or glass slips back by its group delay.
+
+**Why it fits the method.** With s = z a level is the plane z = s, so ε is constant along ζ on a level: one radial
+profile per step, like the wall radius. The field of a bunch at v ≈ c in a structure is synchronous (phase velocity
+c): it is stationary in the window, the march in ζ is causal for it (group velocities < c), and for such fields the
+reduced GEM system is exact (∂_s L, which the system drops, vanishes).
+
+**Equations.** The medium enters only as the polarization current J = ∂_t P = −∂_ζ(χE), χ = ε − 1:
+∂_s R = … − J_⊥ (the R update), ∂_ζ L = ½(… + J_⊥), and ε ∂_ζ E_z = −(curl B)_z + j_z. B_z is unchanged (Faraday).
+
+**Discretization.**
+- J is integrated over every half-cell with the trapezoidal rule, like L and E_z:
+  (J_n + J_{n+1})/2 = −χ(E_{n+1} − E_n)/h_n. In the L and E_z equations this is exactly the half-cell current
+  −χ(E_{n+1} − E_n)/h; in the R update J_n enters with the s-trapezoid, −Δ[(1 − θ)J⁰_n + θJ¹_n].
+- J_n is linear in E_n = (R_n + L_n)/2, so R and L of a node follow from a local 2×2 relation; the half-cell equations
+  for B_z and E_z stay linear in (E_z, B_z) of the slice. In vacuum the identities CE(Ge, (im/c)e) = 0,
+  CB((im/ρ)b, gb) = 0 decouple them; where χ changes with r, E_z and B_z of the modes m ≥ 1 couple (the physical
+  TE–TM mixing of hybrid modes). With (b₀, e₀, b₁, e₁, …) interleaved, the system of every mode is pentadiagonal; its
+  matrix is built by probing the same operator that gives the right-hand side (5 columns at a time, checked against
+  a random vector), so matrix and right-hand side agree by construction, also at the wall (`src/dielectric.cpp`).
+- J of the transverse components is a running value along ζ (zero ahead of the window): J¹ from the slices of the
+  march, J⁰ recomputed from the stored slices of s⁰. There is no extra state: checkpoints and restarts are unchanged.
+- **Stability:** a von Neumann analysis of the slab analogue (χ = 10⁻⁴ … 9, all h, Δ, k⊥, θ = k_ζh) gives |G| = 1, a
+  neutral scheme like the vacuum one. A one-sided ζ-derivative of χE in the R update (slices n, n+1, n+2) is unstable
+  (amplified at the half-cell resonance of the L/E_z march), and a centred one would need slice n−1 (a predictor).
+- Interfaces: cell average of ε for E_z, E_φ (tangential), harmonic mean for E_r (normal; D_r is continuous).
+
+**Tests (`tests/dielectric.sh`, `tests/dielectric.py`; ctest `dielectric_serial`, `dielectric_openmp`,
+`dielectric_gpu_emulation`).**
+1. ε = 1 through the dielectric solver reproduces the vacuum solver (laser in a metal tube, map identical).
+2. **Dielectric wakefield accelerator** (`tests/dielectric_dwa.deck`): vacuum channel a = 50 µm, ε = 3.8 (quartz)
+   up to the copper wall at b = 75 µm, a 100 pC, 10 µm, 5 GeV bunch offset by 10 µm, entering the structure at
+   z = 0.1 mm; dr = dζ = 0.5 µm, dz = 20 µm, 1 mm of structure. The reference is the modal theory of the synchronous
+   modes: TM₀ₙ (E_z uniform in the channel, J₀/Y₀ in the lining, matched E_z, B_φ), the loss factor
+   κ = E₀²/(4u(1 − β_g)) from the stored energy u and the power P (β_g = P/uc), and the on-axis wake
+   E_z = Q Σ 2κ_n e^{−k_n²σ²/2} cos k_n(ζ − ζ_b). For the offset (m = 1) the hybrid modes HEM₁ₙ follow from the
+   6×6 matching of E_z, B_z, E_φ, B_φ:
+
+   | mode | k theory [1/mm] | code | amplitude theory | code |
+   |---|---|---|---|---|
+   | TM₀₁ | 32.908 | 33.066 (0.5 %) | 1.2497e-4 | 1.2533e-4 (0.3 %) |
+   | TM₀₂ | 94.103 | 94.493 (0.4 %) | 5.446e-5 | 5.354e-5 (1.7 %) |
+   | TM₀₃ | 162.53 | 163.98 (0.9 %) | 1.161e-5 | 1.159e-5 (0.2 %) |
+   | HEM₁₁ (on-axis E_x) | 28.742 | 28.919 (0.6 %) | | |
+   | HEM₁₂ | 48.058 | 48.206 (0.3 %) | | |
+
+   The wavenumber error is that of the radial grid (TM₀₁, a = 50.125 µm inside a cell: 3.5, 2.0, 1.2 × 10⁻³ at
+   dr = 0.5, 0.25, 0.125 µm; the fit of 2–3 periods adds ~10⁻³).
+   **Energy flow.** The wake behind the bunch fills from the entrance at the group velocity: it ends 1506 µm behind
+   the bunch after 1 mm, against s(1/β_g − 1) = 1502 µm with the β_g = 0.3997 of the GEM system (0.3 %). Maxwell's
+   β_g is 0.3251 (P/u and the derivative of the exact dispersion relation agree), i.e. 2076 µm: the reduced system
+   drops ∂_s L, and in a dense dielectric L = (1 − ε)E_r is not small. The steady wake (wavenumbers, amplitudes) is
+   exact; filling transients and the end of the wake are those of the GEM system (TM₀₂: 0.545 vs 0.503, TM₀₃: 0.607 vs
+   0.576). Alexander's decision (2026-11-05): keep the GEM model and document this.
+3. **Cherenkov cone** (`tests/dielectric_cherenkov.deck`): a 3 µm bunch in an open ε = 2 medium: the |E_z| front lies
+   on ζ = ζ_b − r tan θ, tan θ = √(ε − 1) (cos θ = 1/n): slope 1.0081 against 1 (0.8 %).
+4. **Laser in a medium** (`tests/dielectric_laser.deck`, ε = 1.1, a wide pulse): it slips back by (n_g − 1) z with
+   n_g − 1 = 0.048811, against the scheme's dispersion 0.048803 (closed form for k⊥ → 0: ω(κ) = (2/Δ)
+   arctan((Δu/h) tan(κh/2)), u = 2χ/(4 + χ)), the GEM continuum 0.048780 and Maxwell's 0.048809.
+
+All backends agree with the serial run (OpenMP and the device engine in the GPU emulation to rounding); the
+pipelined step on one rank and MPI on 2 and 3 ranks are bit-identical to it (the running J crosses the blocks in the
+F message, the corrected L of slice b in the R message; `tests/mpi.sh`). Without a `dielectric` block the code paths
+are unchanged.
+
+**Limits.** Backward waves are outside the model: reflections at the ends of the medium, at steps and at the jacket
+in −z are missing; gratings and dielectric laser accelerators are out of scope. The energy flow of non-synchronous
+fields follows the reduced system (above). A laser in a dense medium has the index (4 + 3χ)/(4 + χ), and the step
+must resolve its dephasing, k (n − 1) Δz ≲ 1 (no gain over full PIC for lasers in glass; none needed in vapours).
+The medium has no dispersion (a bound-electron medium with a resonance is the next step). Not combined yet:
+`numerics.theta_stiff`, `numerics.beam_consistent`; the medium must stay inside `grid.r_absorber` or a wall.
 
 ## Corrections of earlier versions
 

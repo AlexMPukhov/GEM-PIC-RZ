@@ -325,6 +325,15 @@ struct WallConfig {
   double at(double z) const;                 // r_w(z), code units
 };
 
+// dielectric (block 'dielectric', several allowed): eps = epsilon in r_in <= r < r_out, z_start <= z < z_end, or
+// eps(r, z) = epsilon_function; the contributions eps - 1 of all blocks add up (s = z: one profile per level)
+struct DielectricConfig {
+  double epsilon = 1.0;
+  double r_in = 0.0, r_out = 1e300, z_start = -1e300, z_end = 1e300;  // code units
+  Expr fn;                                                             // epsilon_function(r, z)
+  double chi(double r, double z) const;                                // eps - 1 at (r, z)
+};
+
 // thin magnetic chicane at z: the beam particles move by r56 * delta - delay in zeta
 struct ChicaneConfig {
   double z = 0.0, r56 = 0.0, delay = 0.0, gamma_ref = 1.0;
@@ -417,6 +426,7 @@ struct Config {
   std::vector<MagnetConfig> magnets;    // quadrupole, plasma_lens, solenoid blocks
   std::vector<ChicaneConfig> chicanes;  // chicane blocks, sorted by z
   WallConfig wall;                      // block 'wall'
+  std::vector<DielectricConfig> dielectrics;  // blocks 'dielectric'
   std::map<std::string, double> constants;  // block 'constants' (code units)
   OutputConfig output;
   NumericsConfig numerics;

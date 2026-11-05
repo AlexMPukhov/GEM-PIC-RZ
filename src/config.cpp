@@ -268,6 +268,11 @@ double UndulatorConfig::resonance(double gamma) const {
   return period * (1.0 + kk) / (2.0 * gamma * gamma);
 }
 
+double DielectricConfig::chi(double r, double z) const {
+  if (!fn.empty()) return (z >= z_start && z < z_end) ? fn({r, z}) - 1.0 : 0.0;
+  return (z >= z_start && z < z_end && r >= r_in && r < r_out) ? epsilon - 1.0 : 0.0;
+}
+
 double WallConfig::at(double z) const {
   if (!fn.empty()) return fn({z});
   if (!z_points.empty()) return interpTable(z_points, r_points, z);
@@ -1332,6 +1337,25 @@ void readChicane(const Block& b, const Deck& d, const Units& u, ChicaneConfig& C
   if (!(C.gamma_ref > 1.0)) r.failKey(r.has("gamma") ? "gamma" : "energy", "the reference must be relativistic");
 }
 
+// block 'dielectric': a layer of constant eps (r_in <= r < r_out, z_start <= z < z_end) or eps(r, z)
+void readDielectric(const Block& b, const Deck& d, const Units& u, const GridConfig& g, DielectricConfig& D) {
+  BlockReader r(b, d, u);
+  if (r.oneOf("epsilon", "epsilon_function") == 0) {
+    D.epsilon = r.num("epsilon", Dim::None);
+    if (!(D.epsilon >= 1.0)) r.failKey("epsilon", "must be >= 1 (a dielectric without dispersion)");
+    D.r_in = r.num("r_in", Dim::Length, 0.0);
+    D.r_out = r.num("r_out", Dim::Length, 1e300);
+    if (!(D.r_in >= 0.0 && D.r_out > D.r_in)) r.failKey("r_out", "must be larger than r_in >= 0");
+  } else {
+    D.fn = r.expr("epsilon_function", {"r", "z"});
+    if (r.has("r_in") || r.has("r_out")) r.failKey("r_in", "r_in, r_out go with 'epsilon', not 'epsilon_function'");
+  }
+  D.z_start = r.num("z_start", Dim::Length, -1e300);
+  D.z_end = r.num("z_end", Dim::Length, 1e300);
+  if (!(D.z_end > D.z_start)) r.failKey("z_end", "must be larger than z_start");
+  (void)g;
+}
+
 void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig& N) {
   BlockReader r(b, d, u);
 #if defined(GEMPIC_HAVE_CUDA)
@@ -1460,7 +1484,7 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
   deck.checkBlockNames({"constants", "grid", "laser", "flying_focus", "plasma", "ion", "bunch", "undulator", "quadrupole",
-                        "plasma_lens", "solenoid", "chicane", "wall", "output", "numerics"});
+                        "plasma_lens", "solenoid", "chicane", "wall", "dielectric", "output", "numerics"});
   Config c;
   g_consts = &c.constants;  // the expressions of all blocks see the constants
   struct Reset { ~Reset() { g_consts = nullptr; } } reset;
@@ -1471,6 +1495,11 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   if (const Block* b = deck.single("constants")) readConstants(*b, deck, c.units, c.constants);
   readGrid(*grid, deck, c.units, c.grid, warn);
   if (const Block* b = deck.single("wall")) readWall(*b, deck, c.units, c.grid, c.wall);
+  for (const Block* b : deck.all("dielectric")) {
+    DielectricConfig D;
+    readDielectric(*b, deck, c.units, c.grid, D);
+    c.dielectrics.push_back(D);
+  }
   for (const Block* b : deck.all("laser")) {
     LaserConfig L;
     readLaser(*b, deck, c.units, c.grid, L, warn);
@@ -1557,6 +1586,9 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   if (c.wall.present && c.numerics.theta_stiff > 0 && (!c.wall.fn.empty() || c.wall.z_points.size() > 1))
     throw DeckError(deck.where(deck.single("wall")->line) +
                     ": a wall of varying radius cannot be combined with numerics.theta_stiff yet (a constant radius can)");
+  if (!c.dielectrics.empty() && (c.numerics.theta_stiff > 0 || c.numerics.beam_consistent))
+    throw DeckError(deck.where(deck.all("dielectric")[0]->line) +
+                    ": a dielectric cannot be combined with numerics.theta_stiff or numerics.beam_consistent yet");
   deck.checkAllUsed();
   // long plasma wakes: with the predictor zeta the passes per slice must converge (README, "Long plasma wakes")
   if (c.plasma.present && c.numerics.predictor == 1 && c.numerics.iterations < 4) {
@@ -1685,6 +1717,17 @@ std::string Config::summary() const {
            *std::max_element(wall.r_points.begin(), wall.r_points.end()) * um);
     else
       line("wall : perfectly conducting, r_w = %.4g um (absorber off)", wall.radius * um);
+  }
+  for (const auto& D : dielectrics) {
+    const std::string zr = (D.z_start > -1e299 || D.z_end < 1e299)
+                               ? " for " + std::to_string(D.z_start * um * 1e-3) + " <= z < " +
+                                     std::to_string(D.z_end * um * 1e-3) + " mm"
+                               : std::string();
+    if (!D.fn.empty())
+      line("dielectric : eps(r, z) = %s%s", D.fn.text().c_str(), zr.c_str());
+    else
+      line("dielectric : eps = %.6g for %.4g <= r < %s um%s", D.epsilon, D.r_in * um,
+           D.r_out > 1e299 ? "r_max" : std::to_string(D.r_out * um).c_str(), zr.c_str());
   }
   for (size_t i = 0; i < lasers.size(); ++i) {
     const auto& L = lasers[i];

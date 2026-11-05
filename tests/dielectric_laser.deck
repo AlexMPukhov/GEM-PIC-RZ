@@ -1,0 +1,14 @@
+# Laser in a uniform dielectric (tests/dielectric.sh): a wide pulse (w0 = 25 um, nearly a plane wave) in eps = 1.1
+# slips back in the window by (n_g - 1) z. tests/dielectric.py compares the shift with the dispersion relation of the
+# scheme (and prints the GEM continuum 2 chi/(4 + chi) and Maxwell's sqrt(1 + chi) - 1). The medium ends before
+# the radial absorber.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 2 um;  r_max = 120 um;  r_absorber = 100 um
+  dzeta = 0.025 um;  window_length = 30 um
+  dz = 0.5 um;  z_end = 200 um
+}
+laser { a0 = 0.01; waist = 25 um; length_1e = 4 um; zeta_center = 20 um; polarization = linear }
+dielectric { epsilon = 1.1; r_out = 95 um }
+output { dir = laser; every = 400; format = text; particles = false }
+numerics { backend = serial }

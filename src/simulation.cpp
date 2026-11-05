@@ -1340,7 +1340,46 @@ void Simulation::beginStep() {
   const int K0 = solver.wallK();
   setWall(s0 + Delta);  // the wall of the new level (s = z: one radius for the whole window)
   wallFrom = (solver.wallK() > K0) ? K0 : -1;
+  setDielectric(s0, s0 + Delta);
   solver.prepare(Delta, zg);
+}
+
+void Simulation::dielectricProfile(double z, std::vector<double>& chiC, std::vector<double>& chiF) const {
+  const int N = g.N, S = 64;
+  chiC.assign(N, 0.0);
+  chiF.assign(N + 1, 0.0);
+  for (int i = 0; i < N; ++i) {
+    // cell average over [rho_i, rho_{i+1}] weighted with r: S samples at the midpoints of equal areas
+    const double a = g.rho[i] * g.rho[i], b = g.rho[i + 1] * g.rho[i + 1];
+    double s = 0.0;
+    for (int k = 0; k < S; ++k) {
+      const double r = std::sqrt(a + (b - a) * (k + 0.5) / S);
+      for (const auto& D : cfg.dielectrics) s += D.chi(r, z);
+    }
+    chiC[i] = s / S;
+    if (!(chiC[i] >= 0.0))
+      throw std::runtime_error("dielectric: eps < 1 or not finite at r = " + std::to_string(g.c[i]) + " (code units)");
+  }
+  for (int i = 0; i <= N; ++i) {  // E_r is normal to the layers: harmonic mean of eps
+    if (i == 0) chiF[i] = chiC[0];
+    else if (i == N) chiF[i] = chiC[N - 1];
+    else if (chiC[i - 1] == chiC[i]) chiF[i] = chiC[i];
+    else chiF[i] = 2.0 / (1.0 / (1.0 + chiC[i - 1]) + 1.0 / (1.0 + chiC[i])) - 1.0;
+  }
+  // the absorber damps R only: the polarization of a medium inside it would not follow
+  if (!cfg.wall.present)
+    for (int i = 0; i < N; ++i)
+      if (chiC[i] != 0.0 && g.rho[i + 1] > cfg.grid.r_absorber)
+        throw std::runtime_error("dielectric: the medium reaches into the radial absorber (r > grid.r_absorber); end it "
+                                 "inside r_absorber or close the box with a wall");
+}
+
+void Simulation::setDielectric(double s0_, double s1_) {
+  if (cfg.dielectrics.empty()) return;
+  std::vector<double> c0, f0, c1, f1;
+  dielectricProfile(s0_, c0, f0);
+  dielectricProfile(s1_, c1, f1);
+  solver.setDielectric(c1, f1, c0, f0);
 }
 
 void Simulation::setWall(double s) {
@@ -1490,8 +1529,15 @@ void Simulation::march(double s1) {
   const uint64_t keyStep = ionKeyStep(cfg.numerics.seed, step_no);
   std::fill(predRprev.begin(), predRprev.end(), 0.0);
   std::fill(predPprev.begin(), predPprev.end(), 0.0);
+  const bool diel = solver.dielectric();
+  if (diel) solver.dielBegin();  // polarization current zero ahead of the window
 
   for (int n = Nz - 1; n >= 0; --n) {
+    if (diel)  // J^0 of slice n from the stored slices n, n+1 of s^0
+      for (int m = 0; m <= M; ++m)
+        solver.dielLevel0(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Lr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)],
+                          &fold.Lp[fold.c(m, n, 0)], &fold.Rr[fold.f(m, n + 1, 0)], &fold.Lr[fold.f(m, n + 1, 0)],
+                          &fold.Rp[fold.c(m, n + 1, 0)], &fold.Lp[fold.c(m, n + 1, 0)]);
     // prediction of j^1 at half-cell n-1: beam part (known) + streaming part of s^0
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i)
@@ -1622,14 +1668,31 @@ void Simulation::march(double s1) {
       for (int m = 0; m <= M; ++m) {
         for (int i = 1; i <= K; ++i) {
           cd jt = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
-          fnew.Rr[fnew.f(m, n + 1, i)] -= q * (jt - predRprev[m * (N + 1) + i]);
+          const cd dP = -q * (jt - predRprev[m * (N + 1) + i]);
+          if (diel) {  // in a medium R and L follow the local relation with the polarization current
+            double fR, fL;
+            solver.dielCorrection(solver.classOf(n + 1), true, i, fR, fL);
+            fnew.Rr[fnew.f(m, n + 1, i)] += fR * dP;
+            fnew.Lr[fnew.f(m, n + 1, i)] += fL * dP;
+          } else {
+            fnew.Rr[fnew.f(m, n + 1, i)] += dP;
+          }
         }
         for (int i = 0; i < K; ++i) {
           cd jt = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
-          fnew.Rp[fnew.c(m, n + 1, i)] -= q * (jt - predPprev[m * N + i]);
+          const cd dP = -q * (jt - predPprev[m * N + i]);
+          if (diel) {
+            double fR, fL;
+            solver.dielCorrection(solver.classOf(n + 1), false, i, fR, fL);
+            fnew.Rp[fnew.c(m, n + 1, i)] += fR * dP;
+            fnew.Lp[fnew.c(m, n + 1, i)] += fL * dP;
+          } else {
+            fnew.Rp[fnew.c(m, n + 1, i)] += dP;
+          }
         }
       }
     }
+    if (diel) solver.dielNext();
     predRprev.swap(predR);
     predPprev.swap(predP);
   }

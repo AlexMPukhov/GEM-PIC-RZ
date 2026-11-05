@@ -58,6 +58,38 @@ class FieldSolver {
   double wallAf() const { return wAf; }
   // zero the fields of one slice outside the wall (faces > K, centres >= K; E_z: centres > K, e[K] = E_z at the wall)
   void maskWall(cd* Rr, cd* Lr, cd* Rp, cd* Lp, cd* e, cd* b) const;
+  // ---- dielectric (block 'dielectric'): chi = eps - 1 of the level s^1 (chi1) and s^0 (chi0), on the centres
+  // (cell average: E_z, E_phi are tangential) and the faces (harmonic mean of the neighbouring centres: E_r is
+  // normal). The medium enters as the polarization current J = d_t P = -d_zeta (chi E), integrated over every
+  // half-cell with the trapezoidal rule like L and E_z,
+  //   (J_n + J_{n+1}) / 2 = -chi (E_{n+1} - E_n) / h_n,
+  // in the R update (s-trapezoid, weights 1 - theta, theta), in the L update (the half-cell current) and in E_z
+  // (eps d_zeta E_z). J of the transverse components is a running value along zeta (J = 0 ahead of the window):
+  // J^1 from the slices of the march, J^0 recomputed from the stored slices of s^0, so there is no extra state.
+  // With a dielectric every mode has one pentadiagonal system for (B_z, E_z) interleaved (b_0, e_0, b_1, ...):
+  // where chi varies with r, E_z and B_z of the modes m >= 1 couple (hybrid modes). chiC/chiF empty: vacuum.
+  // Returns true if the matrices change.
+  bool setDielectric(const std::vector<double>& chiC1, const std::vector<double>& chiF1,
+                     const std::vector<double>& chiC0, const std::vector<double>& chiF0);
+  bool dielectric() const { return diel; }
+  double chiC(int i) const { return dChiC1[i]; }
+  double chiF(int i) const { return dChiF1[i]; }
+  // running J at the front of a march (zero ahead of the window, or the values of the rank ahead)
+  void dielBegin();
+  // J^0 at slice n of mode m from slices n, n+1 of level s^0 (the fields R, L of both)
+  void dielLevel0(int m, int n, const cd* Rr0, const cd* Lr0, const cd* Rp0, const cd* Lp0, const cd* Rr0n,
+                  const cd* Lr0n, const cd* Rp0n, const cd* Lp0n);
+  // slice n is final: its J become the values at n+1 for the next slice
+  void dielNext();
+  // the running J at slice n+1 as one vector (J^0_r, J^0_phi, J^1_r, J^1_phi): the MPI message to the rank behind
+  void dielGet(std::vector<cd>& out) const;
+  void dielSet(const std::vector<cd>& in);
+  // the R correction of a final half-cell (predicted -> final current, change dP of the known part of R at a node)
+  // in a medium: R and L change by fR dP and fL dP (E = (R + L)/2 follows the local implicit relation)
+  void dielCorrection(int cls, bool face, int i, double& fR, double& fL) const;
+  // running J (for the MPI messages): r components (M+1)(N+1), phi components (M+1)N
+  std::vector<cd> dJ0r, dJ0p, dJ1r, dJ1p;     // values at slice n+1 (ahead)
+  std::vector<cd> dJ0rc, dJ0pc, dJ1rc, dJ1pc;  // values at slice n (being solved)
   int classes() const { return nCls; }
   int version() const { return ver; }  // increases whenever the matrices change
   int classOf(int n) const { return cls[n]; }
@@ -123,6 +155,26 @@ class FieldSolver {
   // y = Theta x (one = false) or (1 - Theta) x (one = true) on the rows of L; other entries of y are zero
   void thetaApply(Stiff& S, bool faces, int m, bool one, const cd* x, cd* y);
   void stiffSolve(Stiff& S, bool faces, int m, const cd* rhs, cd* x);  // the pentadiagonal implicit solve
+
+  // dielectric: chi per node of s^1 and s^0, matrices per class and mode (pentadiagonal, interleaved b, e)
+  bool diel = false, dielChanged = false;
+  std::vector<double> dChiC1, dChiF1, dChiC0, dChiF0;
+  std::vector<Banded5> Bd;
+  std::vector<cd> dA, dB, dAp, dBp, dEr, dEp, dRr, dLr, dRp, dLp, dPkr, dQkr, dPkp, dQkp, dE, dBb, dU, dV, dX;
+  void buildDiel();
+  // transverse fields of slice n (class h) from e (centres, e[K] = the wall value), b (faces) and the known parts
+  // Pk, Qk of R and L (null: zero): R, L, E of both components
+  void dielTransverse(int m, double h, const cd* e, const cd* b, const cd* Pkr, const cd* Qkr, const cd* Pkp,
+                      const cd* Qkp, cd* Rr, cd* Lr, cd* Rp, cd* Lp, cd* Er, cd* Ep);
+  // left-hand side of the slice equations: 16 b + 8h CE(E), 16 eps e - 8h CB(B) for the transverse fields of
+  // (e, b) without known parts
+  void dielOperator(int m, double h, const cd* e, const cd* b, cd* outE, cd* outB);
+  bool rowInE(int i) const { return i < wK; }
+  bool rowInB(int m, int i) const { return !(i > wK || (i == wK && !wNeu) || (m > 0 && i == 0)); }
+  void solveSliceDiel(int m, int n, const cd* Rr0, const cd* Lr0, const cd* Rp0, const cd* e0, const cd* b0,
+                      const cd* Rr1, const cd* Lr1, const cd* Rp1, const cd* Lp1, const cd* e1, const cd* b1,
+                      const cd* jr, const cd* jp, const cd* jz, const cd* Jr, const cd* Jp, cd* Rr, cd* Lr, cd* Rp,
+                      cd* Lp, cd* e, cd* b);
 
   // discrete operators (Section 5.2)
   void opG(const cd* e, cd* out) const;                            // centres -> faces

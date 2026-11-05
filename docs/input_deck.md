@@ -24,6 +24,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | `quadrupole`, `plasma_lens`, `solenoid` | 0 … N | transport elements: static fields acting on the particles |
 | `chicane`  | 0 … N   | thin magnetic chicane (R56, delay) applied to the beam |
 | `wall`     | 0 or 1  | perfectly conducting lateral wall r = r_w(z): waveguides, beam pipes |
+| `dielectric` | 0 … N | a medium of constant permittivity ε(r, z): dielectric-lined tubes, Cherenkov radiation, lasers in media |
 | `output`   | 0 or 1  | diagnostics                                      |
 | `numerics` | 0 or 1  | algorithm parameters                             |
 
@@ -631,6 +632,40 @@ Exactly one of the three is given. Example: `wall { z_points = 0, 2 mm; r_points
 - **Limits:** backward waves are not described (∂_s L is dropped), so reflections at steps, irises or corrugations are
   missing: the wall must vary slowly on the scale of the radiation it guides (adiabatic tapers, |r_w′| ≪ 1).
   A radius that varies cannot yet be combined with `numerics.theta_stiff` (a constant radius can).
+
+## `dielectric` (0 … N blocks)
+
+A medium of constant (non-dispersive) permittivity ε: the lining of a dielectric wakefield accelerator (with a `wall`
+as the metal jacket), a dielectric capillary, an open medium for Cherenkov radiation, a laser in glass or a gas.
+With s = z a level is the plane z = s, so ε(r) is one radial profile per step, taken at the level s¹ (and s⁰ for
+the old level). The contributions ε − 1 of all blocks add up.
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `epsilon` | number ≥ 1 | — | ε of a layer r_in ≤ r < r_out |
+| `r_in`, `r_out` | length | 0, r_max | radial extent of the layer (with `epsilon`) |
+| `epsilon_function` | function of r, z | — | ε(r, z) instead of a layer (≥ 1 everywhere) |
+| `z_start`, `z_end` | length | −∞, +∞ | the medium is present for z_start ≤ z < z_end (both forms) |
+
+Exactly one of `epsilon`, `epsilon_function` is given. Example, a quartz-lined copper tube from z = 0.1 mm:
+`wall { radius = 75 um }` and `dielectric { epsilon = 3.8; r_in = 50 um; r_out = 75 um; z_start = 0.1 mm }`.
+
+- **Interfaces:** ε of a centre (E_z, E_φ: tangential to r = const) is the average over the cell (64 equal-area
+  samples); ε of a face (E_r, normal) is the harmonic mean of the two neighbouring centres. A layer boundary on a face
+  is exact; inside a cell it converges with dr.
+- **Radial grid:** the transverse wavenumber in the medium is k √(ε − 1) for a synchronous (v = c) field: keep
+  k⊥ dr ≲ 1 there, also for the Cherenkov cone (README, rules for flexible radial grids).
+- **Radial absorber:** the medium must end inside `grid.r_absorber` (the absorber damps R only), or close the box with
+  a `wall` (checked at every step).
+- **Bunches** start with their vacuum co-moving field: let them start ahead of the medium (`z_start` of the block)
+  and enter it.
+- **Validity (GEM model, ∂_s L dropped):** synchronous fields (wake modes with phase velocity c, Cherenkov radiation of
+  a v = c bunch) are exact; the energy flow of non-synchronous fields is that of the reduced system (for a quartz
+  tube the TM₀₁ wake fills behind the bunch with β_g = 0.40 instead of Maxwell's 0.33); a laser has the index
+  (4 + 3χ)/(4 + χ) instead of √(1 + χ) (χ = ε − 1: equal to O(χ²), 1.6 % off for glass). The step must resolve the
+  dephasing of a laser, k (n − 1) Δz ≲ 1. Reflections at the ends of the medium and at steps are missing.
+  README, section "Dielectric media".
+- **Not combined yet:** `numerics.theta_stiff`, `numerics.beam_consistent`.
 
 ## `output` (0 or 1 block)
 

@@ -85,6 +85,9 @@ class Engine {
     // numerics.predictor = zeta: the front rank's change j^1 - j^0 of the streaming current at half-cell b
     const std::vector<std::complex<double>>* dFrontR = nullptr;
     const std::vector<std::complex<double>>* dFrontP = nullptr;
+    // dielectric: the running polarization currents at slice b from the front rank (FieldSolver::dielGet layout);
+    // none: zero ahead of the window
+    const std::vector<std::complex<double>>* dielFront = nullptr;
     bool absorbFirst = false;  // absorb slice a after the march (rank 0: slice 0)
     int iF = 0, iC = 0;        // pre-absorber values of faces >= iF, centres >= iC are kept (beam_field = mean)
     int callAfter = -1;        // after this many slices: call after() (the R message to the front rank)
@@ -95,6 +98,8 @@ class Engine {
   // beam current is deposited into c1b), slower ones in sim.pendingNext; sim.predRprev / predPprev: the
   // prediction made at slice a; sim.freedCharge
   void marchBlock(const BlockMarch& bm);
+  // dielectric: the running polarization currents at slice n after the march (FieldSolver::dielGet layout)
+  void dielJ(int n, std::vector<std::complex<double>>& out);
   std::vector<Particle> trapped(size_t from = 0);  // particles trapped so far in this march (index >= from)
   // values of the absorber layer before the radial absorber, per absorbed slice (layout of PipelineRun::preAbs)
   bool preAbsorber(int n, std::vector<std::complex<double>>& out);

@@ -156,6 +156,10 @@ class Simulation {
   // R_phi, L_phi stay 0 (E_phi is tangential).
   int wallFrom = -1;
   void extendWall(Fields& F) const;
+  // dielectric (blocks 'dielectric'): chi = eps - 1 of the level z on the centres (cell average, equal-area samples)
+  // and the faces (harmonic mean of the neighbouring centres); setDielectric passes the levels s^0, s^1 to the solver
+  void dielectricProfile(double z, std::vector<double>& chiC, std::vector<double>& chiF) const;
+  void setDielectric(double s0_, double s1_);
 
   void initLasers();
   // flying focus (cfg.flying_focus): incident field G_c(r, zeta) of every component c at s = 0 on the faces

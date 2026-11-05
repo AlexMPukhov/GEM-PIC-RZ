@@ -131,7 +131,7 @@ bool FieldSolver::prepare(double D_, const ZetaGrid& zg) {
     }
     nCls = int(hCls.size());
   }
-  if (!newWindow && D_ == D && !wallChanged) return false;
+  if (!newWindow && D_ == D && !wallChanged && !dielChanged) return false;
   D = D_;
   wallChanged = false;
   ++ver;
@@ -249,6 +249,8 @@ bool FieldSolver::prepare(double D_, const ZetaGrid& zg) {
       }
     }
   }
+  if (diel) buildDiel();
+  dielChanged = false;
   return true;
 }
 
@@ -336,6 +338,10 @@ void FieldSolver::solveSlice(int m, int n, const cd* Rr0, const cd* Lr0, const c
                              const cd* Lr1, const cd* Rp1, const cd* Lp1, const cd* e1, const cd* b1, const cd* jr,
                              const cd* jp, const cd* jz, const cd* Jr, const cd* Jp, cd* Rr, cd* Lr, cd* Rp,
                              cd* Lp, cd* e, cd* b) {
+  if (diel) {
+    solveSliceDiel(m, n, Rr0, Lr0, Rp0, e0, b0, Rr1, Lr1, Rp1, Lp1, e1, b1, jr, jp, jz, Jr, Jp, Rr, Lr, Rp, Lp, e, b);
+    return;
+  }
   const cd im(0.0, double(m));
   const auto& c = g->c;
   const double h = hs[n];
