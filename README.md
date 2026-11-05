@@ -190,7 +190,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
-| `tests/mpi_events.sh` | MPI synchronization points: `bunch.z_start` on 1–4 ranks (also mean-field push, restarts, device march) = serial |
+| `tests/mpi_events.sh` | MPI synchronization points: `bunch.z_start` and a thin chicane on 1–4 ranks (also mean-field push, restarts, device march) = serial |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
@@ -255,7 +255,7 @@ a pipeline: rank q computes step k while rank q+1 already computes step k+1.
   on every beam particle pairs its two pushes across ranks, so that the rule of the serial code holds (a particle
   the second push would lose keeps its first-push state). The output of step k follows its second push; the last
   step takes one extra exchange.
-- **Synchronization points** (`bunch.z_start`): an event at the end of a step that acts on the whole beam stops
+- **Synchronization points** (thin `chicane`, `bunch.z_start`): an event at the end of a step that acts on the whole beam stops
   the pipeline there. All ranks finish the step (with its second push for `beam_field = mean`), as at the end of a
   run; the beam lists and the random generator of the front rank are gathered on every rank, the event is applied
   as in the serial code (the bunch self-field is solved across the ranks, as at the start), every rank takes its
@@ -292,7 +292,11 @@ code 3).
 - **Synchronization points (`tests/mpi_events.sh`, ctest `mpi_events`):** the witness of the regression deck
   loaded with `bunch.z_start` at step 2 into the wake: the pipelined step on one rank equals the serial run to all
   digits; 2, 3, 4 ranks, `beam_field = mean`, checkpoints before and after the loading (3 → 2 ranks) and the device
-  march (GPU emulation, 3 ranks) agree with the serial run to all printed digits.
+  march (GPU emulation, 3 ranks) agree with the serial run to all printed digits. A thin chicane (R56 = 100 µm,
+  delay 10 µm) moves the chirped bunch of `tests/transport.sh` 10 µm back, across the block boundaries of 2–4 ranks:
+  `bunches.txt` of every step and the axis fields before, at and after the chicane agree with the serial run to all
+  printed digits, also with `beam_field = mean`, across checkpoints before and after the chicane (3 → 2 ranks) and on
+  the device (GPU emulation, 3 ranks).
 - **Hard case:** the ionization-injection example at a0 = 2.5 on 3 ranks (13 steps: trapping, re-streaming of 1936 particles, field ionization). `bunches.txt` and `ionization.txt` are identical to the serial run, and the axis fields agree to rounding.
 
 **Current limits:**
