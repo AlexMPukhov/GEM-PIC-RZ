@@ -174,6 +174,10 @@ if(GEMPIC_HAVE_MPI AND GEMPIC_HAVE_HDF5)
   add_test(NAME mpi_pipeline
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mpi.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
             ${MPIEXEC_EXECUTABLE} ${MPIEXEC_PREFLAGS})
+  # synchronization points of the pipeline: bunch.z_start (and chicanes) on 1-4 ranks = serial
+  add_test(NAME mpi_events
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mpi_events.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
+            ${MPIEXEC_EXECUTABLE} ${MPIEXEC_PREFLAGS})
 endif()
 
 # HDF5 output and checkpoint / restart
