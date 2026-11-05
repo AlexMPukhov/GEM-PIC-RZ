@@ -88,6 +88,7 @@ class PipelineRun {
   std::vector<Particle> halo, inContinue, inFinished, inTransfer;
   std::vector<cd> predRfront, predPfront;  // prediction of the front rank at slice b
   std::vector<cd> dielFront;               // dielectric: the front rank's running polarization currents at slice b
+  std::vector<double> boundFront;          // bound electrons: the front rank's medium state at slice b (both levels)
   std::vector<cd> dFrontR, dFrontP;  // numerics.predictor = zeta: the front rank's j^1 - j^0 (streaming) at half-cell b
   Currents H;                              // currents of the halo copies (half-cells below a)
   Currents Tr;                             // trapped deposits of the front rank into b-1, b-2
@@ -630,6 +631,7 @@ void PipelineRun::step(Buffer& F) {
     Buffer& B = F;
     getSlice(B, S.fnew, b);
     if (S.solver.dielectric()) dielFront = B.getVec<cd>();  // running J^0, J^1 at slice b
+    if (S.bound.on) boundFront = B.getVec<double>();          // bound electrons: atoms of both levels at slice b
     predRfront = B.getVec<cd>();
     predPfront = B.getVec<cd>();
     dFrontR = B.getVec<cd>();
@@ -788,6 +790,10 @@ void PipelineRun::step(Buffer& F) {
     if (r < P - 1) S.solver.dielSet(dielFront);
     else S.solver.dielBegin();
   }
+  if (S.bound.on) {  // bound electrons: atom densities of the levels; the atoms at slice b from the front rank
+    S.boundBegin(S.s0, s1);
+    if (r < P - 1) S.bound.setState(boundFront);
+  }
   if (eng) deviceMarch(k, s1, newForFront, transferDown);
   else for (int n = b - 1; n >= a; --n) {
     if (diel)  // J^0 of slice n (Simulation::march)
@@ -797,6 +803,7 @@ void PipelineRun::step(Buffer& F) {
                             &fo.Lp[fo.c(m, n, 0)], &fo.Rr[fo.f(m, n + 1, 0)], &fo.Lr[fo.f(m, n + 1, 0)],
                             &fo.Rp[fo.c(m, n + 1, 0)], &fo.Lp[fo.c(m, n + 1, 0)]);
       }
+    if (S.bound.on) S.bound.level0(n, zv.len(n), S.fold);  // J^0 of the bound electrons (Simulation::march)
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i) {
         const cd c1 = (n == a && r > 0) ? predBelowR[m * (N + 1) + i]
@@ -849,6 +856,7 @@ void PipelineRun::step(Buffer& F) {
           }
         }
       }
+      if (S.bound.on) S.bound.level1(n, zv.len(n), S.fnew, false);  // medium current with the fields of this pass
       for (int m = 0; m <= M; ++m) {
         const int nm = (n > 0) ? n - 1 : 0;  // last slice: half-cell -1 := half-cell 0 (Simulation::step)
         const double wl = zv.wLo(n), wh = zv.wHi(n);
@@ -870,6 +878,19 @@ void PipelineRun::step(Buffer& F) {
           S.jp1[i] = S.c1b.jp[S.c1b.c(m, n, i)] + S.c1s.jp[S.c1s.c(m, n, i)];
           S.jz1[i] = S.c1b.jz[S.c1b.c(m, n, i)] + S.c1s.jz[S.c1s.c(m, n, i)];
         }
+        if (S.bound.on) {  // (Simulation::march)
+          const double th = S.cfg.numerics.theta;
+          for (int i = 0; i <= N; ++i) {
+            const size_t k = size_t(m) * (N + 1) + i;
+            S.Jr[i] += 4.0 * ((1.0 - th) * S.bound.J0r[k] + th * S.bound.J1r[k]);
+            S.jr1[i] += S.bound.Hr[k];
+          }
+          for (int i = 0; i < N; ++i) {
+            const size_t k = size_t(m) * N + i;
+            S.Jp[i] += 4.0 * ((1.0 - th) * S.bound.J0p[k] + th * S.bound.J1p[k]);
+            S.jp1[i] += S.bound.Hp[k];
+          }
+        }
         Fields& fo = S.fold;
         Fields& fn = S.fnew;
         S.solver.solveSlice(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Lr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)], &fo.Ez[fo.c(m, n, 0)],
@@ -878,6 +899,24 @@ void PipelineRun::step(Buffer& F) {
                             &fn.Bz[fn.f(m, n + 1, 0)], S.jr1.data(), S.jp1.data(), S.jz1.data(), S.Jr.data(),
                             S.Jp.data(), &fn.Rr[fn.f(m, n, 0)], &fn.Lr[fn.f(m, n, 0)], &fn.Rp[fn.c(m, n, 0)],
                             &fn.Lp[fn.c(m, n, 0)], &fn.Ez[fn.c(m, n, 0)], &fn.Bz[fn.f(m, n, 0)]);
+      }
+    }
+    if (S.bound.on) {  // slice n is final: commit the atoms, correct R, L of slice n (Simulation::march)
+      const std::vector<cd> j1r = S.bound.J1r, j1p = S.bound.J1p, hr = S.bound.Hr, hp = S.bound.Hp;
+      S.bound.level1(n, zv.len(n), S.fnew, true);
+      const double qR = Delta * S.cfg.numerics.theta, qL = 0.5 * zv.len(n);
+      const int K = S.solver.wallK();
+      for (int m = 0; m <= M; ++m) {
+        for (int i = 1; i <= K; ++i) {
+          const size_t kk = size_t(m) * (N + 1) + i;
+          S.fnew.Rr[S.fnew.f(m, n, i)] -= qR * (S.bound.J1r[kk] - j1r[kk]);
+          S.fnew.Lr[S.fnew.f(m, n, i)] -= qL * (S.bound.Hr[kk] - hr[kk]);
+        }
+        for (int i = 0; i < K; ++i) {
+          const size_t kk = size_t(m) * N + i;
+          S.fnew.Rp[S.fnew.c(m, n, i)] -= qR * (S.bound.J1p[kk] - j1p[kk]);
+          S.fnew.Lp[S.fnew.c(m, n, i)] -= qL * (S.bound.Hp[kk] - hp[kk]);
+        }
       }
     }
     for (const auto& e : S.born) S.freedCharge[ionizedIndex(e.sp)] += e.w;
@@ -975,6 +1014,11 @@ void PipelineRun::step(Buffer& F) {
       if (eng) eng->dielJ(a, J);
       else S.solver.dielGet(J);
       B.putVec(J);
+    }
+    if (S.bound.on) {  // the atoms of both levels at slice a for the march of the rear rank
+      std::vector<double> st;
+      S.bound.getState(st);
+      B.putVec(st);
     }
     B.putVec(S.predRprev);  // = prediction made at slice a
     B.putVec(S.predPprev);

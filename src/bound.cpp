@@ -16,7 +16,8 @@ constexpr double ALPHA_INV = 137.035999084;
 constexpr double A0_UM = 5.29177210903e-5;  // Bohr radius [um]
 }  // namespace
 
-void BoundMedium::setup(const BoundElectronsConfig& c, const RadialGrid& grid, int M_, double lambda0_um) {
+void BoundMedium::setup(const BoundElectronsConfig& c, const RadialGrid& grid, int M_, const Units& u, double T) {
+  const double lambda0_um = u.lambda0_um;
   on = c.present;
   if (!on) return;
   cfg = c;
@@ -33,6 +34,12 @@ void BoundMedium::setup(const BoundElectronsConfig& c, const RadialGrid& grid, i
   }
   L.T1 = c.T1;
   L.T2 = c.T2;
+  ion = c.ionIndex >= 0;
+  if (ion) {
+    adkL[0].setup({c.ip_ground_eV}, 0, 1, u, T);
+    for (int j = 0; j < c.lines; ++j) adkL[j + 1].setup({c.ip_excited_eV[j]}, 0, 1, u, T);
+  }
+  if (M > 63) throw std::runtime_error("bound_electrons: m_max must be < 64");
   cs.resize(nphi);
   sn.resize(nphi);
   for (int k = 0; k < nphi; ++k) {
@@ -48,11 +55,11 @@ void BoundMedium::setup(const BoundElectronsConfig& c, const RadialGrid& grid, i
   na0.assign(N, 0.0); na1.assign(N, 0.0);
 }
 
-void BoundMedium::begin(double s0, double s1, int K) {
+void BoundMedium::begin(const std::vector<double>& a0, const std::vector<double>& a1, int K) {
   nc = 0;
   for (int i = 0; i < N && i < K; ++i) {
-    na0[i] = cfg.densityAt(g->c[i], s0);
-    na1[i] = cfg.densityAt(g->c[i], s1);
+    na0[i] = a0[i];
+    na1[i] = a1[i];
     if (na0[i] > 0 || na1[i] > 0) nc = i + 1;
   }
   for (int i = nc; i < N; ++i) na0[i] = na1[i] = 0.0;
@@ -131,7 +138,9 @@ void BoundMedium::level0(int n, double h, const Fields& fold) {
       const size_t j = size_t(i) * nphi + k;
       if (na0[i] == 0.0) { Jx[j] = 0.0; continue; }
       const double P1 = blochP(L, st0[j]);
-      blochStep(L, st0[j], Ex0[j], Exa[j], h);
+      double g0 = 0, g1 = 0, g2 = 0;
+      if (ion) rates(Ex0[j], Exa[j], g0, g1, g2);
+      blochStep(L, st0[j], Ex0[j], Exa[j], h, g0, g1, g2);
       // slice current by the trapezoidal rule over the half-cell (as the dielectric): (J_n + J_{n+1})/2 = d P / h
       Jx[j] = 2.0 * na0[i] * (blochP(L, st0[j]) - P1) / h - Jr0[j];
       Jr0[j] = Jx[j];
@@ -149,7 +158,9 @@ void BoundMedium::level1(int n, double h, const Fields& fnew, bool commit) {
       if (na1[i] == 0.0) { Jx[j] = 0.0; Hx[j] = 0.0; continue; }
       BlochNode s = st1[j];
       const double P1 = blochP(L, s);
-      blochStep(L, s, Ex1[j], Exa[j], h);
+      double g0 = 0, g1 = 0, g2 = 0;
+      if (ion) rates(Ex1[j], Exa[j], g0, g1, g2);
+      blochStep(L, s, Ex1[j], Exa[j], h, g0, g1, g2);
       Hx[j] = na1[i] * (blochP(L, s) - P1) / h;
       Jx[j] = 2.0 * Hx[j] - Jr1[j];
       tmp1[j] = s;
@@ -158,10 +169,25 @@ void BoundMedium::level1(int n, double h, const Fields& fnew, bool commit) {
   project(Jx, J1r.data(), J1p.data());
   project(Hx, Hr.data(), Hp.data());
   if (commit) {
-    if (n == 0) {  // diagnostic: excited population on the axis (centre 0, mean over the angles) at the rear
-      double e = 0.0;
-      for (int k = 0; k < nphi; ++k) e += tmp1[size_t(k)].p1 + tmp1[size_t(k)].p2;
+    if (n == 0) {  // diagnostics at the rear: excited population and neutral fraction on the axis (centre 0, mean
+                   // over the angles), area mean of the neutral fraction over the medium
+      double e = 0.0, t = 0.0, tw = 0.0, w = 0.0;
+      for (int k = 0; k < nphi; ++k) {
+        e += tmp1[size_t(k)].p1 + tmp1[size_t(k)].p2;
+        t += tmp1[size_t(k)].p0 + tmp1[size_t(k)].p1 + tmp1[size_t(k)].p2;
+      }
+      for (int i = 0; i < nc; ++i) {
+        if (na1[i] == 0.0) continue;
+        const double a = na1[i] * g->Ac[i];
+        for (int k = 0; k < nphi; ++k) {
+          const BlochNode& q = tmp1[size_t(i) * nphi + k];
+          tw += a * (q.p0 + q.p1 + q.p2);
+          w += a;
+        }
+      }
       exAxis = nc > 0 ? e / nphi : 0.0;
+      nuAxis = nc > 0 ? t / nphi : 1.0;
+      nuMean = w > 0 ? tw / w : 1.0;
     }
     std::swap(st1, tmp1);
     for (int i = 0; i < nc; ++i)
@@ -170,6 +196,28 @@ void BoundMedium::level1(int n, double h, const Fields& fnew, bool commit) {
       for (int k = 0; k < nphi; ++k) Ex1[size_t(i) * nphi + k] = Exa[size_t(i) * nphi + k];
     exMax = ex;
   }
+}
+
+void BoundMedium::rates(double E0, double E1, double& g0, double& g1, double& g2) const {
+  const double a0 = std::fabs(E0), a1 = std::fabs(E1);  // |E| of the scalar model: the laser component
+  g0 = 0.5 * (adkL[0].rate(0, a0) + adkL[0].rate(0, a1));
+  g1 = 0.5 * (adkL[1].rate(0, a0) + adkL[1].rate(0, a1));
+  g2 = L.n > 1 ? 0.5 * (adkL[2].rate(0, a0) + adkL[2].rate(0, a1)) : 0.0;
+}
+
+void BoundMedium::populations(double x, double y, double& p0, double& p1, double& p2) const {
+  p0 = 1.0; p1 = 0.0; p2 = 0.0;
+  const double r = std::sqrt(x * x + y * y);
+  const auto it = std::upper_bound(g->rho.begin(), g->rho.end(), r);
+  const int i = int(it - g->rho.begin()) - 1;
+  if (i < 0 || i >= nc || na1[i] == 0.0) return;
+  double ph = std::atan2(y, x);
+  if (ph < 0) ph += 2.0 * M_PI;
+  const int k = int(std::lround(ph / (2.0 * M_PI) * nphi)) % nphi;
+  const BlochNode& q = st1[size_t(i) * nphi + k];
+  const double t = q.p0 + q.p1 + q.p2;
+  if (!(t > 0)) return;
+  p0 = q.p0 / t; p1 = q.p1 / t; p2 = q.p2 / t;
 }
 
 void BoundMedium::getState(std::vector<double>& out) const {

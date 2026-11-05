@@ -1393,8 +1393,13 @@ void readBound(const Block& b, const Deck& d, const Units& u, const GridConfig& 
     B.dipole[j] = std::sqrt(fs[j] * 27.211386 / (2.0 * 1.2398420 / lam[j]));
     B.ip_excited_eV[j] = ipx.size() > size_t(j) ? ipx[j] : 0.0;
   }
-  B.density = r.num("density", Dim::Density);
-  if (!(B.density > 0)) r.failKey("density", "must be > 0");
+  B.ion = r.str("ion", "");
+  if (B.ion.empty()) {
+    B.density = r.num("density", Dim::Density);
+    if (!(B.density > 0)) r.failKey("density", "must be > 0");
+  } else if (r.has("density")) {
+    r.failKey("density", "with 'ion' the atom density is that of the ion species");
+  }
   B.r_out = r.num("r_out", Dim::Length, 1e300);
   B.z_start = r.num("z_start", Dim::Length, -1e300);
   B.z_end = r.num("z_end", Dim::Length, 1e300);
@@ -1570,6 +1575,20 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     readIon(*b, deck, c.units, c.plasma, I, warn);
     fsum += I.fraction();
     c.ions.push_back(I);
+  }
+  if (c.bound.present && !c.bound.ion.empty()) {  // bound electrons of an ion species: the neutral atoms ionize
+    const Block* bb = deck.single("bound_electrons");
+    auto& B = c.bound;
+    for (size_t s = 0; s < c.ions.size(); ++s)
+      if (c.ions[s].name == B.ion) B.ionIndex = int(s);
+    if (B.ionIndex < 0) throw DeckError(deck.where(bb->line) + ": bound_electrons.ion = '" + B.ion + "' is no ion block");
+    const IonConfig& I = c.ions[size_t(B.ionIndex)];
+    if (I.Z != 0 || !I.ionization)
+      throw DeckError(deck.where(bb->line) + ": bound_electrons.ion needs neutral atoms with field ionization "
+                      "(ion block with charge_state = 0, ionization = true)");
+    // ground state = the first ionization energy of the species; excited states: minus the photon energy
+    B.ip_ground_eV = I.ip_eV[0];
+    for (int j = 0; j < B.lines; ++j) B.ip_excited_eV[j] = B.ip_ground_eV - 1.2398420 * B.omega[j] / c.units.lambda0_um;
   }
   if (!c.plasma.free_electrons && fsum > 0.0) {
     throw DeckError(deck.where(deck.single("plasma")->line) +

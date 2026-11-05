@@ -65,11 +65,11 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   solver.setup(g, M);
   solver.theta = cfg.numerics.theta;
   solver.thetaStiff = cfg.numerics.theta_stiff;
-  bound.setup(cfg.bound, g, M, cfg.units.lambda0_um);
+  bound.setup(cfg.bound, g, M, cfg.units, 2.0 * zv.node(Nz));
   if (bound.on) {
-    if (sb) throw std::runtime_error("bound_electrons: not yet available in the MPI pipeline (run on one rank)");
-    if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial)
-      throw std::runtime_error("bound_electrons: only numerics.backend = serial yet");
+    if (cfg.numerics.backend == NumericsConfig::Backend::Cuda || std::getenv("GEMPIC_PIPELINE_ENGINE"))
+      throw std::runtime_error("bound_electrons: not yet on the device engine (numerics.backend = cuda); use serial or "
+                               "openmp (one rank: the threaded host march, also with MPI)");
   }
   if (cfg.numerics.beam_consistent) bflux.initRange(M, Nz, g.N, blk.sa, blk.sb);
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
@@ -137,7 +137,13 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
     trimTables();
   }
   beginStep();  // matrices of the first step (the engine uploads them)
-  if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial) engine = std::make_unique<Engine>(*this);
+  if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial) {
+    if (bound.on)  // the bound electrons are not yet on the engine: the host march
+      std::printf("bound_electrons: the parallel engine does not have the medium yet: the host march runs (serial; "
+                  "with MPI or GEMPIC_PIPELINE=1 the particles are pushed by the OpenMP threads)\n");
+    else
+      engine = std::make_unique<Engine>(*this);
+  }
 }
 
 Simulation::~Simulation() = default;
@@ -1319,8 +1325,16 @@ void Simulation::ionize(Particle& p, double E1, double E0, double dt, std::vecto
   unsigned draw = 0;
   double tleft = dt;
   const int Z0 = p.Zi;
+  // bound electrons of this species: the neutral atom ionizes with the rates of its levels weighted by the
+  // populations of the medium at its position (ground: the same table)
+  const bool mixed = bound.ionizing() && s == cfg.bound.ionIndex;
+  double pg = 1.0, pe1 = 0.0, pe2 = 0.0;
+  if (mixed && p.Zi == 0) bound.populations(p.x, p.y, pg, pe1, pe2);
   while (p.Zi < R.zmax()) {
-    const double w = 0.5 * (R.rate(p.Zi, E1) + R.rate(p.Zi, E0));
+    double w = 0.5 * (R.rate(p.Zi, E1) + R.rate(p.Zi, E0));
+    if (mixed && p.Zi == 0)
+      w = pg * w + pe1 * 0.5 * (bound.rateLevel(1, E1) + bound.rateLevel(1, E0)) +
+          pe2 * 0.5 * (bound.rateLevel(2, E1) + bound.rateLevel(2, E0));
     if (!(w > 0.0)) break;
     const double tw = -std::log(1.0 - uniform01(base + draw++)) / w;
     if (tw > tleft) break;
@@ -1387,6 +1401,24 @@ void Simulation::setDielectric(double s0_, double s1_) {
   dielectricProfile(s0_, c0, f0);
   dielectricProfile(s1_, c1, f1);
   solver.setDielectric(c1, f1, c0, f0);
+}
+
+void Simulation::boundBegin(double sa, double sb) {  // atom densities of the levels s^0 = sa, s^1 = sb
+  std::vector<double> a0(g.N, 0.0), a1(g.N, 0.0);
+  const auto& B = cfg.bound;
+  for (int i = 0; i < g.N; ++i) {
+    const double r = g.c[i];
+    if (B.ionIndex < 0) {
+      a0[i] = B.densityAt(r, sa);
+      a1[i] = B.densityAt(r, sb);
+    } else {  // the atoms of the ion species (its own profile or atoms x the plasma profile)
+      const IonConfig& I = cfg.ions[size_t(B.ionIndex)];
+      auto na = [&](double z) { return I.own ? I.prof.density(r, z) : I.atoms * cfg.plasma.density(r, z); };
+      a0[i] = (r < B.r_out) ? na(sa) : 0.0;
+      a1[i] = (r < B.r_out) ? na(sb) : 0.0;
+    }
+  }
+  bound.begin(a0, a1, solver.wallK());
 }
 
 void Simulation::setWall(double s) {
@@ -1538,7 +1570,7 @@ void Simulation::march(double s1) {
   std::fill(predPprev.begin(), predPprev.end(), 0.0);
   const bool diel = solver.dielectric();
   if (diel) solver.dielBegin();  // polarization current zero ahead of the window
-  if (bound.on) bound.begin(s0, s1, solver.wallK());  // bound electrons: fresh atoms ahead of the window
+  if (bound.on) boundBegin(s0, s1);  // bound electrons: fresh atoms ahead of the window
 
   for (int n = Nz - 1; n >= 0; --n) {
     if (diel)  // J^0 of slice n from the stored slices n, n+1 of s^0

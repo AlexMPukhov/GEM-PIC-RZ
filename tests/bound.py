@@ -70,7 +70,8 @@ def linear(a):
     dh = sg * ph - refh
     dh -= 2 * np.pi * np.round(np.mean(dh) / (2 * np.pi))
     eh = np.sqrt(np.mean(dh**2)) / np.max(np.abs(ref))
-    ea = np.max(np.abs(amp - 1))
+    core = np.abs(A[sel]) > 0.3 * np.abs(A).max()  # amplitude: inside the band (the edges carry little energy)
+    ea = np.max(np.abs(amp[core] - 1))
     print("  band kappa = %.4f ... %.4f k0, chi = %.3e ... %.3e; phase (n - 1) kappa z = %.4f ... %.4f rad"
           % (kap[sel].min(), kap[sel].max(), c.min(), c.max(), ref.min(), ref.max()))
     print("  rms phase difference / max phase: Lorentz %.2e, discrete chi_h %.2e; max | |ratio| - 1 | = %.1e"
@@ -144,6 +145,88 @@ def static(a):
     return 0 if err < tol else 1
 
 
+def adk_code(U_eV, E_code, lam0):
+    """ADK rate (ionization.hpp: s-state, Z after = 1, capped at its maximum) [1/omega0] in the field E [m c omega0/e]"""
+    from math import gamma
+    UH, Ea, wa = 13.605693122994, 5.14220674763e11, 4.1341373335e16
+    w0 = 2 * np.pi * 299792458.0 / (lam0 * 1e-6)
+    Eunit = 9.1093837015e-31 * 299792458.0 * w0 / 1.602176634e-19
+    E = np.abs(np.asarray(E_code, dtype=float)) * Eunit
+    ns = np.sqrt(UH / U_eV)
+    C2 = 2 ** (2 * ns) / (ns * gamma(ns + 1) * gamma(ns))
+    x = (U_eV / UH) ** 1.5 * Ea
+    Epk = (2.0 / 3.0) * x / (2 * ns - 1)
+    Ee = np.minimum(np.maximum(E, 1e-30), Epk)
+    w = wa * C2 * (U_eV / (2 * UH)) * (2 * x / Ee) ** (2 * ns - 1) * np.exp(-(2.0 / 3.0) * x / Ee)
+    return np.where(E > 0, w / w0, 0.0)
+
+
+def vsystem(E, dt, lines, ips, lam0):
+    """V-type atom (ground, excited lines) with ADK losses per level in the field samples E (time order), RK4 with the
+    field refined 8x (band-limited): returns the final density matrix"""
+    n = len(E)
+    F = np.fft.rfft(E)
+    Ef = np.fft.irfft(F, n * 8) * 8
+    h = dt / 8
+    nl = len(lines)
+    w = [lam0 / l for l, f in lines]
+    a = [np.sqrt(f * 27.211386 / (2 * 1.2398420 / l)) * 137.035999084 for l, f in lines]
+    def rhs(rho, e):
+        H = np.zeros((nl + 1, nl + 1))
+        for j in range(nl):
+            H[0, j + 1] = H[j + 1, 0] = -a[j] * e
+            H[j + 1, j + 1] = w[j]
+        return -1j * (H @ rho - rho @ H)
+    def loss(rho, e, t):  # exact decay of the levels over t (stiff rates beyond barrier suppression)
+        g = np.array([adk_code(ips[k], e, lam0) for k in range(nl + 1)])
+        f = np.exp(-0.5 * g * t)
+        return rho * np.outer(f, f)
+    rho = np.zeros((nl + 1, nl + 1), dtype=complex)
+    rho[0, 0] = 1.0
+    for k in range(len(Ef) - 1):
+        e0, e1 = Ef[k], Ef[k + 1]
+        em = 0.5 * (e0 + e1)
+        rho = loss(rho, e0, 0.5 * h)
+        k1 = rhs(rho, e0); k2 = rhs(rho + 0.5 * h * k1, em); k3 = rhs(rho + 0.5 * h * k2, em); k4 = rhs(rho + h * k3, e1)
+        rho = rho + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+        rho = loss(rho, e1, 0.5 * h)
+    return rho
+
+
+def ionize(a):
+    """neutral fraction on the axis (grid) against the V-system with ADK per level in the code's field at the first
+    centre; the particles' mean charge state leaving the window against the grid's area mean"""
+    mp, log = a[0], a[1]
+    lam0, ipg, tol, tolp = map(float, a[2:6])
+    rest = list(map(float, a[6:]))
+    lines = [(rest[i], rest[i + 1]) for i in range(0, len(rest), 2)]
+    ips = [ipg] + [ipg - 1.2398420 / l for l, f in lines]
+    d = np.loadtxt(mp)
+    x0 = np.min(d[d[:, 1] > 0, 1])
+    d = d[d[:, 1] == x0][:, [0, 2]]
+    d = d[np.argsort(d[:, 0])]
+    k0 = 2 * np.pi / lam0
+    E = d[::-1, 1]
+    rho = vsystem(E, (d[1, 0] - d[0, 0]) * k0, lines, ips, lam0)
+    nu_ref = np.real(np.trace(rho))
+    ex_ref = np.real(rho[1:, 1:].trace()) / nu_ref
+    nu_ax = nu_mean = zbar = None
+    for line in open(log):
+        if "neutral on the axis" in line:
+            nu_ax = float(line.split("neutral on the axis")[1].split(",")[0])
+            nu_mean = float(line.split("area mean")[1].split()[0])
+        if "<Z> leaving the window" in line:
+            zbar = float(line.split("<Z> leaving the window =")[1].split()[0])
+    e1 = abs(nu_ax - nu_ref)
+    e2 = abs(zbar - (1 - nu_mean))
+    ok = e1 < tol and e2 < tolp
+    print("  neutral fraction on the axis: grid %.5f, V-system with ADK per level %.5f (diff %.1e); excited share of the"
+          " neutrals %.4f" % (nu_ax, nu_ref, e1, ex_ref))
+    print("  particles: <Z> leaving the window %.5f, grid area mean of the ionized fraction %.5f (diff %.1e) %s"
+          % (zbar, 1 - nu_mean, e2, "ok" if ok else "FAIL"))
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "linear":
         sys.exit(linear(sys.argv[2:]))
@@ -151,3 +234,5 @@ if __name__ == "__main__":
         sys.exit(rabi(sys.argv[2:]))
     if sys.argv[1] == "static":
         sys.exit(static(sys.argv[2:]))
+    if sys.argv[1] == "ionize":
+        sys.exit(ionize(sys.argv[2:]))

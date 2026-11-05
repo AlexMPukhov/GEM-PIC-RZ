@@ -7,7 +7,12 @@
 #  2. weak field in Rb vapour (tests/bound_linear.deck, D1 + D2, 840 nm): the spectral phase after 50 um against the
 #     Lorentz susceptibility of the two lines (diffraction removed with a vacuum run): 0.4 %;
 #  3. static limit (tests/bound_static.deck): a line at 10 omega0 against the dielectric of the same chi: the group
-#     delays differ by the dispersion of the line (9 %).
+#     delays differ by the dispersion of the line (9 %);
+#  4. ionization (tests/bound_ionize.deck, Rb vapour as a neutral ion species): the neutral fraction on the axis
+#     against the V-type atom with ADK losses per level (5S 4.177 eV, 5P 2.6 eV) integrated in the code's field
+#     (dzeta = lambda/64: 4e-3 at a0 = 4e-4, 42 % ionized almost only through the excited state; 6e-3 at a0 = 1e-3,
+#     97 % ionized), and the mean
+#     charge state of the macro-atoms leaving the window against the grid's area mean (1e-3).
 # usage: sh tests/bound.sh <gempic_rz> [backend]     (exit 77: skipped, needs python3 with numpy)
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -15,6 +20,7 @@ EXE=$(abspath "$1")
 BACKEND=${2:-serial}
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 python3 -c "import numpy" 2>/dev/null || { echo "bound test skipped: needs python3 with numpy"; exit 77; }
+if [ "$BACKEND" = cuda ]; then echo "bound test skipped: the medium is not yet on the device engine"; exit 77; fi
 WORK=$(mktemp -d)
 cd "$WORK"
 export OMP_PROC_BIND=false
@@ -42,4 +48,9 @@ sed '/^bound_electrons/d' "$SRC/tests/bound_static.deck" > sv.deck
 "$EXE" sv.deck numerics.backend=$BACKEND output.dir=sv > sv.log
 $PY static sb/axis_00000.txt sb/axis_00060.txt sd/axis_00000.txt sd/axis_00060.txt sv/axis_00000.txt sv/axis_00060.txt \
   30 0.8 0.08 1 1.7246e21 0.15
+echo "--- 4. ionization: depopulation of the bound electrons, ADK per level (Rb, 33 fs, a0 = 4e-4 and 1e-3)"
+for a0 in 4e-4 1e-3; do
+  "$EXE" "$SRC/tests/bound_ionize.deck" numerics.backend=$BACKEND laser.a0=$a0 grid.dzeta=0.0125um output.dir=ion$a0     > ion$a0.log
+  $PY ionize ion$a0/map_00001.txt ion$a0.log 0.8 4.177128 1e-2 5e-3 0.794979 0.342 0.780241 0.695
+done
 echo "bound test passed"

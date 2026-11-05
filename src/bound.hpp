@@ -22,6 +22,7 @@
 #include "config.hpp"
 #include "fields.hpp"
 #include "grid.hpp"
+#include "ionization.hpp"
 
 namespace gem {
 
@@ -30,9 +31,16 @@ class BoundMedium {
   bool on = false;
   BlochLines L;
   int nphi = 0, N = 0, M = 0, nc = 0;  // nc: centres with atoms (c_i < r_out, inside the wall)
-  void setup(const BoundElectronsConfig& c, const RadialGrid& g, int M, double lambda0_um);
-  // start of a march: atom densities of the levels z = s0, s1; states ground (ahead of the window); K: wall
-  void begin(double s0, double s1, int K);
+  // T: longest time in the window (ADK thresholds)
+  void setup(const BoundElectronsConfig& c, const RadialGrid& g, int M, const Units& u, double T);
+  // start of a march: atom densities of the levels s^0, s^1 per centre; states ground (ahead of the window); K: wall
+  void begin(const std::vector<double>& na0, const std::vector<double>& na1, int K);
+  bool ionizing() const { return ion; }
+  // normalized populations (ground, excited 1, 2) of level s^1 at the node nearest to (x, y), at the slice before the
+  // half-cell being pushed (the particles of the linked ion species ionize with sum_k p_k w_k)
+  void populations(double x, double y, double& p0, double& p1, double& p2) const;
+  // ADK rates of the levels [1/omega0] in the field E [m c omega0 / e]
+  double rateLevel(int k, double E) const { return adkL[k].rate(0, E); }
   // level s^0: advance from slice n+1 to n with the stored fields; J^0 of slice n (modes) in J0r, J0p
   void level0(int n, double h, const Fields& fold);
   // level s^1: slice n from n+1 with the fields of fnew (slice n: current pass); J^1 of slice n and the half-cell
@@ -47,6 +55,9 @@ class BoundMedium {
   double excitedMax() const { return exMax; }
   // excited population on the axis at the rear slice of the last march (centre 0, mean over the angles)
   double excitedAxis() const { return exAxis; }
+  // neutral fraction (trace of the density matrix) on the axis and its area mean over the medium, rear slice
+  double neutralAxis() const { return nuAxis; }
+  double neutralMean() const { return nuMean; }
 
  private:
   const RadialGrid* g = nullptr;
@@ -58,8 +69,11 @@ class BoundMedium {
   std::vector<double> Ex0, Ex1, Exa;   // E_x at the nodes: slice n+1 of both levels, slice n
   std::vector<double> Jx, Hx;          // node currents
   std::vector<double> Jr0, Jr1;        // running slice currents of both levels (slice n+1)
-  double exMax = 0.0, exAxis = 0.0;
+  double exMax = 0.0, exAxis = 0.0, nuAxis = 1.0, nuMean = 1.0;
+  bool ion = false;
+  AdkRates adkL[3];  // ground, excited 1, 2
   void fieldAt(const Fields& F, int n, std::vector<double>& Ex) const;
+  void rates(double E0, double E1, double& g0, double& g1, double& g2) const;  // mean of the half-cell ends
   void project(const std::vector<double>& x, cd* fr, cd* fp) const;  // node values of J_x -> modes (r faces, phi centres)
 };
 

@@ -347,7 +347,9 @@ struct BoundElectronsConfig {
   double dipole[2] = {0, 0};           // effective dipoles d_j / (e a0)
   double ip_ground_eV = 0.0;           // ionization energy of the ground state
   double ip_excited_eV[2] = {0, 0};    // of the excited states
-  double density = 0.0;                // atom density [n_c] (r < r_out, z_start <= z < z_end)
+  double density = 0.0;                // atom density [n_c] (r < r_out, z_start <= z < z_end); not with `ion`
+  std::string ion;                     // the neutral atoms of this ion species (ionization: depopulation, ADK per level)
+  int ionIndex = -1;                   // its index in Config::ions (-1: none)
   double r_out = 1e300, z_start = -1e300, z_end = 1e300;
   double T1 = 0.0, T2 = 0.0;           // relaxation times [1/omega0]; 0: none
   int n_phi = 0;                       // angles of the real-space Bloch nodes (0: 4 (m_max + 1))
