@@ -62,7 +62,7 @@
 namespace gem {
 
 namespace {
-enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103, TAG_BLOCK = 104 };
+enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103, TAG_BLOCK = 104, TAG_SYNC = 106, TAG_GHOST = 107 };
 constexpr int MIN_SLICES = 4;  // per rank without beam filter (the R message needs 3 processed slices)
 // beam_field = mean: tag of a beam particle of s^0 in Particle::id (streaming ids stay below 2^63)
 constexpr unsigned long long TAG_BIT = 1ULL << 63;
@@ -181,6 +181,14 @@ class PipelineRun {
   }
 
   void partition();
+  // events at the end of a step that act on the whole beam (bunch.z_start; S.loadBunches): the pipeline is drained
+  // (all ranks at level s^K, as at the end of the run), the event is applied by all ranks together on the gathered
+  // beam list (the bunch self-fields are built block-wise, as at the start), the ghosts are taken from their owners
+  // and the pipeline starts again as after a restart from a checkpoint of step K
+  bool eventIn(double za, double zb) const;
+  void drain(int K);
+  void syncEvent(int K, double za, double zb);
+  void exchangeGhosts();
   void step(Buffer& F);
   void filterRaw(Currents& C, bool belowIntoC);
   void filterBeam();
@@ -360,9 +368,6 @@ StorageBlock pipelineBlock(const Config& cfg, int P, int r) {
     throw std::runtime_error("MPI: numerics.beam_smooth_length is not available with more than one rank yet");
   if (cfg.numerics.beam_consistent)
     throw std::runtime_error("MPI pipeline: numerics.beam_consistent is not available in the pipelined step yet");
-  for (const auto& B : cfg.bunches)
-    if (B.z_start > 0)
-      throw std::runtime_error("MPI pipeline: bunch.z_start > 0 (bunch '" + B.name + "') is not available yet");
   for (int q = 0; q < P; ++q) {
     const int lq = int((long long)Nz * q / P), hq = int((long long)Nz * (q + 1) / P);
     if (hq - lq < minSlices && P > 1)
@@ -1636,6 +1641,149 @@ void PipelineRun::reportProfile() {
 }
 
 // ----------------------------------------------------------------------------
+// synchronization points (bunch.z_start): see the class declaration
+// ----------------------------------------------------------------------------
+bool PipelineRun::eventIn(double za, double zb) const {
+  for (const auto& B : S.cfg.bunches) {
+    const double zs = B.z_start, eps = 1e-9 * std::max(1.0, zs);  // as Simulation::loadBunches
+    if (zs > 0 && za < zs - eps && zs - eps <= zb) return true;
+  }
+  return false;
+}
+
+// the end of the pipeline after step K, as at the end of the run: the R message of step K (ghosts of level s^K)
+// and, with beam_field = mean, the second push of step K from the front rank to the rear
+void PipelineRun::drain(int K) {
+  finishDiag();
+  if (r > 0) recvRear();
+  if (mean) {
+    Buffer F;
+    if (r < P - 1) F = recvFront(K + 1);
+    meanPhase(r < P - 1 ? &F : nullptr);
+    if (r > 0) {
+      Buffer B;
+      B.put<int>(K + 1);
+      B.put<int>(lastStep);
+      B.put<int>(wallStop ? 1 : 0);
+      B.put<int>(1);
+      B.putRaw(meanOut.data.data(), meanOut.data.size());
+      comm::send(r - 1, TAG_F, std::move(B));
+    }
+  }
+}
+
+// the stored slices / half-cells of every rank taken from the rank that owns them (fields of the slices [sa, sb],
+// currents of s^0 of the half-cells [sa, sb)): the state a restart reads from a checkpoint
+void PipelineRun::exchangeGhosts() {
+  const int Nz = S.Nz;
+  auto ownF = [&](int q, int& n0, int& n1) { n0 = lo[q]; n1 = (q == P - 1) ? Nz + 1 : lo[q + 1]; };
+  auto stored = [&](int q, int& n0, int& n1, bool fields) {
+    const StorageBlock B = pipelineBlock(S.cfg, P, q);
+    n0 = std::max(0, B.sa);
+    n1 = fields ? std::min(Nz + 1, B.sb + 1) : std::min(Nz, B.sb);
+  };
+  // the ranges of the slices (fa, fb) and half-cells (ca, cb) that rank `owner` sends to rank `dest`
+  auto ranges = [&](int owner, int dest, int& fa, int& fb, int& ca, int& cb) {
+    int f0, f1, s0, s1;
+    ownF(owner, f0, f1);
+    stored(dest, s0, s1, true);
+    fa = std::max(f0, s0); fb = std::min(f1, s1);
+    stored(dest, s0, s1, false);
+    ca = std::max(lo[owner], s0); cb = std::min(lo[owner + 1], s1);
+  };
+  for (int q = 0; q < P; ++q) {
+    if (q == r) continue;
+    int fa, fb, ca, cb;
+    ranges(r, q, fa, fb, ca, cb);
+    if (fa >= fb && ca >= cb) continue;
+    Buffer B;
+    if (fa < fb) putRange(B, S.fold, fa, fb);
+    if (ca < cb) {
+      putJ(B, S.c0b, ca, cb); putDens(B, S.c0b, ca, cb);
+      putJ(B, S.c0s, ca, cb); putDens(B, S.c0s, ca, cb);
+    }
+    comm::send(q, TAG_GHOST, std::move(B));
+  }
+  for (int q = 0; q < P; ++q) {
+    if (q == r) continue;
+    int fa, fb, ca, cb;
+    ranges(q, r, fa, fb, ca, cb);
+    if (fa >= fb && ca >= cb) continue;
+    Buffer B = comm::recv(q, TAG_GHOST);
+    if (fa < fb) getRange(B, S.fold, fa, fb);
+    if (ca < cb) {
+      getJ(B, S.c0b, ca, cb); getDens(B, S.c0b, ca, cb);
+      getJ(B, S.c0s, ca, cb); getDens(B, S.c0s, ca, cb);
+    }
+  }
+  comm::waitAll();
+}
+
+// the event of step K (za < z <= zb) on the drained pipeline; then the output of step K and a new start
+void PipelineRun::syncEvent(int K, double za, double zb) {
+  // the whole beam list and the random generator of the front rank (it loads the plasma: its state is that of a
+  // run on one rank) on every rank
+  std::vector<Particle> all;
+  std::string rs;
+  if (r == P - 1) {
+    std::ostringstream os;
+    os << S.rng;
+    rs = os.str();
+  }
+  if (r > 0) {
+    Buffer B;
+    B.putVec(S.beam);
+    B.putVec(std::vector<char>(rs.begin(), rs.end()));
+    comm::send(0, TAG_SYNC, std::move(B));
+    Buffer A = comm::recv(0, TAG_SYNC);
+    all = A.getVec<Particle>();
+    const std::vector<char> g = A.getVec<char>();
+    rs.assign(g.begin(), g.end());
+  } else {
+    all = S.beam;
+    for (int q = 1; q < P; ++q) {
+      Buffer B = comm::recv(q, TAG_SYNC);
+      const std::vector<Particle> pb = B.getVec<Particle>();
+      all.insert(all.end(), pb.begin(), pb.end());
+      const std::vector<char> g = B.getVec<char>();
+      if (q == P - 1) rs.assign(g.begin(), g.end());
+    }
+    for (int q = 1; q < P; ++q) {
+      Buffer A;
+      A.putVec(all);
+      A.putVec(std::vector<char>(rs.begin(), rs.end()));
+      comm::send(q, TAG_SYNC, std::move(A));
+    }
+  }
+  comm::waitAll();
+  if (P > 1) {
+    std::istringstream is(rs);
+    is >> S.rng;
+  }
+  S.beam.swap(all);
+  S.loadBunches(za, zb);  // collective: the bunch self-field is solved across the ranks
+  exchangeGhosts();
+  // the output of step K with the own particles, then a new start of the pipeline (as from a checkpoint of step K)
+  all.clear();
+  for (const auto& p : S.beam)
+    if (beamOwner(p) == r) all.push_back(p);
+  S.beam.swap(all);
+  if (r > 0) sendDiag(K);
+  else reportStep(K);
+  S.beam.swap(all);
+  comm::waitAll();
+  const int last = lastStep;
+  halo.clear();
+  myRestreamed = myTrapped = 0;
+  devSynced = false;
+  meanReady = frontMean = false;
+  meanOut = Buffer();
+  eng.reset();
+  partition();
+  lastStep = last;
+}
+
+// ----------------------------------------------------------------------------
 int PipelineRun::run() {
   P = comm::size();
 #if defined(_OPENMP)
@@ -1664,7 +1812,8 @@ int PipelineRun::run() {
       if (rc.restarted) std::printf("continuing at step %d\n", S.step_no);
       std::fflush(stdout);
     }
-    const int k0 = S.step_no;
+    int k0 = S.step_no;
+    bool drained = false;  // the last step ended with a synchronization point (output done there)
     for (int k = k0 + 1; k <= lastStep; ++k) {
       prof.start();
       if (k > k0 + 1 && r > 0) {
@@ -1682,6 +1831,7 @@ int PipelineRun::run() {
         dueDiag(k - 1);
         prof.stop(Prof::DIAG);
       }
+      const double za = S.s0;
       step(F);
       if (r == 0) {
         (nTimed == 0 ? tFirst : tLast) = std::chrono::steady_clock::now();
@@ -1692,12 +1842,20 @@ int PipelineRun::run() {
         comm::abort(2);
       }
       prof.stop(Prof::CHECK);
+      if (eventIn(za, S.s0)) {  // synchronization point: the output of step k follows the event
+        drain(k);
+        syncEvent(k, za, S.s0);
+        k0 = k;
+        drained = (k == lastStep);
+        prof.stop(Prof::DIAG);
+        continue;
+      }
       finishDiag();
       if (r == 0 && !mean) dueDiag(k);
       prof.stop(Prof::DIAG);
     }
     finishDiag();
-    if (lastStep > k0) {
+    if (lastStep > k0 && !drained) {
       if (r > 0) recvRear();
       if (mean) {  // the second push of the last step: one more exchange from the front to the rear
         Buffer F;
