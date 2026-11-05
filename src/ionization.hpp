@@ -48,6 +48,7 @@ class AdkRates {
 
  private:
   friend class Engine;  // uploads the tables
+  friend struct EngineState;
   struct Level {
     double logpre = 0, power = 0, expo = 0;  // w = exp(logpre - power ln E + expo / E)
     double Epeak = 1e300;                    // maximum of the ADK expression

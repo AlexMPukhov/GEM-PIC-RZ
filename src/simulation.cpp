@@ -14,6 +14,7 @@
 #include <omp.h>
 #endif
 #include <cmath>
+#include <cstdlib>
 
 namespace gem {
 
@@ -64,6 +65,7 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   solver.setup(g, M);
   solver.theta = cfg.numerics.theta;
   solver.thetaStiff = cfg.numerics.theta_stiff;
+  bound.setup(cfg.bound, g, M, cfg.units, 2.0 * zv.node(Nz));
   if (cfg.numerics.beam_consistent) bflux.initRange(M, Nz, g.N, blk.sa, blk.sb);
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
                 cfg.plasma.present ? cfg.plasma.smooth_length_m0 : 0.0);
@@ -130,7 +132,9 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
     trimTables();
   }
   beginStep();  // matrices of the first step (the engine uploads them)
-  if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial) engine = std::make_unique<Engine>(*this);
+  if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial) {
+    engine = std::make_unique<Engine>(*this);
+  }
 }
 
 Simulation::~Simulation() = default;
@@ -1312,8 +1316,16 @@ void Simulation::ionize(Particle& p, double E1, double E0, double dt, std::vecto
   unsigned draw = 0;
   double tleft = dt;
   const int Z0 = p.Zi;
+  // bound electrons of this species: the neutral atom ionizes with the rates of its levels weighted by the
+  // populations of the medium at its position (ground: the same table)
+  const bool mixed = bound.ionizing() && s == cfg.bound.ionIndex;
+  double pg = 1.0, pe1 = 0.0, pe2 = 0.0;
+  if (mixed && p.Zi == 0) bound.populations(p.x, p.y, pg, pe1, pe2);
   while (p.Zi < R.zmax()) {
-    const double w = 0.5 * (R.rate(p.Zi, E1) + R.rate(p.Zi, E0));
+    double w = 0.5 * (R.rate(p.Zi, E1) + R.rate(p.Zi, E0));
+    if (mixed && p.Zi == 0)
+      w = pg * w + pe1 * 0.5 * (bound.rateLevel(1, E1) + bound.rateLevel(1, E0)) +
+          pe2 * 0.5 * (bound.rateLevel(2, E1) + bound.rateLevel(2, E0));
     if (!(w > 0.0)) break;
     const double tw = -std::log(1.0 - uniform01(base + draw++)) / w;
     if (tw > tleft) break;
@@ -1380,6 +1392,24 @@ void Simulation::setDielectric(double s0_, double s1_) {
   dielectricProfile(s0_, c0, f0);
   dielectricProfile(s1_, c1, f1);
   solver.setDielectric(c1, f1, c0, f0);
+}
+
+void Simulation::boundBegin(double sa, double sb) {  // atom densities of the levels s^0 = sa, s^1 = sb
+  std::vector<double> a0(g.N, 0.0), a1(g.N, 0.0);
+  const auto& B = cfg.bound;
+  for (int i = 0; i < g.N; ++i) {
+    const double r = g.c[i];
+    if (B.ionIndex < 0) {
+      a0[i] = B.densityAt(r, sa);
+      a1[i] = B.densityAt(r, sb);
+    } else {  // the atoms of the ion species (its own profile or atoms x the plasma profile)
+      const IonConfig& I = cfg.ions[size_t(B.ionIndex)];
+      auto na = [&](double z) { return I.own ? I.prof.density(r, z) : I.atoms * cfg.plasma.density(r, z); };
+      a0[i] = (r < B.r_out) ? na(sa) : 0.0;
+      a1[i] = (r < B.r_out) ? na(sb) : 0.0;
+    }
+  }
+  bound.begin(a0, a1, solver.wallK());
 }
 
 void Simulation::setWall(double s) {
@@ -1531,6 +1561,7 @@ void Simulation::march(double s1) {
   std::fill(predPprev.begin(), predPprev.end(), 0.0);
   const bool diel = solver.dielectric();
   if (diel) solver.dielBegin();  // polarization current zero ahead of the window
+  if (bound.on) boundBegin(s0, s1);  // bound electrons: fresh atoms ahead of the window
 
   for (int n = Nz - 1; n >= 0; --n) {
     if (diel)  // J^0 of slice n from the stored slices n, n+1 of s^0
@@ -1538,6 +1569,7 @@ void Simulation::march(double s1) {
         solver.dielLevel0(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Lr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)],
                           &fold.Lp[fold.c(m, n, 0)], &fold.Rr[fold.f(m, n + 1, 0)], &fold.Lr[fold.f(m, n + 1, 0)],
                           &fold.Rp[fold.c(m, n + 1, 0)], &fold.Lp[fold.c(m, n + 1, 0)]);
+    if (bound.on) bound.level0(n, zv.len(n), fold);  // J^0 of the bound electrons at slice n
     // prediction of j^1 at half-cell n-1: beam part (known) + streaming part of s^0
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i)
@@ -1579,6 +1611,8 @@ void Simulation::march(double s1) {
           }
         }
       }
+      // bound electrons: the medium current of slice n with the fields of this pass (pass 0: the predictor)
+      if (bound.on) bound.level1(n, zv.len(n), fnew, false);
       // field solve, all modes
       for (int m = 0; m <= M; ++m) {
         // four-point current sums, weighted by the interpolation to slice n
@@ -1625,6 +1659,19 @@ void Simulation::march(double s1) {
           jp1[i] = (consistent ? half(bjp, i) : c1b.jp[c1b.c(m, n, i)]) + c1s.jp[c1s.c(m, n, i)];
           jz1[i] = (consistent ? half(bjz, i) : c1b.jz[c1b.c(m, n, i)]) + c1s.jz[c1s.c(m, n, i)];
         }
+        if (bound.on) {  // slice current in the R update (-D [(1 - theta) J^0 + theta J^1] = -D/4 Jr), half-cell in L
+          const double th = cfg.numerics.theta;
+          for (int i = 0; i <= N; ++i) {
+            const size_t k = size_t(m) * (N + 1) + i;
+            Jr[i] += 4.0 * ((1.0 - th) * bound.J0r[k] + th * bound.J1r[k]);
+            jr1[i] += bound.Hr[k];
+          }
+          for (int i = 0; i < N; ++i) {
+            const size_t k = size_t(m) * N + i;
+            Jp[i] += 4.0 * ((1.0 - th) * bound.J0p[k] + th * bound.J1p[k]);
+            jp1[i] += bound.Hp[k];
+          }
+        }
         solver.solveSlice(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Lr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)], &fold.Ez[fold.c(m, n, 0)],
                           &fold.Bz[fold.f(m, n, 0)], &fnew.Rr[fnew.f(m, n + 1, 0)], &fnew.Lr[fnew.f(m, n + 1, 0)],
                           &fnew.Rp[fnew.c(m, n + 1, 0)], &fnew.Lp[fnew.c(m, n + 1, 0)],
@@ -1632,6 +1679,24 @@ void Simulation::march(double s1) {
                           jz1.data(), Jr.data(), Jp.data(), &fnew.Rr[fnew.f(m, n, 0)], &fnew.Lr[fnew.f(m, n, 0)],
                           &fnew.Rp[fnew.c(m, n, 0)], &fnew.Lp[fnew.c(m, n, 0)], &fnew.Ez[fnew.c(m, n, 0)],
                           &fnew.Bz[fnew.f(m, n, 0)]);
+      }
+    }
+    if (bound.on) {  // slice n is final: the state of the atoms with its fields; R, L of slice n follow the change
+      const std::vector<cd> j1r = bound.J1r, j1p = bound.J1p, hr = bound.Hr, hp = bound.Hp;
+      bound.level1(n, zv.len(n), fnew, true);
+      const double qR = Delta * cfg.numerics.theta, qL = 0.5 * zv.len(n);
+      const int K = solver.wallK();
+      for (int m = 0; m <= M; ++m) {
+        for (int i = 1; i <= K; ++i) {
+          const size_t k = size_t(m) * (N + 1) + i;
+          fnew.Rr[fnew.f(m, n, i)] -= qR * (bound.J1r[k] - j1r[k]);
+          fnew.Lr[fnew.f(m, n, i)] -= qL * (bound.Hr[k] - hr[k]);
+        }
+        for (int i = 0; i < K; ++i) {
+          const size_t k = size_t(m) * N + i;
+          fnew.Rp[fnew.c(m, n, i)] -= qR * (bound.J1p[k] - j1p[k]);
+          fnew.Lp[fnew.c(m, n, i)] -= qL * (bound.Hp[k] - hp[k]);
+        }
       }
     }
     // electrons freed in this slice start streaming from slice n

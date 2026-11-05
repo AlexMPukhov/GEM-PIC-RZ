@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/dielectric.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
+  src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -115,7 +115,7 @@ elseif(GEMPIC_OPENMP)
     target_link_libraries(gemcore PUBLIC OpenMP::OpenMP_CXX)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
-      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/dielectric.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
+      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
       src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
@@ -303,6 +303,16 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME dielectric_gpu_emulation
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/dielectric.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
     set_tests_properties(dielectric_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+  # bound electrons (Maxwell-Bloch, Rb D1/D2): Rabi flopping, weak-field Lorentz dispersion, static limit vs the
+  # dielectric, depopulation by ionization with ADK per level; per backend and in the GPU emulation
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME bound_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bound.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(bound_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME bound_gpu_emulation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bound.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
+    set_tests_properties(bound_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
   endif()
   # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
   add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)

@@ -164,6 +164,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/fields.hpp` | mode fields and currents |
 | `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step); pentadiagonal with the per-mode implicitness `numerics.theta_stiff` |
 | `src/dielectric.cpp` | the slice equations with a dielectric ε(r): polarization current, coupled pentadiagonal (B_z, E_z) system per mode |
+| `src/bloch.hpp`, `src/bound.*` | bound electrons: Maxwell–Bloch step of a V-type atom per node, the medium on (centres × angles), its current to the modes |
 | `src/smoothing.*` | radial smoothing of the plasma sources (`plasma.smooth_length`): vector and scalar filters (1 − a²∇²)⁻¹ that commute with the discrete divergence |
 | `src/particles.hpp` | particle record, Boris pusher |
 | `src/simulation.*` | laser and bunch initialization, plasma loading, pushers, deposition, time step (serial reference) |
@@ -919,8 +920,109 @@ proton microbuncher and klystron; its thin lining fills the wake within 4 % of M
 in −z are missing; gratings and dielectric laser accelerators are out of scope. The energy flow of non-synchronous
 fields follows the reduced system (above). A laser in a dense medium has the index (4 + 3χ)/(4 + χ), and the step
 must resolve its dephasing, k (n − 1) Δz ≲ 1 (no gain over full PIC for lasers in glass; none needed in vapours).
-The medium has no dispersion (a bound-electron medium with a resonance is the next step). Not combined yet:
+The medium has no dispersion (for a resonant medium: section "Bound electrons"). Not combined yet:
 `numerics.theta_stiff`, `numerics.beam_consistent`; the medium must stay inside `grid.r_absorber` or a wall.
+
+## Bound electrons: a resonant medium (Maxwell–Bloch), e.g. Rb vapour at 800 nm
+
+The block `bound_electrons { … }` adds the bound electrons of a neutral gas as a resonant medium
+(`docs/input_deck.md`). Motivation: the ionization of Rb vapour by an 800 nm pulse (AWAKE). The laser lies between
+the D1 (795 nm) and D2 (780 nm) lines, and at ionizing intensities the Rabi frequency of these transitions exceeds
+the detuning by an order of magnitude (10¹² W/cm²: Ω ≈ 9·10¹⁴ s⁻¹ vs Δ = 1.5·10¹³ s⁻¹ for D1). The transitions
+saturate, and a linear (Lorentz) model does not apply: the medium is a V-type atom with its density matrix.
+
+**Model.**
+- Every cell centre carries, on `n_phi` angles, the 3×3 density matrix ρ of a V-type atom: ground 0, excited 1, 2.
+- H = [[0, −a₁E, −a₂E], [−a₁E, ω₁, 0], [−a₂E, 0, ω₂]], with E the field along the laser polarization (x; scalar
+  dipole).
+- a_j = d_j/(e a₀ α) is the Rabi frequency per unit field. The effective dipoles come from the oscillator
+  strengths: d_j² = f_jℏe²/(2mω_j), i.e. D1 1.73 e a₀, D2 2.44 e a₀. The weak-field limit is then exactly the Lorentz
+  susceptibility χ = n_a Σ f_j/(ω_j² − ω²).
+- The carrier is resolved (no rotating-wave approximation).
+- Polarization P = n_a Σ_j cP_j Re ρ_0j. The medium current J = ∂_t P enters the field equations like the
+  polarization current of a dielectric (section "Dielectric media"):
+  - the half-cell current n_a(P_n − P_{n+1})/h_n goes into the L update;
+  - the slice current from the trapezoidal rule of the half-cell currents goes into the R update (s-trapezoid of
+    both levels).
+- Level s¹ is advanced with the fields of the current pass and committed with the final fields of the slice.
+  Level s⁰ is recomputed from the stored slices. There is no state between steps: with s = z every level is a
+  fresh plane of atoms.
+
+**Ionization (`ion = <ion block>`, depopulation).**
+- The atoms are the neutral atoms of an ionizable ion species.
+- Every level ionizes with its own ADK rate: ground 4.177 eV; excited I_p − ℏω_j ≈ 2.6 eV, beyond barrier
+  suppression already at 10¹¹–10¹² W/cm².
+- In ρ the level k decays as e^{−w_k t} and the coherence kl as e^{−(w_k+w_l)t/2}. The trace is the neutral
+  fraction; the oscillators are depopulated, and the removal of their dipoles is part of J.
+- The macro-atoms of the species ionize 0 → 1 with Σ_k p_k w_k (populations at their position). So the grid's neutral
+  fraction is the expectation of the particle ionization, and both use the same ADK tables.
+
+**Discretization.**
+- One step per half-cell: Strang splitting of the losses (exact exponentials) around a unitary Cayley step
+  ρ → UρU⁺, U = (1 + iK)⁻¹(1 − iK), K = (h/2)H(Ē), with Ē the midpoint field. It is unconditionally stable, second
+  order, and keeps the trace without losses.
+- The transition frequencies are pre-warped (ω → (2/h) tan(ωh/2)), which makes the free precession exact. Without
+  this the resonance of the scheme would sit 0.3 % low at ωh = 0.2, which near a line changes χ by factors.
+- The coupling is scaled by tan x/(x cos x), x = ω_j h/2. This removes the second-order loss of a resonant drive by
+  the midpoint average and the Cayley map: Rabi flopping error 0.023 → 0.004 at h = λ/32.
+- m = 1 on the axis: E_r,₁(0) = −iE_φ,₁(0) (regularity). Before this the first cell saw half of E_r, and the phase of
+  the laser on the axis was 20 % short.
+- The slice current from the local ∂_t P of the discrete state would be a small difference of two large terms. It
+  failed (27 % of the static χ), so the trapezoidal rule is used, as for the dielectric.
+
+**Tests (`tests/bound.sh`, `tests/bound.py`; ctest `bound_serial`, `bound_openmp`):**
+
+1. **Rabi flopping** (`tests/bound_rabi.deck`): a thin resonant line (no effect on the pulse), Gaussian pulses of area
+   π/2, π, 3π/2, 2π. The excited population after the pulse is compared with the two-level Schrödinger equation
+   without the rotating-wave approximation, integrated (RK4) in the code's own field at the atoms:
+
+   | area | code | reference | difference |
+   |---|---|---|---|
+   | π/2 | 0.4982 | 0.4992 | 1.0·10⁻³ |
+   | π | 0.99998 | 0.99999 | 1.1·10⁻⁵ |
+   | 3π/2 | 0.5054 | 0.5024 | 3.1·10⁻³ |
+   | 2π | 5.3·10⁻⁵ | 1.0·10⁻⁵ | 4.3·10⁻⁵ |
+
+   The node alone converges as h²: 3π/2 at h = λ/32, λ/64, λ/128, λ/256 gives 0.5038, 0.5009, 0.5002, 0.5001 against
+   0.5.
+2. **Weak field in Rb vapour** (`tests/bound_linear.deck`: D1 + D2, 4·10¹⁷ cm⁻³, an 840 nm pulse, 50 µm). The spectral
+   phase of the on-axis field is compared with (n(ω) − 1)ωz of the Lorentz susceptibility of the two lines, after
+   dividing by a vacuum run (diffraction). Over χ = 1.3–4.1·10⁻³ the rms difference is 0.24 % of the phase; the
+   amplitude is unchanged to 1 %.
+3. **Static limit** (`tests/bound_static.deck`): a line at 10 ω0 (χ = 0.01, ω_j h = 0.24) against the dielectric
+   ε = 1.01. The group delays differ by the dispersion of the line, 1.096·10⁻⁴ against the Lorentz 1.010·10⁻⁴; the
+   bound and dielectric n_g − 1 agree to 0.17 % after it.
+4. **Ionization** (`tests/bound_ionize.deck`: a thin Rb vapour as a neutral ion species, 33 fs). The neutral
+   fraction on the axis is compared with the V-type atom with ADK losses per level, integrated in the code's field:
+
+   | a0 | ionized | grid | reference | particles vs grid (ionized fraction, area mean) |
+   |---|---|---|---|---|
+   | 4·10⁻⁴ | 42 % | 0.5834 | 0.5796 | 0.0079 vs 0.0076 |
+   | 10⁻³ | 97 % | 0.0293 | 0.0350 | 0.2206 vs 0.2237 |
+
+   (dζ = λ/64; at 10⁻³ the residual 3 % neutrals converge with dζ: grid − reference 9.5, 5.8, 2.4·10⁻³ at λ/32, λ/64,
+   λ/128.)
+
+   At a0 = 4·10⁻⁴ ground-state ADK alone leaves the atoms neutral; the 42 % come almost only from the resonantly
+   excited 5P. Rb then ionizes completely at a0 = 5·10⁻⁴ instead of ~10⁻³ (ground-state ADK at 10⁻³: 59 %). The
+   resonant excitation moves the ionization front of the vapour.
+
+**Backends.** The medium runs on all backends.
+- Engine (OpenMP, CUDA): node kernels per slice in the device march: field at the nodes, Bloch step, projection to
+  the modes, commit with the R/L correction. The current enters the slice solve and the macro-atoms ionize with the
+  populations on the device. The host sets the atom densities of the step and the atoms entering the block; the
+  state is uploaded before every march and downloaded after it.
+- MPI: the atoms of both levels at the block edge travel in the F message.
+- Agreement with serial (ionizing Rb deck, `tests/mpi.sh`, ctest `bound_gpu_emulation`):
+  - OpenMP and the GPU emulation agree to 1e-9 (maps identical);
+  - the pipelined step on one rank and 2 or 3 ranks are bit-identical, on the host and in the device march.
+
+**Limits.**
+- Scalar dipole along x: circular polarization and the orientation of other field components are not modelled.
+- No hyperfine, Zeeman or Doppler structure; T1 and T2 are optional constants.
+- ADK for the excited 5P is the s-state formula with the 5P binding energy (beyond barrier suppression the rate is
+  capped at the maximum of the ADK expression, as for all levels).
+- The physics questions of the Rb case (the choice of the V-type atom, ADK per level) were decided by Alexander.
 
 ## Corrections of earlier versions
 

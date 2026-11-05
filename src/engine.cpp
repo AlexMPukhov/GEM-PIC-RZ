@@ -14,6 +14,7 @@
 //      streaming list is rebuilt every step anyway).
 // ============================================================================
 #include "engine.hpp"
+#include "bloch.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -156,6 +157,20 @@ struct DielV {
   cplx *J0r, *J0p, *J1r, *J1p;
 };
 
+// bound electrons (BoundMedium, bound.hpp): the medium of the march on the device. Nodes j = i n_phi + k (centres
+// i < nc, angles k); the running states of both levels at slice n+1 (st0, st1, Ex0, Ex1, Jr0, Jr1: uploaded from the
+// host before the march, downloaded after it), node currents Jx, Hx, mode currents J0, J1 (slice), H (half-cell),
+// the saved J1, H of the last pass (commit correction), jrc (scratch); the ADK tables of the levels
+struct BoundV {
+  int on, nphi, nc, ion, sp;  // sp: linked ion species
+  BlochLines L;
+  const double *cs, *sn, *na0, *na1;
+  BlochNode *st0, *st1;
+  double *Ex0, *Ex1, *Jr0, *Jr1, *Jx, *Hx;
+  cplx *J0r, *J0p, *J1r, *J1p, *Hr, *Hp, *jrc, *sJ1r, *sJ1p, *sHr, *sHp;
+  AdkV adk[3];
+};
+
 struct Params {
   int M, Nz, N;
   double Delta;  // step of the current s^0 -> s^1
@@ -181,6 +196,7 @@ struct Params {
   double vz_min, vz_beam;
   unsigned long long seed;
   DielV diel;
+  BoundV bound;
 };
 
 // ---------------------------------------------------------------- ADK rate
@@ -194,6 +210,49 @@ GEM_HD inline double adkRate(const AdkV& R, int k, double E) {
   const LevelV& L = R.lev[k];
   if (E < L.Emin) return 0.0;
   return adkRaw(L, E);
+}
+
+// ---------------------------------------------------------------- bound electrons (BoundMedium)
+// E_x at node (i, k) of slice n (BoundMedium::fieldAt)
+GEM_HD inline double boundField(const BoundV& B, const GridV& g, const FieldsV& F, int M, int n, int i, int k) {
+  const double w = (g.c[i] - g.rho[i]) / (g.rho[i + 1] - g.rho[i]);
+  const cplx e(B.cs[k], B.sn[k]);
+  double Er = 0.0, Ep = 0.0;
+  cplx em = e;
+  for (int m = 0; m <= M; ++m) {
+    const size_t f = F.f(m, n, 0), c = F.c(m, n, 0);
+    const cplx ep = 0.5 * (F.Rp[c + i] + F.Lp[c + i]);
+    const cplx e0 = (i > 0) ? 0.5 * (F.Rr[f + i] + F.Lr[f + i]) : (m == 1 ? cplx(0.0, -1.0) * ep : cplx());
+    const cplx e1 = 0.5 * (F.Rr[f + i + 1] + F.Lr[f + i + 1]);
+    const cplx er = (1.0 - w) * e0 + w * e1;
+    if (m == 0) { Er = er.re; Ep = ep.re; continue; }
+    Er += 2.0 * (er * em).re;
+    Ep += 2.0 * (ep * em).re;
+    em = em * e;
+  }
+  return Er * B.cs[k] - Ep * B.sn[k];
+}
+// ionization rates of the levels, mean of the half-cell ends (BoundMedium::rates)
+GEM_HD inline void boundRates(const BoundV& B, double E0, double E1, double& g0, double& g1, double& g2) {
+  const double a0 = fabs(E0), a1 = fabs(E1);
+  g0 = 0.5 * (adkRate(B.adk[0], 0, a0) + adkRate(B.adk[0], 0, a1));
+  g1 = 0.5 * (adkRate(B.adk[1], 0, a0) + adkRate(B.adk[1], 0, a1));
+  g2 = B.L.n > 1 ? 0.5 * (adkRate(B.adk[2], 0, a0) + adkRate(B.adk[2], 0, a1)) : 0.0;
+}
+// normalized populations at the node nearest to (x, y) (BoundMedium::populations)
+GEM_HD inline void boundPopulations(const BoundV& B, const GridV& g, double x, double y, double& p0, double& p1,
+                                    double& p2) {
+  p0 = 1.0; p1 = 0.0; p2 = 0.0;
+  const double r = sqrt(x * x + y * y);
+  const int i = GridV::upper(g.rho, g.N + 1, r) - 1;
+  if (i < 0 || i >= B.nc || B.na1[i] == 0.0) return;
+  double ph = atan2(y, x);
+  if (ph < 0) ph += 2.0 * PI;
+  const int k = int(llround(ph / (2.0 * PI) * B.nphi)) % B.nphi;
+  const BlochNode& q = B.st1[size_t(i) * B.nphi + k];
+  const double t = q.p0 + q.p1 + q.p2;
+  if (!(t > 0)) return;
+  p0 = q.p0 / t; p1 = q.p1 / t; p2 = q.p2 / t;
 }
 
 // ---------------------------------------------------------------- gather
@@ -359,8 +418,14 @@ GEM_HD inline void ionize(const Params& P, Particle& p, double E1, double E0, do
   double tleft = dt;
   const int Z0 = p.Zi;
   unsigned draw = 0;
+  const bool mixed = P.bound.ion && s == P.bound.sp;  // bound electrons (Simulation::ionize)
+  double pg = 1.0, pe1 = 0.0, pe2 = 0.0;
+  if (mixed && p.Zi == 0) boundPopulations(P.bound, P.g, p.x, p.y, pg, pe1, pe2);
   while (p.Zi < R.Zmax) {
-    const double w = 0.5 * (adkRate(R, p.Zi, E1) + adkRate(R, p.Zi, E0));
+    double w = 0.5 * (adkRate(R, p.Zi, E1) + adkRate(R, p.Zi, E0));
+    if (mixed && p.Zi == 0)
+      w = pg * w + pe1 * 0.5 * (adkRate(P.bound.adk[1], 0, E1) + adkRate(P.bound.adk[1], 0, E0)) +
+          pe2 * 0.5 * (adkRate(P.bound.adk[2], 0, E1) + adkRate(P.bound.adk[2], 0, E0));
     if (!(w > 0.0)) break;
     const double tw = -log(1.0 - uniform01(base + draw++)) / w;
     if (tw > tleft) break;
@@ -741,21 +806,34 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
       s = s + 2.0 * (wl * bjr(nm, i) + wh * bjr(n, i)) -
           th0 * (wl * c0b.jr[c0b.f(m, nm, i)] + wh * c0b.jr[c0b.f(m, n, i)]) -
           th1 * (wl * c1b.jr[c1b.f(m, nm, i)] + wh * c1b.jr[c1b.f(m, n, i)]);
+    if (P.bound.on) {  // bound electrons: slice current of both levels (Simulation::march)
+      const size_t k = size_t(m) * (N + 1) + i;
+      s += 4.0 * ((1.0 - P.theta) * P.bound.J0r[k] + P.theta * P.bound.J1r[k]);
+    }
     return s;
   };
   auto Jp = [&](int i) {
     const cplx a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
     const cplx pr = (n > 0) ? predP[m * N + i] : c1b.jp[c1b.c(m, 0, i)] + c1s.jp[c1s.c(m, 0, i)];
-    return th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
-           th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
+    cplx s = th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
+             th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
+    if (P.bound.on) {
+      const size_t k = size_t(m) * N + i;
+      s += 4.0 * ((1.0 - P.theta) * P.bound.J0p[k] + P.theta * P.bound.J1p[k]);
+    }
+    return s;
   };
   auto jr1 = [&](int i) {
     const cplx b = cons ? s0w * bjr(n - 1, i) + s1w * bjr(n, i) + s2w * bjr(n + 1, i) : c1b.jr[c1b.f(m, n, i)];
-    return b + c1s.jr[c1s.f(m, n, i)];
+    cplx s = b + c1s.jr[c1s.f(m, n, i)];
+    if (P.bound.on) s += P.bound.Hr[size_t(m) * (N + 1) + i];  // bound electrons: half-cell current
+    return s;
   };
   auto jp1 = [&](int i) {
     const cplx b = cons ? s0w * bjp(n - 1, i) + s1w * bjp(n, i) + s2w * bjp(n + 1, i) : c1b.jp[c1b.c(m, n, i)];
-    return b + c1s.jp[c1s.c(m, n, i)];
+    cplx s = b + c1s.jp[c1s.c(m, n, i)];
+    if (P.bound.on) s += P.bound.Hp[size_t(m) * N + i];
+    return s;
   };
   auto jz1 = [&](int i) {
     const cplx b = cons ? s0w * bjz(n - 1, i) + s1w * bjz(n, i) + s2w * bjz(n + 1, i) : c1b.jz[c1b.c(m, n, i)];
@@ -1262,6 +1340,60 @@ struct EngineState {
   par::Array<cplx> stiffBc, stiffBf;
   // dielectric (FieldSolver::setDielectric): chi of both levels every step, the band matrices when they change,
   // the running polarization currents (allocated once)
+  // bound electrons (BoundMedium): device copies of the medium and its scratch
+  par::Array<double> bCS, bSN, bNa0, bNa1, bEx0, bEx1, bJr0, bJr1, bJx, bHx;
+  par::Array<BlochNode> bSt0, bSt1;
+  par::Array<cplx> bModes;  // J0r, J1r, Hr, sJ1r, sHr (faces), J0p, J1p, Hp, sJ1p, sHp (centres), jrc
+  par::Array<dev::LevelV> bLev;
+  void uploadBound(const BoundMedium& b, int M, int N) {
+    if (!b.on) { P.bound.on = 0; return; }
+    const size_t nn = b.st0.size(), nf = size_t(M + 1) * (N + 1), nc = size_t(M + 1) * N;
+    if (bSt0.capacity() != nn) {  // first call: allocate, constant tables
+      bCS.assign(b.cs.data(), b.cs.size());
+      bSN.assign(b.sn.data(), b.sn.size());
+      bNa0.clear(size_t(N)); bNa1.clear(size_t(N));
+      bSt0.clear(nn); bSt1.clear(nn);
+      for (auto* a : {&bEx0, &bEx1, &bJr0, &bJr1, &bJx, &bHx}) a->clear(nn);
+      bModes.clear(5 * nf + 6 * nc);
+      std::vector<dev::LevelV> lv;
+      for (int k = 0; k < 3; ++k)
+        for (const auto& L : b.adkL[k].lev) lv.push_back({L.logpre, L.power, L.expo, L.Epeak, L.Emin});
+      if (!lv.empty()) bLev.assign(lv.data(), lv.size());
+    }
+    par::upload(bNa0.data(), b.na0.data(), size_t(N));
+    par::upload(bNa1.data(), b.na1.data(), size_t(N));
+    par::upload(bSt0.data(), b.st0.data(), nn);
+    par::upload(bSt1.data(), b.st1.data(), nn);
+    par::upload(bEx0.data(), b.Ex0.data(), nn);
+    par::upload(bEx1.data(), b.Ex1.data(), nn);
+    par::upload(bJr0.data(), b.Jr0.data(), nn);
+    par::upload(bJr1.data(), b.Jr1.data(), nn);
+    dev::BoundV& B = P.bound;
+    B.on = 1; B.nphi = b.nphi; B.nc = b.nc; B.ion = b.ion ? 1 : 0; B.sp = sim_bound_sp;
+    B.L = b.L;
+    B.cs = bCS.data(); B.sn = bSN.data(); B.na0 = bNa0.data(); B.na1 = bNa1.data();
+    B.st0 = bSt0.data(); B.st1 = bSt1.data();
+    B.Ex0 = bEx0.data(); B.Ex1 = bEx1.data(); B.Jr0 = bJr0.data(); B.Jr1 = bJr1.data();
+    B.Jx = bJx.data(); B.Hx = bHx.data();
+    cplx* q = bModes.data();
+    B.J0r = q; B.J1r = q + nf; B.Hr = q + 2 * nf; B.sJ1r = q + 3 * nf; B.sHr = q + 4 * nf;
+    cplx* c = q + 5 * nf;
+    B.J0p = c; B.J1p = c + nc; B.Hp = c + 2 * nc; B.sJ1p = c + 3 * nc; B.sHp = c + 4 * nc; B.jrc = c + 5 * nc;
+    for (int k = 0; k < 3; ++k) {
+      const AdkRates& R = b.adkL[k];
+      B.adk[k] = dev::AdkV{R.Z0, R.Zmax, R.Emin_all, bLev.capacity() > 0 ? bLev.data() + k : nullptr};
+    }
+  }
+  void downloadBound(BoundMedium& b) {
+    const size_t nn = b.st0.size();
+    par::download(b.st0.data(), bSt0.data(), nn);
+    par::download(b.st1.data(), bSt1.data(), nn);
+    par::download(b.Ex0.data(), bEx0.data(), nn);
+    par::download(b.Ex1.data(), bEx1.data(), nn);
+    par::download(b.Jr0.data(), bJr0.data(), nn);
+    par::download(b.Jr1.data(), bJr1.data(), nn);
+  }
+  int sim_bound_sp = -1;
   par::Array<double> dielChi;
   par::Array<cplx> dielBand, dielJ;
   int dielVersion = -1;
@@ -1715,8 +1847,17 @@ void Engine::step() {
   par::zero(E.predP[1 - E.ip].data(), npc);
   prof.stop(Profile::LOAD);
 
-  // ---- 4. zeta march
+  // ---- 4. zeta march (bound electrons: densities and fresh atoms on the host, the medium on the device)
+  if (sim.bound.on) {
+    sim.boundBegin(sim.s0, s1);
+    E.sim_bound_sp = sim.cfg.bound.ionIndex;
+    E.uploadBound(sim.bound, M, N);
+  }
   march(MarchSpec{Nz - 1, 0, s1, streamCap, bornCap, nullptr, nullptr, nullptr});
+  if (sim.bound.on) {
+    E.downloadBound(sim.bound);
+    sim.bound.diagRear(sim.bound.st1);
+  }
   Particle* stream = E.stream.data();
   const int streamCapI = int(streamCap);
   // ---- 4b. beam_field = mean (Simulation::step): the beam is pushed again from s^0 in (F^0 + F^1)/2 and
@@ -1801,6 +1942,78 @@ void Engine::march(const MarchSpec& ms) {
   Profile& prof = E.prof;
   const long streamCap = ms.streamCap, bornCap = ms.bornCap;
   const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+  // bound electrons (BoundMedium::level0, level1, project): kernels over the nodes and the modes
+  auto boundProject = [&](const double* x, cplx* fr, cplx* fp) {
+    const BoundV B = P.bound;
+    const int Nn = N;
+    par::forN(long(M + 1) * N, GEM_LAMBDA(long idx) {
+      const int m = int(idx / Nn), i = int(idx % Nn);
+      cplx a, b;
+      if (i < B.nc)
+        for (int k = 0; k < B.nphi; ++k) {
+          const double v = x[size_t(i) * B.nphi + k];
+          if (v == 0.0) continue;
+          const cplx e(B.cs[k], -B.sn[k]);
+          cplx em(1.0, 0.0);
+          for (int q = 0; q < m; ++q) em = em * e;
+          a += (v * B.cs[k]) * em;
+          b += (-v * B.sn[k]) * em;
+        }
+      const double sc = 1.0 / B.nphi;
+      B.jrc[idx] = a * sc;
+      fp[idx] = b * sc;
+    });
+    par::forN(long(M + 1) * (N + 1), GEM_LAMBDA(long idx) {
+      const int m = int(idx / (Nn + 1)), i = int(idx % (Nn + 1));
+      if (i == 0) { fr[idx] = cplx(); return; }
+      const cplx aa = B.jrc[size_t(m) * Nn + i - 1], bb = (i < Nn) ? B.jrc[size_t(m) * Nn + i] : cplx();
+      fr[idx] = 0.5 * (aa + bb);
+    });
+  };
+  auto boundLevel0 = [&](int n) {
+    const BoundV B = P.bound;
+    const GridV gg = P.g;
+    const double h = P.zv.len(n);
+    const int MM = M;
+    par::forN(long(B.nc) * B.nphi, GEM_LAMBDA(long j) {
+      const int i = int(j / B.nphi), k = int(j % B.nphi);
+      const double En = boundField(B, gg, fo, MM, n, i, k);
+      if (B.na0[i] == 0.0) { B.Jx[j] = 0.0; B.Ex0[j] = En; return; }
+      const double P1 = blochP(B.L, B.st0[j]);
+      double g0 = 0, g1 = 0, g2 = 0;
+      if (B.ion) boundRates(B, B.Ex0[j], En, g0, g1, g2);
+      blochStep(B.L, B.st0[j], B.Ex0[j], En, h, g0, g1, g2);
+      B.Jx[j] = 2.0 * B.na0[i] * (blochP(B.L, B.st0[j]) - P1) / h - B.Jr0[j];
+      B.Jr0[j] = B.Jx[j];
+      B.Ex0[j] = En;
+    });
+    boundProject(B.Jx, B.J0r, B.J0p);
+  };
+  auto boundLevel1 = [&](int n, bool commit) {
+    const BoundV B = P.bound;
+    const GridV gg = P.g;
+    const double h = P.zv.len(n);
+    const int MM = M;
+    par::forN(long(B.nc) * B.nphi, GEM_LAMBDA(long j) {
+      const int i = int(j / B.nphi), k = int(j % B.nphi);
+      const double En = boundField(B, gg, fn, MM, n, i, k);
+      if (B.na1[i] == 0.0) {
+        B.Jx[j] = 0.0; B.Hx[j] = 0.0;
+        if (commit) { B.Jr1[j] = 0.0; B.Ex1[j] = En; }
+        return;
+      }
+      BlochNode q = B.st1[j];
+      const double P1 = blochP(B.L, q);
+      double g0 = 0, g1 = 0, g2 = 0;
+      if (B.ion) boundRates(B, B.Ex1[j], En, g0, g1, g2);
+      blochStep(B.L, q, B.Ex1[j], En, h, g0, g1, g2);
+      B.Hx[j] = B.na1[i] * (blochP(B.L, q) - P1) / h;
+      B.Jx[j] = 2.0 * B.Hx[j] - B.Jr1[j];
+      if (commit) { B.st1[j] = q; B.Ex1[j] = En; B.Jr1[j] = B.Jx[j]; }
+    });
+    boundProject(B.Jx, B.J1r, B.J1p);
+    boundProject(B.Hx, B.Hr, B.Hp);
+  };
   // dielectric: the running polarization currents are zero ahead of the window (or come from the front rank)
   if (P.diel.on) {
     par::zero(E.dielJ.data(), E.dielJ.capacity());
@@ -1861,6 +2074,7 @@ void Engine::march(const MarchSpec& ms) {
                                                                 (fo.Rp[fo.c(m, n, i)] + fo.Lp[fo.c(m, n, i)]));
       });
     }
+    if (P.bound.on) boundLevel0(n);  // J^0 of the bound electrons at slice n
     for (int it = 0; it < iters; ++it) {
       // prepare: predicted j^1 at n-1, predictor fields, zero half-cell n, |E| bound
       par::teams(1, GEM_LAMBDA(const Team& t) {
@@ -2007,6 +2221,7 @@ void Engine::march(const MarchSpec& ms) {
         });
       }
       prof.stop(Profile::PUSH);
+      if (P.bound.on) boundLevel1(n, false);  // the medium current with the fields of this pass
       // field solve, one team per mode
       par::teams(M + 1, GEM_LAMBDA(const Team& t) {
         const int m = t.league;
@@ -2014,6 +2229,26 @@ void Engine::march(const MarchSpec& ms) {
                        scratch + size_t(m) * SOLVE_SCRATCH * (N + 1), fl);
       });
       prof.stop(Profile::SOLVE);
+    }
+    if (P.bound.on) {  // slice n is final: commit the atoms, correct R, L of slice n (Simulation::march)
+      const BoundV B = P.bound;
+      par::forN(long(npf), GEM_LAMBDA(long idx) { B.sJ1r[idx] = B.J1r[idx]; B.sHr[idx] = B.Hr[idx]; });
+      par::forN(long(npc), GEM_LAMBDA(long idx) { B.sJ1p[idx] = B.J1p[idx]; B.sHp[idx] = B.Hp[idx]; });
+      boundLevel1(n, true);
+      const double qR = Delta * P.theta, qL = 0.5 * P.zv.len(n);
+      const int K = P.wK;
+      par::forN(long(npf), GEM_LAMBDA(long idx) {
+        const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+        if (i == 0 || i > K) return;
+        fn.Rr[fn.f(m, n, i)] -= qR * (B.J1r[idx] - B.sJ1r[idx]);
+        fn.Lr[fn.f(m, n, i)] -= qL * (B.Hr[idx] - B.sHr[idx]);
+      });
+      par::forN(long(npc), GEM_LAMBDA(long idx) {
+        const int m = int(idx / N), i = int(idx % N);
+        if (i >= K) return;
+        fn.Rp[fn.c(m, n, i)] -= qR * (B.J1p[idx] - B.sJ1p[idx]);
+        fn.Lp[fn.c(m, n, i)] -= qL * (B.Hp[idx] - B.sHp[idx]);
+      });
     }
     // freed electrons join the streaming list; trapped particles -> beam list
     // (fast) or next step (slow)
@@ -2573,7 +2808,15 @@ void Engine::marchBlock(const BlockMarch& bm) {
     ms.frontDR = E.frontDR.data();
     ms.frontDP = E.frontDP.data();
   }
+  if (sim.bound.on) {  // the host set the densities and the atoms at slice b (PipelineRun::step)
+    E.sim_bound_sp = sim.cfg.bound.ionIndex;
+    E.uploadBound(sim.bound, M, N);
+  }
   march(ms);
+  if (sim.bound.on) {  // the atoms at slice a for the rear rank, diagnostics of the rear of the window
+    E.downloadBound(sim.bound);
+    if (bm.a == 0) sim.bound.diagRear(sim.bound.st1);
+  }
   if (bm.absorbFirst) absorbSlices(bm.a, bm.a + 1, bm.s1, keep);
   // results for the host
   E.pullCounters();

@@ -111,8 +111,15 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     mode built by probing (src/dielectric.cpp). Serial, engine, MPI (J in the F message, corrected L in the R
     message). Tests: DWA tube vs TM_0n / HEM_1n modal theory, Cherenkov cone, laser slippage vs the scheme's
     dispersion. Physics (Alexander): keep the GEM model; the energy flow of non-synchronous fields is that of the
-    reduced system (DWA TM01 beta_g 0.40 vs Maxwell 0.33), documented. Next: bound-electron (Lorentz) medium for Rb at
-    800 nm, branch `bound-electrons` (proposal and open questions: Maxwell-Bloch vs Lorentz, depopulation by ionization).
+    reduced system (DWA TM01 beta_g 0.40 vs Maxwell 0.33), documented. Merged (PR #28).
+  - **Bound electrons** (branch `bound-electrons`; block `bound_electrons`, README "Bound electrons", ctest bound_*):
+    Maxwell-Bloch V-type atom (Rb D1 + D2 built in; Alexander: V-system, scalar dipole along x, ADK per level, no
+    damping by default) on cell centres x n_phi angles (src/bloch.hpp node step: Cayley with pre-warped frequencies
+    and coupling factor tan x/(x cos x); src/bound.*); medium current into the existing current inputs (trapezoidal
+    slice current, half-cell current); `ion = <block>` links it to neutral atoms: depopulation, macro-atoms ionize
+    with population-weighted ADK. Serial, engine (OpenMP / CUDA: BoundV node kernels in Engine::march, state
+    uploaded before and downloaded after every march) and MPI (host or device march; state in the F message).
+    Result: resonant excitation lowers the Rb ionization threshold (a0 5e-4 instead of ~1e-3).
   - **Chained runs** (2026-11-05; handoff CLAUDE-notes gem-pic-rz/chain_handoff.md): `examples/chain_lwfa_fel/`
     (stage 1 down-ramp injection with FBPIC, stage1_fbpic.py; handoff.py; stage 2 acceleration and stage 3 lens,
     chicane, helical undulator with GEM-PIC-RZ; run_chain.sh [ranks]; README there with the numbers), ctest `chain`

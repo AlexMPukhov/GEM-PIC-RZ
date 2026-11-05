@@ -25,6 +25,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | `chicane`  | 0 … N   | thin magnetic chicane (R56, delay) applied to the beam |
 | `wall`     | 0 or 1  | perfectly conducting lateral wall r = r_w(z): waveguides, beam pipes |
 | `dielectric` | 0 … N | a medium of constant permittivity ε(r, z): dielectric-lined tubes, Cherenkov radiation, lasers in media |
+| `bound_electrons` | 0 or 1 | resonant medium of bound electrons (Maxwell–Bloch, e.g. Rb D1/D2), with ionization per level |
 | `output`   | 0 or 1  | diagnostics                                      |
 | `numerics` | 0 or 1  | algorithm parameters                             |
 
@@ -666,6 +667,50 @@ Exactly one of `epsilon`, `epsilon_function` is given. Example, a quartz-lined c
   dephasing of a laser, k (n − 1) Δz ≲ 1. Reflections at the ends of the medium and at steps are missing.
   README, section "Dielectric media".
 - **Not combined yet:** `numerics.theta_stiff`, `numerics.beam_consistent`.
+
+## `bound_electrons` (0 or 1 block)
+
+A resonant medium of neutral atoms, described by the Maxwell–Bloch equations of a V-type atom: ground state and one
+or two excited states (e.g. Rb 5S → 5P_1/2 (D1, 795 nm) and 5P_3/2 (D2, 780 nm)). Each cell centre carries the density
+matrix of the atoms on `n_phi` angles; the carrier is resolved (no rotating-wave approximation), so saturation,
+Rabi flopping and resonant dispersion and absorption of the laser follow. The atoms couple to the component of E
+along the laser polarization (x, scalar dipole); the effective dipoles follow from the oscillator strengths,
+d_j² = f_j e²ħ/(2mω_j), so the weak-field susceptibility is that of the Lorentz lines,
+χ = n_a Σ f_j/(ω_j² − ω²) (n_a in n_c, frequencies in ω0).
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `element` | `Rb` | — | built-in lines: D1 (794.979 nm, f = 0.342), D2 (780.241 nm, f = 0.695); ionization energy 4.177 eV |
+| `wavelengths`, `oscillator_strengths` | lists (1 or 2) | — | the lines, instead of (or replacing those of) `element` |
+| `density` | density | — | atom density (without `ion`) |
+| `ion` | name | — | the atoms are the neutral atoms of this `ion` block (`charge_state = 0`, `ionization = adk`): density and profile from it, and ionization (below) |
+| `r_out` | length | r_max | the medium is present for r < r_out |
+| `z_start`, `z_end` | length | −∞, +∞ | and for z_start ≤ z < z_end (with `density`) |
+| `T1`, `T2` | time | 0 (none) | relaxation of the excited states / dephasing of the coherences |
+| `n_phi` | integer | 4 (m_max + 1) | angles of the nodes (≥ 2 m_max + 1) |
+| `ionization_potentials` | energy list | — | ground and excited states (without `ion`; with `ion` they follow from the ion block and the photon energies) |
+
+Example (AWAKE-like Rb vapour, ionized by the laser):
+```
+plasma { density = 7e14 cm^-3; free_electrons = false; r_max = 1 mm }
+ion { name = Rb; mass = 85.4678 u; charge_state = 0; ionization = adk; max_charge_state = 1
+      ionization_potentials = 4.177128, 27.2895 eV; density = 7e14 cm^-3; mobile = false }
+bound_electrons { element = Rb; ion = Rb }
+```
+
+- **Ionization (`ion`):** every level ionizes with its own ADK rate (5S: 4.177 eV, 5P: I_p − ħω_j ≈ 2.6 eV): the
+  trace of the density matrix (the neutral fraction) decays, which depopulates the oscillators, and the dipole
+  removal enters the medium current. The macro-atoms of the ion block ionize with the rate of the levels weighted by
+  the populations at their position, so the grid's neutral fraction is the expectation of the particle ionization.
+  Resonant excitation lowers the ionization threshold strongly (README, "Bound electrons").
+- **Resolution:** the transition frequencies must be resolved by the slices, ω_j h ≲ 0.3 (as the laser carrier);
+  the free precession is exact (frequencies pre-warped), resonant driving to second order in ω_j h.
+- **The window** starts ahead of the medium's response: the atoms are fresh at the front of the window at every
+  level (s = z: the plane z = s^1).
+- **Backends:** all: serial, OpenMP, CUDA (the medium on the device: node kernels, the current in the slice solve,
+  the particles' ionization) and the MPI pipeline (the atoms at the block edges in the messages).
+- **Not modelled:** Doppler (inhomogeneous) broadening, hyperfine and Zeeman structure, the polarization of other
+  field components (E_y, E_z), collisional processes.
 
 ## `output` (0 or 1 block)
 
