@@ -707,8 +707,8 @@ bound_electrons { element = Rb; ion = Rb }
   the free precession is exact (frequencies pre-warped), resonant driving to second order in ω_j h.
 - **The window** starts ahead of the medium's response: the atoms are fresh at the front of the window at every
   level (s = z: the plane z = s^1).
-- **Backends:** serial and the MPI pipeline (also with OpenMP threads per rank for the particles); a single run
-  with `backend = openmp` uses the host march; not yet on the device engine (`backend = cuda`).
+- **Backends:** all: serial, OpenMP, CUDA (the medium on the device: node kernels, the current in the slice solve,
+  the particles' ionization) and the MPI pipeline (the atoms at the block edges in the messages).
 - **Not modelled:** Doppler (inhomogeneous) broadening, hyperfine and Zeeman structure, the polarization of other
   field components (E_y, E_z), collisional processes.
 

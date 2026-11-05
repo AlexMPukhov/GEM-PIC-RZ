@@ -169,26 +169,7 @@ void BoundMedium::level1(int n, double h, const Fields& fnew, bool commit) {
   project(Jx, J1r.data(), J1p.data());
   project(Hx, Hr.data(), Hp.data());
   if (commit) {
-    if (n == 0) {  // diagnostics at the rear: excited population and neutral fraction on the axis (centre 0, mean
-                   // over the angles), area mean of the neutral fraction over the medium
-      double e = 0.0, t = 0.0, tw = 0.0, w = 0.0;
-      for (int k = 0; k < nphi; ++k) {
-        e += tmp1[size_t(k)].p1 + tmp1[size_t(k)].p2;
-        t += tmp1[size_t(k)].p0 + tmp1[size_t(k)].p1 + tmp1[size_t(k)].p2;
-      }
-      for (int i = 0; i < nc; ++i) {
-        if (na1[i] == 0.0) continue;
-        const double a = na1[i] * g->Ac[i];
-        for (int k = 0; k < nphi; ++k) {
-          const BlochNode& q = tmp1[size_t(i) * nphi + k];
-          tw += a * (q.p0 + q.p1 + q.p2);
-          w += a;
-        }
-      }
-      exAxis = nc > 0 ? e / nphi : 0.0;
-      nuAxis = nc > 0 ? t / nphi : 1.0;
-      nuMean = w > 0 ? tw / w : 1.0;
-    }
+    if (n == 0) diagRear(tmp1);
     std::swap(st1, tmp1);
     for (int i = 0; i < nc; ++i)
       for (int k = 0; k < nphi; ++k) Jr1[size_t(i) * nphi + k] = Jx[size_t(i) * nphi + k];
@@ -218,6 +199,28 @@ void BoundMedium::populations(double x, double y, double& p0, double& p1, double
   const double t = q.p0 + q.p1 + q.p2;
   if (!(t > 0)) return;
   p0 = q.p0 / t; p1 = q.p1 / t; p2 = q.p2 / t;
+}
+
+// diagnostics at the rear: excited population and neutral fraction on the axis (centre 0, mean over the angles),
+// area mean of the neutral fraction over the medium
+void BoundMedium::diagRear(const std::vector<BlochNode>& s) {
+  double e = 0.0, t = 0.0, tw = 0.0, w = 0.0;
+  for (int k = 0; k < nphi; ++k) {
+    e += s[size_t(k)].p1 + s[size_t(k)].p2;
+    t += s[size_t(k)].p0 + s[size_t(k)].p1 + s[size_t(k)].p2;
+  }
+  for (int i = 0; i < nc; ++i) {
+    if (na1[i] == 0.0) continue;
+    const double a = na1[i] * g->Ac[i];
+    for (int k = 0; k < nphi; ++k) {
+      const BlochNode& q = s[size_t(i) * nphi + k];
+      tw += a * (q.p0 + q.p1 + q.p2);
+      w += a;
+    }
+  }
+  exAxis = nc > 0 ? e / nphi : 0.0;
+  nuAxis = nc > 0 ? t / nphi : 1.0;
+  nuMean = w > 0 ? tw / w : 1.0;
 }
 
 void BoundMedium::getState(std::vector<double>& out) const {

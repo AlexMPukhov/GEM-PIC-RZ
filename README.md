@@ -1003,15 +1003,21 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
    excited 5P. Rb then ionizes completely at a0 = 5·10⁻⁴ instead of ~10⁻³ (ground-state ADK at 10⁻³: 59 %). The
    resonant excitation moves the ionization front of the vapour.
 
-MPI: the atoms of both levels at the block edge travel in the F message. One rank pipelined and 2 or 3 ranks are
-bit-identical to the serial run, also with ionization (`tests/mpi.sh`).
+**Backends.** The medium runs on all backends.
+- Engine (OpenMP, CUDA): node kernels per slice in the device march: field at the nodes, Bloch step, projection to
+  the modes, commit with the R/L correction. The current enters the slice solve and the macro-atoms ionize with the
+  populations on the device. The host sets the atom densities of the step and the atoms entering the block; the
+  state is uploaded before every march and downloaded after it.
+- MPI: the atoms of both levels at the block edge travel in the F message.
+- Agreement with serial (ionizing Rb deck, `tests/mpi.sh`, ctest `bound_gpu_emulation`):
+  - OpenMP and the GPU emulation agree to 1e-9 (maps identical);
+  - the pipelined step on one rank and 2 or 3 ranks are bit-identical, on the host and in the device march.
 
 **Limits.**
 - Scalar dipole along x: circular polarization and the orientation of other field components are not modelled.
 - No hyperfine, Zeeman or Doppler structure; T1 and T2 are optional constants.
 - ADK for the excited 5P is the s-state formula with the 5P binding energy (beyond barrier suppression the rate is
   capped at the maximum of the ADK expression, as for all levels).
-- Not yet on the device engine (`backend = cuda`); a single run with `backend = openmp` uses the host march.
 - The physics questions of the Rb case (the choice of the V-type atom, ADK per level) were decided by Alexander.
 
 ## Corrections of earlier versions

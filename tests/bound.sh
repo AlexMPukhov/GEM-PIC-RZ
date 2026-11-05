@@ -20,7 +20,6 @@ EXE=$(abspath "$1")
 BACKEND=${2:-serial}
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 python3 -c "import numpy" 2>/dev/null || { echo "bound test skipped: needs python3 with numpy"; exit 77; }
-if [ "$BACKEND" = cuda ]; then echo "bound test skipped: the medium is not yet on the device engine"; exit 77; fi
 WORK=$(mktemp -d)
 cd "$WORK"
 export OMP_PROC_BIND=false

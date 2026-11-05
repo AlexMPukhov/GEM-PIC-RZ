@@ -27,6 +27,8 @@
 namespace gem {
 
 class BoundMedium {
+  friend class Engine;        // uploads / downloads the medium of the device march
+  friend struct EngineState;
  public:
   bool on = false;
   BlochLines L;
@@ -74,6 +76,7 @@ class BoundMedium {
   AdkRates adkL[3];  // ground, excited 1, 2
   void fieldAt(const Fields& F, int n, std::vector<double>& Ex) const;
   void rates(double E0, double E1, double& g0, double& g1, double& g2) const;  // mean of the half-cell ends
+  void diagRear(const std::vector<BlochNode>& s);  // diagnostics of the rear slice (state s of level s^1)
   void project(const std::vector<double>& x, cd* fr, cd* fp) const;  // node values of J_x -> modes (r faces, phi centres)
 };
 

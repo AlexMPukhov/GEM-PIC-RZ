@@ -18,7 +18,7 @@
 #   9. metal wall (tests/wall.deck): steep narrowing and widening tubes on 3 ranks (also on the device) = serial
 #  10. dielectric-lined tube (tests/dielectric_dwa.deck), offset bunch: 1 rank pipelined, 3 ranks (also on the
 #      device) = serial
-#  11. bound electrons with ionization (tests/bound_ionize.deck): 1 rank pipelined, 3 ranks = serial
+#  11. bound electrons with ionization (tests/bound_ionize.deck): 1 rank pipelined, 3 ranks (2 on the device) = serial
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -159,7 +159,11 @@ GEMPIC_PIPELINE=1 "$EXE" "$SRC/tests/bound_ionize.deck" $BW output.dir=bp1 > bp1
 "$CMP" bser/axis_00004.txt bp1/axis_00004.txt 0 0
 run 3 "$SRC/tests/bound_ionize.deck" $BW output.dir=bmp > bmp.log
 for f in axis_00004.txt map_00004.txt; do "$CMP" bser/$f bmp/$f 1e-6 1e-9; done
-echo "  bound electrons with ionization: 1 rank pipelined, 3 ranks = serial"
+if [ -n "$DEV" ]; then  # the medium on the device (2 ranks: the emulation build is slow when oversubscribed)
+  GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 2 "$DEV" "$SRC/tests/bound_ionize.deck" $BW $DB output.dir=bdv > bdv.log
+  for f in axis_00004.txt map_00004.txt; do "$CMP" bser/$f bdv/$f 1e-6 1e-9; done
+fi
+echo "  bound electrons with ionization: 1 rank pipelined, 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device (2 ranks)")"
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi

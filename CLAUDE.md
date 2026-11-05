@@ -117,8 +117,9 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     damping by default) on cell centres x n_phi angles (src/bloch.hpp node step: Cayley with pre-warped frequencies
     and coupling factor tan x/(x cos x); src/bound.*); medium current into the existing current inputs (trapezoidal
     slice current, half-cell current); `ion = <block>` links it to neutral atoms: depopulation, macro-atoms ionize
-    with population-weighted ADK. Serial and MPI host march (state in the F message); not yet on the device engine
-    (open: engine port). Result: resonant excitation lowers the Rb ionization threshold (a0 5e-4 instead of ~1e-3).
+    with population-weighted ADK. Serial, engine (OpenMP / CUDA: BoundV node kernels in Engine::march, state
+    uploaded before and downloaded after every march) and MPI (host or device march; state in the F message).
+    Result: resonant excitation lowers the Rb ionization threshold (a0 5e-4 instead of ~1e-3).
   - **Chained runs** (2026-11-05; handoff CLAUDE-notes gem-pic-rz/chain_handoff.md): `examples/chain_lwfa_fel/`
     (stage 1 down-ramp injection with FBPIC, stage1_fbpic.py; handoff.py; stage 2 acceleration and stage 3 lens,
     chicane, helical undulator with GEM-PIC-RZ; run_chain.sh [ranks]; README there with the numbers), ctest `chain`

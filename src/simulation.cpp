@@ -66,13 +66,6 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   solver.theta = cfg.numerics.theta;
   solver.thetaStiff = cfg.numerics.theta_stiff;
   bound.setup(cfg.bound, g, M, cfg.units, 2.0 * zv.node(Nz));
-  if (bound.on) {
-    const char* pe = std::getenv("GEMPIC_PIPELINE_ENGINE");  // the pipeline's device march (as PipelineRun)
-    if (cfg.numerics.backend == NumericsConfig::Backend::Cuda ||
-        (sb && cfg.numerics.backend == NumericsConfig::Backend::OpenMP && pe && pe[0] == '1'))
-      throw std::runtime_error("bound_electrons: not yet on the device engine (numerics.backend = cuda); use serial or "
-                               "openmp (one rank: the threaded host march, also with MPI)");
-  }
   if (cfg.numerics.beam_consistent) bflux.initRange(M, Nz, g.N, blk.sa, blk.sb);
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
                 cfg.plasma.present ? cfg.plasma.smooth_length_m0 : 0.0);
@@ -140,11 +133,7 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   }
   beginStep();  // matrices of the first step (the engine uploads them)
   if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial) {
-    if (bound.on)  // the bound electrons are not yet on the engine: the host march
-      std::printf("bound_electrons: the parallel engine does not have the medium yet: the host march runs (serial; "
-                  "with MPI or GEMPIC_PIPELINE=1 the particles are pushed by the OpenMP threads)\n");
-    else
-      engine = std::make_unique<Engine>(*this);
+    engine = std::make_unique<Engine>(*this);
   }
 }
 
