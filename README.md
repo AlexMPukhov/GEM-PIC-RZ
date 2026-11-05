@@ -141,6 +141,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `examples/ion_collapse.deck` | mobile hydrogen ions collapsing inside a dense electron bunch (Rosenzweig et al. 2005) |
 | `examples/chain_lwfa_fel/` | chained run: down-ramp injection (FBPIC) → acceleration → plasma lens, chicane and helical undulator (GEM-PIC-RZ), openPMD hand-off between the stages (README there) |
 | `examples/ionization_injection.deck` | ionization injection: N⁵⁺ dopant field-ionized to N⁶⁺/N⁷⁺ by an a0 = 2 pulse (ADK, NIST energies) |
+| `examples/dwa_proton_microbuncher/` | dielectric wakefield structure (quartz-lined copper tube, Petrenko & Sheinman, RuPAC 2016): 600 MeV, 5 nC drive beam in a tapered FODO channel (BBU), proton microbuncher, chicane and proton "klystron"; deck generator `make_deck.py` (README there) |
 
 ## Source layout
 
@@ -910,6 +911,9 @@ All backends agree with the serial run (OpenMP and the device engine in the GPU 
 pipelined step on one rank and MPI on 2 and 3 ranks are bit-identical to it (the running J crosses the blocks in the
 F message, the corrected L of slice b in the R message; `tests/mpi.sh`). Without a `dielectric` block the code paths
 are unchanged.
+
+Example: `examples/dwa_proton_microbuncher/` (a 1 mm quartz-lined tube with an external FODO channel, drive beam,
+proton microbuncher and klystron; its thin lining fills the wake within 4 % of Maxwell's group velocity).
 
 **Limits.** Backward waves are outside the model: reflections at the ends of the medium, at steps and at the jacket
 in −z are missing; gratings and dielectric laser accelerators are out of scope. The energy flow of non-synchronous
