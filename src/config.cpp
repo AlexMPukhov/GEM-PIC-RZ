@@ -1356,6 +1356,54 @@ void readDielectric(const Block& b, const Deck& d, const Units& u, const GridCon
   (void)g;
 }
 
+// block 'bound_electrons': Maxwell-Bloch medium of a V-type atom (element = Rb: D1, D2 built in)
+void readBound(const Block& b, const Deck& d, const Units& u, const GridConfig& g, BoundElectronsConfig& B) {
+  BlockReader r(b, d, u);
+  B.present = true;
+  B.element = r.str("element", "");
+  std::vector<double> lam, fs, ipx;
+  if (B.element == "Rb") {  // D. A. Steck, Rubidium 87 D line data; NIST
+    lam = {794.979e-3, 780.241e-3};  // um
+    fs = {0.342, 0.695};
+    B.ip_ground_eV = 4.177128;
+    ipx = {4.177128 - 1.559591, 4.177128 - 1.589049};  // 5P_1/2, 5P_3/2
+  } else if (!B.element.empty()) {
+    r.failKey("element", "only 'Rb' is built in; give wavelengths and oscillator_strengths instead");
+  }
+  if (r.has("wavelengths")) {
+    lam = r.vec("wavelengths", Dim::Length);
+    for (double& l : lam) l *= u.k0inv_um();  // code -> um
+  }
+  if (r.has("oscillator_strengths")) fs = r.vec("oscillator_strengths", Dim::None);
+  if (r.has("ionization_potentials")) {  // ground, excited 1, excited 2 [eV]
+    auto v = r.vec("ionization_potentials", Dim::Energy);
+    if (v.size() != lam.size() + 1) r.failKey("ionization_potentials", "needs the ground state and every excited state");
+    B.ip_ground_eV = v[0] * 1e6;  // energies come in MeV
+    ipx.assign(v.begin() + 1, v.end());
+    for (double& x : ipx) x *= 1e6;
+  }
+  if (lam.empty() || lam.size() > 2 || fs.size() != lam.size())
+    r.error(b.line, b.label() + " needs one or two lines: element = Rb, or wavelengths and oscillator_strengths");
+  B.lines = int(lam.size());
+  for (int j = 0; j < B.lines; ++j) {
+    if (!(lam[j] > 0 && fs[j] > 0)) r.failKey("wavelengths", "wavelengths and oscillator strengths must be > 0");
+    B.omega[j] = u.lambda0_um / lam[j];
+    B.f[j] = fs[j];
+    // d^2 / (e a0)^2 = f hbar / (2 m omega a0^2) = f E_h / (2 hbar omega); hbar omega [eV] = 1.239842 / lambda[um]
+    B.dipole[j] = std::sqrt(fs[j] * 27.211386 / (2.0 * 1.2398420 / lam[j]));
+    B.ip_excited_eV[j] = ipx.size() > size_t(j) ? ipx[j] : 0.0;
+  }
+  B.density = r.num("density", Dim::Density);
+  if (!(B.density > 0)) r.failKey("density", "must be > 0");
+  B.r_out = r.num("r_out", Dim::Length, 1e300);
+  B.z_start = r.num("z_start", Dim::Length, -1e300);
+  B.z_end = r.num("z_end", Dim::Length, 1e300);
+  B.T1 = r.num("T1", Dim::Time, 0.0);
+  B.T2 = r.num("T2", Dim::Time, 0.0);
+  B.n_phi = int(r.integer("n_phi", 0));
+  if (B.n_phi != 0 && B.n_phi < 2 * g.M + 1) r.failKey("n_phi", "must be >= 2 m_max + 1");
+}
+
 void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig& N) {
   BlockReader r(b, d, u);
 #if defined(GEMPIC_HAVE_CUDA)
@@ -1484,7 +1532,7 @@ std::vector<Config::BoxAdvice> Config::boxAdvice() const {
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
   deck.checkBlockNames({"constants", "grid", "laser", "flying_focus", "plasma", "ion", "bunch", "undulator", "quadrupole",
-                        "plasma_lens", "solenoid", "chicane", "wall", "dielectric", "output", "numerics"});
+                        "plasma_lens", "solenoid", "chicane", "wall", "dielectric", "bound_electrons", "output", "numerics"});
   Config c;
   g_consts = &c.constants;  // the expressions of all blocks see the constants
   struct Reset { ~Reset() { g_consts = nullptr; } } reset;
@@ -1495,6 +1543,10 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   if (const Block* b = deck.single("constants")) readConstants(*b, deck, c.units, c.constants);
   readGrid(*grid, deck, c.units, c.grid, warn);
   if (const Block* b = deck.single("wall")) readWall(*b, deck, c.units, c.grid, c.wall);
+  if (const Block* b = deck.single("bound_electrons")) {
+    readBound(*b, deck, c.units, c.grid, c.bound);
+    if (c.grid.M < 1) throw DeckError(deck.where(b->line) + ": bound_electrons couple to the laser: set grid.m_max >= 1");
+  }
   for (const Block* b : deck.all("dielectric")) {
     DielectricConfig D;
     readDielectric(*b, deck, c.units, c.grid, D);

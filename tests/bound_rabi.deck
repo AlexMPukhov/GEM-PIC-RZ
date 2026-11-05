@@ -1,0 +1,14 @@
+# Bound electrons, Rabi flopping (tests/bound.sh): a resonant two-level line (lambda_j = lambda0, f = 1e-3) of a thin
+# vapour (1e10 cm^-3: no effect on the pulse) and a Gaussian pulse (length_1e L = 20 um, w0 = 50 um). The pulse area
+# on the axis is A = a a0 sqrt(pi) L (a: Rabi frequency per unit field); after the pulse the excited population is
+# sin^2(A/2) (Rabi frequency ~ 1 % of omega0: the rotating-wave result). a0 = 8.79e-4 is A = pi.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 2 um;  r_max = 200 um;  r_absorber = 180 um
+  dzeta = 0.025 um;  window_length = 150 um
+  dz = 0.5 um;  z_end = 0.5 um
+}
+laser { a0 = 8.79e-4; waist = 50 um; length_1e = 20 um; zeta_center = 75 um; polarization = linear }
+bound_electrons { wavelengths = 0.8 um; oscillator_strengths = 1e-3; density = 1e10 cm^-3; r_out = 170 um }
+output { dir = rabi; every = 1; format = text; particles = false }
+numerics { backend = serial }

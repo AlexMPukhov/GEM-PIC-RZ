@@ -28,6 +28,7 @@
 #include "grid.hpp"
 #include "ionization.hpp"
 #include "particles.hpp"
+#include "bound.hpp"
 #include "smoothing.hpp"
 #include "solver.hpp"
 #include "zgrid.hpp"
@@ -110,6 +111,7 @@ class Simulation {
   Fields fold, fnew;            // levels s^0 and s^1
   Currents c0b, c0s, c1b, c1s;  // beam / streaming currents at s^0 and s^1
   FieldSolver solver;
+  BoundMedium bound;  // block bound_electrons (Maxwell-Bloch medium)
   std::vector<Particle> stream, backup, beam;
   std::vector<cd> predR, predP, predRprev, predPprev, Jr, Jp, jr1, jp1, jz1;
   std::mt19937_64 rng;

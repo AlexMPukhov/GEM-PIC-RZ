@@ -334,6 +334,28 @@ struct DielectricConfig {
   double chi(double r, double z) const;                                // eps - 1 at (r, z)
 };
 
+// bound electrons (block 'bound_electrons'): a resonant medium of neutral atoms described by the Maxwell-Bloch
+// equations of a V-type atom (ground state and up to two excited states, e.g. Rb 5S -> 5P_1/2 (D1), 5P_3/2 (D2)). A
+// scalar dipole along the laser polarization (x) couples to E_x; the effective dipoles follow from the oscillator
+// strengths, d_j^2 = f_j e^2 hbar / (2 m omega_j), so that the weak-field susceptibility equals the Lorentz one.
+struct BoundElectronsConfig {
+  bool present = false;
+  std::string element;                 // "Rb": built-in lines
+  int lines = 0;                       // 1 or 2 transitions
+  double omega[2] = {0, 0};            // transition frequencies [omega0]
+  double f[2] = {0, 0};                // oscillator strengths
+  double dipole[2] = {0, 0};           // effective dipoles d_j / (e a0)
+  double ip_ground_eV = 0.0;           // ionization energy of the ground state
+  double ip_excited_eV[2] = {0, 0};    // of the excited states
+  double density = 0.0;                // atom density [n_c] (r < r_out, z_start <= z < z_end)
+  double r_out = 1e300, z_start = -1e300, z_end = 1e300;
+  double T1 = 0.0, T2 = 0.0;           // relaxation times [1/omega0]; 0: none
+  int n_phi = 0;                       // angles of the real-space Bloch nodes (0: 4 (m_max + 1))
+  double densityAt(double r, double z) const {
+    return (z >= z_start && z < z_end && r < r_out) ? density : 0.0;
+  }
+};
+
 // thin magnetic chicane at z: the beam particles move by r56 * delta - delay in zeta
 struct ChicaneConfig {
   double z = 0.0, r56 = 0.0, delay = 0.0, gamma_ref = 1.0;
@@ -427,6 +449,7 @@ struct Config {
   std::vector<ChicaneConfig> chicanes;  // chicane blocks, sorted by z
   WallConfig wall;                      // block 'wall'
   std::vector<DielectricConfig> dielectrics;  // blocks 'dielectric'
+  BoundElectronsConfig bound;               // block 'bound_electrons'
   std::map<std::string, double> constants;  // block 'constants' (code units)
   OutputConfig output;
   NumericsConfig numerics;

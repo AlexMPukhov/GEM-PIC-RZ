@@ -14,6 +14,7 @@
 #include <omp.h>
 #endif
 #include <cmath>
+#include <cstdlib>
 
 namespace gem {
 
@@ -64,6 +65,12 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   solver.setup(g, M);
   solver.theta = cfg.numerics.theta;
   solver.thetaStiff = cfg.numerics.theta_stiff;
+  bound.setup(cfg.bound, g, M, cfg.units.lambda0_um);
+  if (bound.on) {
+    if (sb) throw std::runtime_error("bound_electrons: not yet available in the MPI pipeline (run on one rank)");
+    if (useEngine && cfg.numerics.backend != NumericsConfig::Backend::Serial)
+      throw std::runtime_error("bound_electrons: only numerics.backend = serial yet");
+  }
   if (cfg.numerics.beam_consistent) bflux.initRange(M, Nz, g.N, blk.sa, blk.sb);
   sfilter.setup(g, solver, M, cfg.plasma.present ? cfg.plasma.smooth_length : 0.0,
                 cfg.plasma.present ? cfg.plasma.smooth_length_m0 : 0.0);
@@ -1531,6 +1538,7 @@ void Simulation::march(double s1) {
   std::fill(predPprev.begin(), predPprev.end(), 0.0);
   const bool diel = solver.dielectric();
   if (diel) solver.dielBegin();  // polarization current zero ahead of the window
+  if (bound.on) bound.begin(s0, s1, solver.wallK());  // bound electrons: fresh atoms ahead of the window
 
   for (int n = Nz - 1; n >= 0; --n) {
     if (diel)  // J^0 of slice n from the stored slices n, n+1 of s^0
@@ -1538,6 +1546,7 @@ void Simulation::march(double s1) {
         solver.dielLevel0(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Lr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)],
                           &fold.Lp[fold.c(m, n, 0)], &fold.Rr[fold.f(m, n + 1, 0)], &fold.Lr[fold.f(m, n + 1, 0)],
                           &fold.Rp[fold.c(m, n + 1, 0)], &fold.Lp[fold.c(m, n + 1, 0)]);
+    if (bound.on) bound.level0(n, zv.len(n), fold);  // J^0 of the bound electrons at slice n
     // prediction of j^1 at half-cell n-1: beam part (known) + streaming part of s^0
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i)
@@ -1579,6 +1588,8 @@ void Simulation::march(double s1) {
           }
         }
       }
+      // bound electrons: the medium current of slice n with the fields of this pass (pass 0: the predictor)
+      if (bound.on) bound.level1(n, zv.len(n), fnew, false);
       // field solve, all modes
       for (int m = 0; m <= M; ++m) {
         // four-point current sums, weighted by the interpolation to slice n
@@ -1625,6 +1636,19 @@ void Simulation::march(double s1) {
           jp1[i] = (consistent ? half(bjp, i) : c1b.jp[c1b.c(m, n, i)]) + c1s.jp[c1s.c(m, n, i)];
           jz1[i] = (consistent ? half(bjz, i) : c1b.jz[c1b.c(m, n, i)]) + c1s.jz[c1s.c(m, n, i)];
         }
+        if (bound.on) {  // slice current in the R update (-D [(1 - theta) J^0 + theta J^1] = -D/4 Jr), half-cell in L
+          const double th = cfg.numerics.theta;
+          for (int i = 0; i <= N; ++i) {
+            const size_t k = size_t(m) * (N + 1) + i;
+            Jr[i] += 4.0 * ((1.0 - th) * bound.J0r[k] + th * bound.J1r[k]);
+            jr1[i] += bound.Hr[k];
+          }
+          for (int i = 0; i < N; ++i) {
+            const size_t k = size_t(m) * N + i;
+            Jp[i] += 4.0 * ((1.0 - th) * bound.J0p[k] + th * bound.J1p[k]);
+            jp1[i] += bound.Hp[k];
+          }
+        }
         solver.solveSlice(m, n, &fold.Rr[fold.f(m, n, 0)], &fold.Lr[fold.f(m, n, 0)], &fold.Rp[fold.c(m, n, 0)], &fold.Ez[fold.c(m, n, 0)],
                           &fold.Bz[fold.f(m, n, 0)], &fnew.Rr[fnew.f(m, n + 1, 0)], &fnew.Lr[fnew.f(m, n + 1, 0)],
                           &fnew.Rp[fnew.c(m, n + 1, 0)], &fnew.Lp[fnew.c(m, n + 1, 0)],
@@ -1632,6 +1656,24 @@ void Simulation::march(double s1) {
                           jz1.data(), Jr.data(), Jp.data(), &fnew.Rr[fnew.f(m, n, 0)], &fnew.Lr[fnew.f(m, n, 0)],
                           &fnew.Rp[fnew.c(m, n, 0)], &fnew.Lp[fnew.c(m, n, 0)], &fnew.Ez[fnew.c(m, n, 0)],
                           &fnew.Bz[fnew.f(m, n, 0)]);
+      }
+    }
+    if (bound.on) {  // slice n is final: the state of the atoms with its fields; R, L of slice n follow the change
+      const std::vector<cd> j1r = bound.J1r, j1p = bound.J1p, hr = bound.Hr, hp = bound.Hp;
+      bound.level1(n, zv.len(n), fnew, true);
+      const double qR = Delta * cfg.numerics.theta, qL = 0.5 * zv.len(n);
+      const int K = solver.wallK();
+      for (int m = 0; m <= M; ++m) {
+        for (int i = 1; i <= K; ++i) {
+          const size_t k = size_t(m) * (N + 1) + i;
+          fnew.Rr[fnew.f(m, n, i)] -= qR * (bound.J1r[k] - j1r[k]);
+          fnew.Lr[fnew.f(m, n, i)] -= qL * (bound.Hr[k] - hr[k]);
+        }
+        for (int i = 0; i < K; ++i) {
+          const size_t k = size_t(m) * N + i;
+          fnew.Rp[fnew.c(m, n, i)] -= qR * (bound.J1p[k] - j1p[k]);
+          fnew.Lp[fnew.c(m, n, i)] -= qL * (bound.Hp[k] - hp[k]);
+        }
       }
     }
     // electrons freed in this slice start streaming from slice n

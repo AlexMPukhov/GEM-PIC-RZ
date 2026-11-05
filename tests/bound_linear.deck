@@ -1,0 +1,13 @@
+# Bound electrons, weak field (tests/bound.sh): a wide 840 nm pulse (a0 = 1e-4, nearly a plane wave) through
+# Rb vapour (D1 795 nm, D2 780 nm) of 4e17 cm^-3. tests/bound.py compares the spectral phase after 50 um with the
+# Lorentz susceptibility of the two lines.
+grid {
+  lambda0 = 0.84 um;  m_max = 1
+  radial_grid = uniform;  dr = 2 um;  r_max = 120 um;  r_absorber = 100 um
+  dzeta = 0.0125 um;  window_length = 60 um
+  dz = 0.5 um;  z_end = 50 um
+}
+laser { a0 = 1e-4; waist = 25 um; length_1e = 10 um; zeta_center = 35 um; polarization = linear }
+bound_electrons { element = Rb; density = 4e17 cm^-3; r_out = 95 um }
+output { dir = linear; every = 100; format = text; particles = false }
+numerics { backend = serial }

@@ -1,0 +1,14 @@
+# Bound electrons, static limit (tests/bound.sh): one line far above the laser (lambda_j = 80 nm, omega_j = 10 omega0,
+# f = 1; 1.7246e21 cm^-3: chi = n_a f / (omega_j^2 - omega0^2) = 0.01), resolved (omega_j h = 0.24), against the
+# dielectric with eps = 1.01 (the same deck with the dielectric block): the group delays differ by the dispersion of
+# the line. A weak (a0 = 1e-6), wide pulse.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 4 um;  r_max = 80 um;  r_absorber = 64 um
+  dzeta = 0.003 um;  window_length = 20 um
+  dz = 0.5 um;  z_end = 30 um
+}
+laser { a0 = 1e-6; waist = 20 um; length_1e = 3 um; zeta_center = 12 um; polarization = linear }
+bound_electrons { wavelengths = 0.08 um; oscillator_strengths = 1; density = 1.7246e21 cm^-3; r_out = 60 um }
+output { dir = static; every = 60; format = text; particles = false }
+numerics { backend = serial }

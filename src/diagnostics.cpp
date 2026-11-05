@@ -231,6 +231,7 @@ void Simulation::report(const DiagSums& D, bool files) {
   std::printf("step %5d  z = %8.4f mm  |Ex|max = %.3f  Ez = [%.4f, %.4f]  trapped %.3f pC (N = %zu)", step_no,
               s0 * um * 1e-3, D.maxEx, D.minEz, D.maxEz, cfg.units.codeToPC(tr.Q), tr.n);
   if (!cfg.ions.empty()) std::printf("  Zn_i/n0(axis)max = %.3f", D.nimax);
+  if (bound.on) std::printf("  bound: excited on the axis at the rear %.6f", bound.excitedAxis());
   std::printf("\n");
   for (size_t s = 0; s < cfg.ions.size(); ++s) {
     if (!cfg.ions[s].ionization) continue;
