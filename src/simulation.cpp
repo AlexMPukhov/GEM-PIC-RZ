@@ -67,7 +67,9 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   solver.thetaStiff = cfg.numerics.theta_stiff;
   bound.setup(cfg.bound, g, M, cfg.units, 2.0 * zv.node(Nz));
   if (bound.on) {
-    if (cfg.numerics.backend == NumericsConfig::Backend::Cuda || std::getenv("GEMPIC_PIPELINE_ENGINE"))
+    const char* pe = std::getenv("GEMPIC_PIPELINE_ENGINE");  // the pipeline's device march (as PipelineRun)
+    if (cfg.numerics.backend == NumericsConfig::Backend::Cuda ||
+        (sb && cfg.numerics.backend == NumericsConfig::Backend::OpenMP && pe && pe[0] == '1'))
       throw std::runtime_error("bound_electrons: not yet on the device engine (numerics.backend = cuda); use serial or "
                                "openmp (one rank: the threaded host march, also with MPI)");
   }
