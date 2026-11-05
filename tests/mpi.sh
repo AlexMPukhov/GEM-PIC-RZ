@@ -16,6 +16,8 @@
 #      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run, also with the
 #      per-step diagnostics computed during the next step (steps without output)
 #   9. metal wall (tests/wall.deck): steep narrowing and widening tubes on 3 ranks (also on the device) = serial
+#  10. dielectric-lined tube (tests/dielectric_dwa.deck), offset bunch: 1 rank pipelined, 3 ranks (also on the
+#      device) = serial
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -135,6 +137,19 @@ for wl in "12 9" "9 12"; do
   fi
 done
 echo "  metal wall, narrowing and widening tube: 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device")"
+# dielectric (tests/dielectric_dwa.deck, shortened, offset bunch: m = 0 and the coupled m = 1 system): the running
+# polarization currents cross the blocks in the F message, the corrected L of slice b in the R message
+DW="grid.z_end=0.3mm grid.window_length=600um bunch.zeta_center=560um grid.m_max=1 bunch.x0=10um output.every=15     numerics.backend=serial"
+"$EXE" "$SRC/tests/dielectric_dwa.deck" $DW output.dir=dser > dser.log
+GEMPIC_PIPELINE=1 "$EXE" "$SRC/tests/dielectric_dwa.deck" $DW output.dir=dp1 > dp1.log
+"$CMP" dser/axis_00015.txt dp1/axis_00015.txt 0 0
+run 3 "$SRC/tests/dielectric_dwa.deck" $DW output.dir=dmp > dmp.log
+for f in axis_00015.txt map_00015.txt; do "$CMP" dser/$f dmp/$f 1e-6 1e-9; done
+if [ -n "$DEV" ]; then
+  GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 3 "$DEV" "$SRC/tests/dielectric_dwa.deck" $DW $DB output.dir=ddv > ddv.log
+  for f in axis_00015.txt map_00015.txt; do "$CMP" dser/$f ddv/$f 1e-6 1e-9; done
+fi
+echo "  dielectric-lined tube, offset bunch: 1 rank pipelined, 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device")"
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi

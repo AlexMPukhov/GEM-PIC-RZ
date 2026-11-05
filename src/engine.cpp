@@ -145,6 +145,17 @@ struct StiffV {
   const double *lca, *lcb, *lcc, *lfa, *lfb, *lfc;
 };
 
+// dielectric (FieldSolver::setDielectric): chi of the levels s^1 and s^0 on the centres and faces, the LU factors of
+// the pentadiagonal slice matrices (5 (2N+1) per class and mode, Banded5 layout, (b_0, e_0, b_1, ...) interleaved),
+// and the running polarization currents J^0, J^1 of the transverse components by slice parity n & 1:
+// r components [2][(M+1)(N+1)], phi components [2][(M+1) N]
+struct DielV {
+  int on;
+  const double *chiC1, *chiF1, *chiC0, *chiF0;
+  const cplx* band;
+  cplx *J0r, *J0p, *J1r, *J1p;
+};
+
 struct Params {
   int M, Nz, N;
   double Delta;  // step of the current s^0 -> s^1
@@ -169,6 +180,7 @@ struct Params {
   const AdkV* adk;
   double vz_min, vz_beam;
   unsigned long long seed;
+  DielV diel;
 };
 
 // ---------------------------------------------------------------- ADK rate
@@ -564,7 +576,7 @@ GEM_HD inline void triSolveTeam(const Team& t, const TriV& T, const cplx* rhs, c
   t.barrier();
 }
 
-constexpr int SOLVE_SCRATCH = 20;  // arrays of N+1 per mode
+constexpr int SOLVE_SCRATCH = 34;  // arrays of N+1 per mode (20; 14 more with a dielectric)
 
 // numerics.theta_stiff (FieldSolver::lapRows, thetaApply, stiffSolve), run by one thread
 GEM_HD inline void lapRowsDev(const double* la, const double* lb, const double* lc, int i0, int n, const cplx* x,
@@ -821,6 +833,103 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     Qp[i] = Lp1[i] - 0.25 * h * ((im / g.c[i]) * e1[i] + opg(b1, i)) - 0.5 * h * jp1(i);
   });
   t.barrier();
+  if (P.diel.on) {  // dielectric (FieldSolver::solveSliceDiel, the same operations in the same order)
+    const DielV& Dv = P.diel;
+    cplx *Pkr = scratch + 20 * L, *Qkr = scratch + 21 * L, *Pkp = scratch + 22 * L, *Qkp = scratch + 23 * L;
+    cplx *Knr = scratch + 24 * L, *Knp = scratch + 25 * L;
+    cplx *kRr = scratch + 26 * L, *kLr = scratch + 27 * L, *kRp = scratch + 28 * L, *kLp = scratch + 29 * L;
+    cplx *kEr = scratch + 30 * L, *kEp = scratch + 31 * L, *xs = scratch + 32 * L;  // xs: 2N+1 entries
+    const size_t npf = size_t(P.M + 1) * (N + 1), npc = size_t(P.M + 1) * N;
+    const size_t of = size_t(m) * (N + 1), oc = size_t(m) * N;
+    const int pn = n & 1, pa = (n + 1) & 1;
+    const cplx *J0r = Dv.J0r + pn * npf, *J0p = Dv.J0p + pn * npc;
+    const cplx *J1ra = Dv.J1r + pa * npf, *J1pa = Dv.J1p + pa * npc;
+    cplx *J1r = Dv.J1r + pn * npf, *J1p = Dv.J1p + pn * npc;
+    const double w0d = 1.0 - P.theta, tD = P.theta * D, al = 0.5 * tD - 0.125 * h, be = 0.5 * tD + 0.125 * h;
+    par::teamFor(t, N + 1, [&](int i) {
+      const double x = Dv.chiF1[i];
+      const cplx E1 = Er1[i];
+      const cplx Kn = -1.0 * J1ra[of + i] - (2.0 * x / h) * E1;
+      Knr[i] = Kn;
+      Pkr[i] = (i == 0) ? cplx() : Pr[i] - D * (w0d * J0r[of + i] + P.theta * Kn);
+      Qkr[i] = (i == 0) ? cplx() : Qr[i] + 0.5 * x * E1;
+      tf1[i] = cplx();  // b = 0 and e = the wall value only: the known parts
+      tc1[i] = cplx();
+    });
+    par::teamFor(t, N, [&](int i) {
+      const double x = Dv.chiC1[i];
+      const cplx E1 = Ep1[i];
+      const cplx Kn = -1.0 * J1pa[oc + i] - (2.0 * x / h) * E1;
+      Knp[i] = Kn;
+      Pkp[i] = Pp[i] - D * (w0d * J0p[oc + i] + P.theta * Kn);
+      Qkp[i] = Qp[i] + 0.5 * x * E1;
+    });
+    const bool slopedD = P.wNeu && P.wSlope != 0.0;
+    const cplx ewD = slopedD ? -P.wSlope * 0.5 * (Rr0[P.wK] + fo.Lr[fo.f(m, n, P.wK)]) : cplx();
+    t.barrier();
+    if (P.wNeu && t.leader()) tc1[P.wK] = ewD;
+    t.barrier();
+    // transverse fields of (e, b) and the known parts (FieldSolver::dielTransverse)
+    auto trans = [&](const cplx* ee, const cplx* bb, cplx* oRr, cplx* oLr, cplx* oRp, cplx* oLp, cplx* oEr,
+                     cplx* oEp) {
+      par::teamFor(t, N + 1, [&](int i) {
+        if (i == 0) { oRr[0] = cplx(); oLr[0] = cplx(); oEr[0] = cplx(); return; }
+        const double x = Dv.chiF1[i], mu = 1.0 / (1.0 + tD * x / h + 0.25 * x);
+        const cplx A = opG(ee, i), B = opMf(bb, i);
+        const cplx E = mu * (0.5 * (Pkr[i] + Qkr[i]) + al * A + be * B);
+        oEr[i] = E;
+        oRr[i] = Pkr[i] + tD * (A + B) - (2.0 * tD * x / h) * E;
+        oLr[i] = Qkr[i] - 0.25 * h * (A - B) - 0.5 * x * E;
+      });
+      par::teamFor(t, N, [&](int i) {
+        const double x = Dv.chiC1[i], mu = 1.0 / (1.0 + tD * x / h + 0.25 * x);
+        const cplx A = (im / g.c[i]) * ee[i], B = -1.0 * opg(bb, i);
+        const cplx E = mu * (0.5 * (Pkp[i] + Qkp[i]) + al * A + be * B);
+        oEp[i] = E;
+        oRp[i] = Pkp[i] + tD * (A + B) - (2.0 * tD * x / h) * E;
+        oLp[i] = Qkp[i] - 0.25 * h * (A - B) - 0.5 * x * E;
+      });
+      t.barrier();
+    };
+    trans(tc1, tf1, kRr, kLr, kRp, kLp, kEr, kEp);
+    par::teamFor(t, N + 1, [&](int i) { rf[i] = 0.5 * (kRr[i] - kLr[i]); });  // known B_phi
+    par::teamFor(t, N, [&](int i) { rc[i] = 0.5 * (kLp[i] - kRp[i]); });      // known B_r
+    t.barrier();
+    // right-hand sides, interleaved; decoupled rows 0 (FieldSolver::rowInB, rowInE)
+    par::teamFor(t, N + 1, [&](int i) {
+      const bool in = !(i > P.wK || (i == P.wK && !P.wNeu) || (m > 0 && i == 0));
+      xs[2 * i] = in ? 16.0 * b1[i] - 8.0 * h * (opCE(Er1, Ep1, i) + opCE(kEr, kEp, i)) : cplx();
+    });
+    par::teamFor(t, N, [&](int i) {
+      xs[2 * i + 1] = (i < P.wK) ? 16.0 * (1.0 + Dv.chiC1[i]) * e1[i] +
+                                       8.0 * h * (opCB(Bp1, Br1, i) + opCB(rf, rc, i)) - 16.0 * h * jz1(i)
+                                 : cplx();
+    });
+    t.barrier();
+    if (t.leader()) band5Dev(Dv.band + size_t(T) * 5 * (2 * N + 1), 2 * N + 1, xs);
+    t.barrier();
+    par::teamFor(t, N + 1, [&](int i) { b[i] = xs[2 * i]; });
+    par::teamFor(t, N, [&](int i) { e[i] = xs[2 * i + 1]; });
+    t.barrier();
+    if (P.wNeu && t.leader()) e[P.wK] = ewD;
+    t.barrier();
+    trans(e, b, Rr, Lr, Rp, Lp, kEr, kEp);
+    par::teamFor(t, N + 1, [&](int i) {
+      J1r[of + i] = (i == 0 || i > P.wK) ? cplx() : Knr[i] + (2.0 * Dv.chiF1[i] / h) * kEr[i];
+    });
+    par::teamFor(t, N, [&](int i) { J1p[oc + i] = (i >= P.wK) ? cplx() : Knp[i] + (2.0 * Dv.chiC1[i] / h) * kEp[i]; });
+    if (P.wNeu) {  // nothing inside the metal (FieldSolver::maskWall)
+      t.barrier();
+      par::teamFor(t, N + 1, [&](int i) {
+        if (i > P.wK) { Rr[i] = cplx(); Lr[i] = cplx(); b[i] = cplx(); }
+      });
+      par::teamFor(t, N, [&](int i) {
+        if (i >= P.wK) { Rp[i] = cplx(); Lp[i] = cplx(); }
+        if (i > P.wK) e[i] = cplx();
+      });
+    }
+    return;
+  }
   // B_z
   par::teamFor(t, N + 1, [&](int i) { tf1[i] = 0.5 * (Pr[i] + Qr[i]); });
   par::teamFor(t, N, [&](int i) { tc1[i] = 0.5 * (Pp[i] + Qp[i]); });
@@ -1151,6 +1260,34 @@ struct EngineState {
   }
   par::Array<double> stiffA, stiffS, stiffL;
   par::Array<cplx> stiffBc, stiffBf;
+  // dielectric (FieldSolver::setDielectric): chi of both levels every step, the band matrices when they change,
+  // the running polarization currents (allocated once)
+  par::Array<double> dielChi;
+  par::Array<cplx> dielBand, dielJ;
+  int dielVersion = -1;
+  void uploadDiel(const FieldSolver& fs, int M) {
+    if (!fs.dielectric()) { P.diel = dev::DielV{0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                                nullptr, nullptr}; return; }
+    const int N = fs.N;
+    std::vector<double> chi;
+    for (const auto* v : {&fs.dChiC1, &fs.dChiF1, &fs.dChiC0, &fs.dChiF0}) chi.insert(chi.end(), v->begin(), v->end());
+    if (dielChi.capacity() != chi.size()) dielChi.assign(chi.data(), chi.size());
+    else par::upload(dielChi.data(), chi.data(), chi.size());
+    if (fs.version() != dielVersion) {
+      std::vector<cplx> band;
+      for (const Banded5& B : fs.Bd)
+        for (const cd& a : B.A) band.push_back(cplx(a.real(), a.imag()));
+      if (dielBand.capacity() != band.size()) dielBand.assign(band.data(), band.size());
+      else par::upload(dielBand.data(), band.data(), band.size());
+      dielVersion = fs.version();
+    }
+    const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+    if (dielJ.capacity() != 4 * (npf + npc)) dielJ.clear(4 * (npf + npc));
+    const double* c = dielChi.data();
+    cplx* J = dielJ.data();
+    P.diel = dev::DielV{1, c, c + N, c + 2 * N + 1, c + 3 * N + 1, dielBand.data(),
+                        J, J + 2 * npf, J + 2 * npf + 2 * npc, J + 4 * npf + 2 * npc};
+  }
   dev::Params P{};
   // fields and currents: index 0/1 swap every step
   dev::FieldStore F[2];
@@ -1426,6 +1563,7 @@ void Engine::step() {
   E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, E.P.M);
+  E.uploadDiel(sim.solver, E.P.M);
   extendWall();
   const Params P = E.P;
   const int M = P.M, Nz = P.Nz, N = P.N;
@@ -1663,6 +1801,22 @@ void Engine::march(const MarchSpec& ms) {
   Profile& prof = E.prof;
   const long streamCap = ms.streamCap, bornCap = ms.bornCap;
   const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+  // dielectric: the running polarization currents are zero ahead of the window (or come from the front rank)
+  if (P.diel.on) {
+    par::zero(E.dielJ.data(), E.dielJ.capacity());
+    if (ms.bm && ms.bm->dielFront) {
+      const std::vector<cd>& v = *ms.bm->dielFront;
+      if (v.size() != 2 * (npf + npc)) throw std::runtime_error("dielectric: polarization message of the wrong size");
+      std::vector<cplx> h(v.size());
+      for (size_t i = 0; i < v.size(); ++i) h[i] = cplx(v[i].real(), v[i].imag());
+      const int p = (ms.nHi + 1) & 1;
+      cplx* J = E.dielJ.data();
+      par::upload(J + p * npf, h.data(), npf);                                   // J^0_r
+      par::upload(J + 2 * npf + p * npc, h.data() + npf, npc);                  // J^0_phi
+      par::upload(J + 2 * npf + 2 * npc + p * npf, h.data() + npf + npc, npf);  // J^1_r
+      par::upload(J + 4 * npf + 2 * npc + p * npc, h.data() + 2 * npf + npc, npc);
+    }
+  }
   // ---- 4. zeta march
   Particle *stream = E.stream.data(), *backup = E.backup.data(), *born = E.born.data();
   const bool blockMode = ms.bm != nullptr;
@@ -1685,6 +1839,28 @@ void Engine::march(const MarchSpec& ms) {
     cplx* predPc = E.predP[E.ip].data();
     const cplx* predRprev = E.pred[1 - E.ip].data();
     const cplx* predPprev = E.predP[1 - E.ip].data();
+    if (P.diel.on) {  // J^0 of slice n from the slices n, n+1 of s^0 (FieldSolver::dielLevel0)
+      const DielV Dv = P.diel;
+      const int pn = n & 1, pa = (n + 1) & 1;
+      const double h = P.zv.len(n);
+      par::forN(long(npf), GEM_LAMBDA(long idx) {
+        const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+        const double x = Dv.chiF0[i];
+        Dv.J0r[pn * npf + idx] =
+            (x == 0.0 || i == 0)
+                ? cplx()
+                : -1.0 * Dv.J0r[pa * npf + idx] - (x / h) * ((fo.Rr[fo.f(m, n + 1, i)] + fo.Lr[fo.f(m, n + 1, i)]) -
+                                                         (fo.Rr[fo.f(m, n, i)] + fo.Lr[fo.f(m, n, i)]));
+      });
+      par::forN(long(npc), GEM_LAMBDA(long idx) {
+        const int m = int(idx / N), i = int(idx % N);
+        const double x = Dv.chiC0[i];
+        Dv.J0p[pn * npc + idx] =
+            (x == 0.0) ? cplx()
+                       : -1.0 * Dv.J0p[pa * npc + idx] - (x / h) * ((fo.Rp[fo.c(m, n + 1, i)] + fo.Lp[fo.c(m, n + 1, i)]) -
+                                                                (fo.Rp[fo.c(m, n, i)] + fo.Lp[fo.c(m, n, i)]));
+      });
+    }
     for (int it = 0; it < iters; ++it) {
       // prepare: predicted j^1 at n-1, predictor fields, zero half-cell n, |E| bound
       par::teams(1, GEM_LAMBDA(const Team& t) {
@@ -1878,12 +2054,28 @@ void Engine::march(const MarchSpec& ms) {
           const int m = idx / (N + 1), i = idx % (N + 1);
           if (i == 0 || i > P.wK) return;  // inside the wall: faces <= K
           const cplx jt = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
+          if (P.diel.on) {  // R and L follow the local relation of the medium (FieldSolver::dielCorrection)
+            const double h1 = P.zv.len(n + 1), tD = P.theta * Delta, x = P.diel.chiF1[i];
+            const double mu = 1.0 / (1.0 + tD * x / h1 + 0.25 * x);
+            const cplx dP = -q * (jt - predRprev[idx]);
+            fn.Rr[fn.f(m, n + 1, i)] += (1.0 - tD * x * mu / h1) * dP;
+            fn.Lr[fn.f(m, n + 1, i)] += (-0.25 * x * mu) * dP;
+            return;
+          }
           fn.Rr[fn.f(m, n + 1, i)] -= q * (jt - predRprev[idx]);
         });
         par::teamFor(t, int(npc), [&](int idx) {
           const int m = idx / N, i = idx % N;
           if (i >= P.wK) return;  // centres < K
           const cplx jt = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
+          if (P.diel.on) {
+            const double h1 = P.zv.len(n + 1), tD = P.theta * Delta, x = P.diel.chiC1[i];
+            const double mu = 1.0 / (1.0 + tD * x / h1 + 0.25 * x);
+            const cplx dP = -q * (jt - predPprev[idx]);
+            fn.Rp[fn.c(m, n + 1, i)] += (1.0 - tD * x * mu / h1) * dP;
+            fn.Lp[fn.c(m, n + 1, i)] += (-0.25 * x * mu) * dP;
+            return;
+          }
           fn.Rp[fn.c(m, n + 1, i)] -= q * (jt - predPprev[idx]);
         });
       }
@@ -2295,6 +2487,20 @@ void Engine::swapPreAbsorber() {
   });
 }
 
+void Engine::dielJ(int n, std::vector<cd>& out) {
+  EngineState& E = *st;
+  const size_t npf = size_t(sim.M + 1) * (sim.g.N + 1), npc = size_t(sim.M + 1) * sim.g.N;
+  std::vector<cplx> h(2 * (npf + npc));
+  const int p = n & 1;
+  const cplx* J = E.dielJ.data();
+  par::download(h.data(), J + p * npf, npf);
+  par::download(h.data() + npf, J + 2 * npf + p * npc, npc);
+  par::download(h.data() + npf + npc, J + 2 * npf + 2 * npc + p * npf, npf);
+  par::download(h.data() + 2 * npf + npc, J + 4 * npf + 2 * npc + p * npc, npc);
+  out.resize(h.size());
+  for (size_t i = 0; i < h.size(); ++i) out[i] = cd(h[i].re, h[i].im);
+}
+
 void Engine::marchBlock(const BlockMarch& bm) {
   using namespace dev;
   EngineState& E = *st;
@@ -2306,6 +2512,7 @@ void Engine::marchBlock(const BlockMarch& bm) {
   E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, M);
+  E.uploadDiel(sim.solver, M);
   E.prof.start();
   extendWall();
   E.Cs[1 - E.iold].zero();

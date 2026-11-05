@@ -87,6 +87,7 @@ class PipelineRun {
   // particles from the neighbours for the current step
   std::vector<Particle> halo, inContinue, inFinished, inTransfer;
   std::vector<cd> predRfront, predPfront;  // prediction of the front rank at slice b
+  std::vector<cd> dielFront;               // dielectric: the front rank's running polarization currents at slice b
   std::vector<cd> dFrontR, dFrontP;  // numerics.predictor = zeta: the front rank's j^1 - j^0 (streaming) at half-cell b
   Currents H;                              // currents of the halo copies (half-cells below a)
   Currents Tr;                             // trapped deposits of the front rank into b-1, b-2
@@ -230,13 +231,20 @@ class PipelineRun {
     for (auto* v : {&F.Rp, &F.Lp, &F.Ez})
       for (int m = 0; m <= S.M; ++m) B.getRaw(&(*v)[F.c(m, n, 0)], sizeof(cd) * S.g.N);
   }
+  // the corrected R of a slice (dielectric: and L, which the correction changes as well)
   void putSliceR(Buffer& B, const Fields& F, int n) const {
     for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Rr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
     for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Rp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
+    if (!S.solver.dielectric()) return;
+    for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Lr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
+    for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Lp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
   }
   void getSliceR(Buffer& B, Fields& F, int n) {
     for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Rr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
     for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Rp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
+    if (!S.solver.dielectric()) return;
+    for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Lr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
+    for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Lp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
   }
   void putHalf(Buffer& B, const Currents& C, int k) const {
     const int N = S.g.N;
@@ -621,6 +629,7 @@ void PipelineRun::step(Buffer& F) {
   if (r < P - 1) {
     Buffer& B = F;
     getSlice(B, S.fnew, b);
+    if (S.solver.dielectric()) dielFront = B.getVec<cd>();  // running J^0, J^1 at slice b
     predRfront = B.getVec<cd>();
     predPfront = B.getVec<cd>();
     dFrontR = B.getVec<cd>();
@@ -774,8 +783,20 @@ void PipelineRun::step(Buffer& F) {
   std::vector<Particle> newForFront;
   int done = 0;
   prof.stop(Prof::BEAM);
+  const bool diel = S.solver.dielectric();
+  if (diel && !eng) {  // running polarization currents: zero ahead of the window, else those of the front rank
+    if (r < P - 1) S.solver.dielSet(dielFront);
+    else S.solver.dielBegin();
+  }
   if (eng) deviceMarch(k, s1, newForFront, transferDown);
   else for (int n = b - 1; n >= a; --n) {
+    if (diel)  // J^0 of slice n (Simulation::march)
+      for (int m = 0; m <= M; ++m) {
+        const Fields& fo = S.fold;
+        S.solver.dielLevel0(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Lr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)],
+                            &fo.Lp[fo.c(m, n, 0)], &fo.Rr[fo.f(m, n + 1, 0)], &fo.Lr[fo.f(m, n + 1, 0)],
+                            &fo.Rp[fo.c(m, n + 1, 0)], &fo.Lp[fo.c(m, n + 1, 0)]);
+      }
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i) {
         const cd c1 = (n == a && r > 0) ? predBelowR[m * (N + 1) + i]
@@ -891,15 +912,32 @@ void PipelineRun::step(Buffer& F) {
       for (int m = 0; m <= M; ++m) {
         for (int i = 1; i <= K; ++i) {
           cd jt = S.c1b.jr[S.c1b.f(m, n, i)] + S.c1s.jr[S.c1s.f(m, n, i)];
+          if (diel) {  // (Simulation::march)
+            double fR, fL;
+            S.solver.dielCorrection(S.solver.classOf(n + 1), true, i, fR, fL);
+            const cd dP = -q * (jt - S.predRprev[m * (N + 1) + i]);
+            S.fnew.Rr[S.fnew.f(m, n + 1, i)] += fR * dP;
+            S.fnew.Lr[S.fnew.f(m, n + 1, i)] += fL * dP;
+            continue;
+          }
           S.fnew.Rr[S.fnew.f(m, n + 1, i)] -= q * (jt - S.predRprev[m * (N + 1) + i]);
         }
         for (int i = 0; i < K; ++i) {
           cd jt = S.c1b.jp[S.c1b.c(m, n, i)] + S.c1s.jp[S.c1s.c(m, n, i)];
+          if (diel) {
+            double fR, fL;
+            S.solver.dielCorrection(S.solver.classOf(n + 1), false, i, fR, fL);
+            const cd dP = -q * (jt - S.predPprev[m * N + i]);
+            S.fnew.Rp[S.fnew.c(m, n + 1, i)] += fR * dP;
+            S.fnew.Lp[S.fnew.c(m, n + 1, i)] += fL * dP;
+            continue;
+          }
           S.fnew.Rp[S.fnew.c(m, n + 1, i)] -= q * (jt - S.predPprev[m * N + i]);
         }
       }
       absorb(n + 1, s1);  // slice n+1 is final
     }
+    if (diel) S.solver.dielNext();
     S.predRprev.swap(S.predR);
     S.predPprev.swap(S.predP);
     if (++done == pf + 3 && r < P - 1) sendFront(k, newForFront);
@@ -932,6 +970,12 @@ void PipelineRun::step(Buffer& F) {
       if (meanReady) B.putRaw(meanOut.data.data(), meanOut.data.size());
     }
     putSlice(B, S.fnew, a);
+    if (S.solver.dielectric()) {  // running J^0, J^1 at slice a for the march of the rear rank
+      std::vector<cd> J;
+      if (eng) eng->dielJ(a, J);
+      else S.solver.dielGet(J);
+      B.putVec(J);
+    }
     B.putVec(S.predRprev);  // = prediction made at slice a
     B.putVec(S.predPprev);
     {  // numerics.predictor = zeta: j^1 - j^0 of the streaming current at half-cell a (the rear rank's slice a - 1)
@@ -1048,6 +1092,7 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   if (r < P - 1) {
     bm.predFrontR = &predRfront; bm.predFrontP = &predPfront;
     bm.dFrontR = &dFrontR; bm.dFrontP = &dFrontP;
+    if (S.solver.dielectric()) bm.dielFront = &dielFront;
   }
   bm.absorbFirst = r == 0;
   bm.iF = mean ? iF : N + 1;
