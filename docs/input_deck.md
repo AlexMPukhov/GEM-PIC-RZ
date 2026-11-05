@@ -529,6 +529,32 @@ every such bunch ("box for bunch …") and warns if the box is smaller:
   ∫(1 + K_eff²)/(2γ²) dz.
 - **No check in a plasma:** there the field is screened over c/ω_p.
 
+### Chaining stages
+
+A long chain (injector → accelerator → transport → undulator) is computed stage by stage: every stage writes the beam
+as openPMD particles (`output.format = openpmd`, `particles = true`), and the next stage reads it with
+`bunch { file = … }`. Worked example: [`examples/chain_lwfa_fel/`](../examples/chain_lwfa_fel/README.md) (density
+down-ramp injection with FBPIC, acceleration, plasma lens, chicane and undulator with GEM-PIC-RZ).
+
+- **What is handed over:** positions relative to the charge centroid and momenta, per particle with its weight; the
+  time of the file does not matter. Fields are not handed over: a laser stage starts its laser again (analytically,
+  or from a LASY file, `laser { file = … }`), and the beam starts with its co-moving self-field.
+- **Placement:** `zeta_center` puts the centroid of the selected particles into the new window. Behind a laser keep
+  the distance to the laser centre of the previous stage (`examples/chain_lwfa_fel/handoff.py` computes it); in a
+  vacuum stage put the beam near the front of the window with room for the slippage behind the radiation front, and
+  with the gaps of the summary line "box for bunch" at both ends.
+- **Selection and resampling:** `select` keeps a part of the beam (e.g. an energy window: `"gamma > 290"`), its
+  centroid then defines `z`; `macroparticles` resamples to equal weights, `shot_noise = fawley` with
+  `noise_wavelength = λ_r` gives the shot noise of the real number of electrons for an FEL stage.
+- **Other codes:** any code that writes openPMD 1.x particles (FBPIC, HiPACE++, WarpX, …): electrons or positrons;
+  choose the species with `file_species` and the iteration with `file_iteration`.
+- **Check (`tests/chain.sh`, ctest `chain`):** 2 steps of `tests/regression.deck` → import with a selection → drift,
+  thin chicane and 10 undulator periods (`tests/chain_fel.deck`): the moments of the imported beam (charge, energy,
+  spread, sizes, emittances) equal those computed by python from the stage-1 file with the same selection (to the
+  printed digits, < 2e-4); on the particle data the chicane moves the centroid by R56⟨δ⟩ − delay (− the slippage of
+  the step) to 0.5 nm and gives the rms length of the mapped particles to 1e-4; the power at λ_r grows 15-fold in
+  the 10 periods.
+
 ## `undulator` (0 … N blocks)
 
 A static undulator field that acts on all particles (bunches, trapped and plasma particles). The field solver does not see it. Several blocks add up, e.g. two sections with a gap.

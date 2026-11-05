@@ -228,6 +228,10 @@ if(GEMPIC_HAVE_HDF5)
   # beams from files (openPMD, native), selection, resampling, Fawley shot noise
   add_test(NAME beam_import
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/beam_import.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>)
+  # chained runs (examples/chain_lwfa_fel, reduced): openPMD hand-off, chicane on the particle data, FEL growth
+  add_test(NAME chain
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/chain.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>)
+  set_tests_properties(chain PROPERTIES SKIP_RETURN_CODE 77)
   # openPMD output: validator (if installed), fields and particles against the native files
   add_test(NAME openpmd
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
