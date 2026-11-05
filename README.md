@@ -139,6 +139,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `examples/pwfa_driver_witness.deck` | beam-driven wake with drive and witness bunches, flat-top witness, m = 0 only |
 | `examples/two_pulses_channel.deck` | two laser pulses (focused drive pulse, circularly polarized 2nd harmonic), parabolic channel, trapezoidal profile |
 | `examples/ion_collapse.deck` | mobile hydrogen ions collapsing inside a dense electron bunch (Rosenzweig et al. 2005) |
+| `examples/chain_lwfa_fel/` | chained run: down-ramp injection (FBPIC) → acceleration → plasma lens, chicane and helical undulator (GEM-PIC-RZ), openPMD hand-off between the stages (README there) |
 | `examples/ionization_injection.deck` | ionization injection: N⁵⁺ dopant field-ionized to N⁶⁺/N⁷⁺ by an a0 = 2 pulse (ADK, NIST energies) |
 
 ## Source layout
@@ -188,6 +189,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/proton.sh` | proton bunches (400 GeV): energy in `bunches.txt`, quadrupole and plasma lens with the gradients scaled by Bρ against the linear optics of `tests/transport_expect.awk` (planes swapped by the positive charge) |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
+| `tests/chain.sh`, `tests/chain_fel.deck` | chained runs: openPMD hand-off (moments of the selected beam against python on the stage-1 file), thin chicane on the particle data (shift R56 δ − delay), FEL power growth in the reduced undulator stage |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
 | `tests/mpi_events.sh` | MPI synchronization points: `bunch.z_start` and a thin chicane on 1–4 ranks (also mean-field push, restarts, device march) = serial |
