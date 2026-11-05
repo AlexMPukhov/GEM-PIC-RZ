@@ -105,6 +105,14 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     Against the modal theory of the tube (tests/wall.py, the scheme's dispersion relation): 0.8 % straight, 1.0 %
     12 -> 9 um taper. Open: varying radius with theta_stiff; reflections (backward waves) are outside the model.
     Asked for by Alexander (waveguides of variable radius); dielectric structures were discussed, not started.
+  - **Dielectric media** (branch `dielectric`, 2026-11-05; block `dielectric`, README "Dielectric media", ctest
+    dielectric_*): constant eps(r, z) as the polarization current J = -d_zeta(chi E), trapezoidal over the half-cells
+    (running J along zeta, J^0 recomputed from the stored s^0: no extra state); coupled pentadiagonal (B_z, E_z) per
+    mode built by probing (src/dielectric.cpp). Serial, engine, MPI (J in the F message, corrected L in the R
+    message). Tests: DWA tube vs TM_0n / HEM_1n modal theory, Cherenkov cone, laser slippage vs the scheme's
+    dispersion. Physics (Alexander): keep the GEM model; the energy flow of non-synchronous fields is that of the
+    reduced system (DWA TM01 beta_g 0.40 vs Maxwell 0.33), documented. Next: bound-electron (Lorentz) medium for Rb at
+    800 nm, branch `bound-electrons` (proposal and open questions: Maxwell-Bloch vs Lorentz, depopulation by ionization).
   - **Chained runs** (2026-11-05; handoff CLAUDE-notes gem-pic-rz/chain_handoff.md): `examples/chain_lwfa_fel/`
     (stage 1 down-ramp injection with FBPIC, stage1_fbpic.py; handoff.py; stage 2 acceleration and stage 3 lens,
     chicane, helical undulator with GEM-PIC-RZ; run_chain.sh [ranks]; README there with the numbers), ctest `chain`
