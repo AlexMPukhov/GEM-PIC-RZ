@@ -98,6 +98,13 @@ mkdir work && cd work
 GEMPIC=/path/to/build/gempic_rz OMP_NUM_THREADS=32 sh /path/to/examples/chain_lwfa_fel/run_chain.sh
 ```
 
+With MPI, stages 2 and 3 run on several ranks (the pipeline along ζ; the import, the chicane and the undulator
+work there as on one rank), e.g. 4 ranks × 8 threads:
+
+```
+GEMPIC=/path/to/build/gempic_rz OMP_NUM_THREADS=8 sh /path/to/examples/chain_lwfa_fel/run_chain.sh 4
+```
+
 Stage 1 needs FBPIC (a GPU is recommended); if `stage1/hdf5/data00006000.h5` and `stage1/laser_centre.txt` exist
 (e.g. computed on a GPU machine), the script starts with the hand-off. `handoff.py` needs numpy and h5py.
 
@@ -115,4 +122,4 @@ Stage 1 needs FBPIC (a GPU is recommended); if `stage1/hdf5/data00006000.h5` and
   one with more energy at the head (as here) is stretched.
 
 The reduced chain (2 steps of `tests/regression.deck` → import → chicane → 10 undulator periods) is the ctest
-`chain` (`tests/chain.sh`).
+`chain` (`tests/chain.sh`); `mpi_chain` runs its stage 2 also on 2 MPI ranks (= 1 rank).
