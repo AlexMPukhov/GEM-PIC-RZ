@@ -453,10 +453,21 @@ of N_macro independent particles, much larger than that of the real electrons. F
 | `beamlet` | integer ≥ 3 | 4 | macroparticles per beamlet; `macroparticles` must be a multiple of it |
 | `axis_refine` | integer 1 … 1000 | 1 | more macroparticles near the axis: the centres (particles, or beamlets with `fawley`) at r < `axis_radius` are sampled `axis_refine` times as often, each with 1/`axis_refine` of the charge. The charge density is unchanged, only its macroparticle noise there drops. Useful for the modes m ≥ 1, which vanish on the axis while the noise of the small cells there is largest (FEL harmonics). Bunches from files need resampling (`macroparticles` ≠ the number in the file) |
 | `axis_radius` | length | 4 radial cells | radius of the refined region (with `axis_refine` > 1) |
+| `azimuthal_copies` | integer 1 … 64 | 1 | symmetric loading (generated bunches, not files): every sampled particle comes with K copies turned by 2πj/K about the bunch axis (x, y and u_x, u_y), each with the same charge; `macroparticles` (a multiple of K) is the total. The modes 1 … K−1 of the bunch then vanish about its axis, and an offset (`x0`, `y0`, applied after turning) drives m = 1 alone, without the macroparticle noise. With `axis_refine` the refinement is about the bunch axis |
 
 With `axis_refine = 16` inside 4 µm (the 4 kA, σ_r = 10 µm beam of `benchmarks/harmonics/fel.deck`, 2.2 times the
 macroparticles) the noise of E_z and E_φ in m = 2 in the first radial cell halves, as with 4 times the
 macroparticles everywhere; the outer cells, the charge and the beam size are unchanged (`tests/axis_refine.sh`).
+
+**Why `azimuthal_copies`.** With random positions the modes m ≥ 1 of a bunch carry the shot noise of its
+macroparticles, far above that of the real particles (8 × 10⁶ macroparticles for 1.7 × 10¹¹ protons in AWAKE: about
+150 times in amplitude). In the AWAKE self-modulation run (7 × 10¹⁴ cm⁻³, `m_max = 1`, 12 m) this seed grows into a
+transverse m = 1 wake of tens of MV/m near the axis that lowers the axisymmetric wake by 15–25 % at ξ = 100–250 c/ω_p,
+although the bunch is centred. With `azimuthal_copies = 4` the centred run keeps m = 1 below 0.1 MV/m up to
+ξ ≈ 100 c/ω_p and its on-axis E_z agrees with the m = 0 run and with QUARZ to 3 % up to ξ = 250; a bunch offset by
+50 µm then shows the effect of the offset alone. In `tests/azimuthal_copies.sh` the on-axis E_x of a centred driver is
+1e-14 against 3e-5 for random loading, with the same wake to 2 %. The plasma is loaded symmetrically already
+(`ppc_phi` particles per ring).
 
 The beamlet members share x, y and the momentum. Checked in `tests/beam_import.sh`: N_e⟨\|b\|²⟩ = 1.08 (Fawley) and
 N_macro⟨\|b\|²⟩ = 0.93 (random), against 1 ± 0.1.

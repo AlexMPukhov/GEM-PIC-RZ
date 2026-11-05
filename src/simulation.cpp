@@ -226,6 +226,7 @@ void Simulation::initBunches(int only) {
     // Fawley beamlets: the sampled particles are the centres of beamlets of M macroparticles
     const int M = B.fawley ? B.beamlet : 1;
     const int ncent = B.macroparticles / M;
+    const int K = B.azimuthal_copies;  // azimuthal copies of every sampled centre (generated bunches)
     std::vector<Particle> cent;
     cent.reserve(size_t(ncent));
     // axis refinement: the centres at r < r_a (around the axis, where the modes m >= 1 must vanish but the
@@ -396,14 +397,28 @@ void Simulation::initBunches(int only) {
           p.x -= p.ux / p.uz * B.z_waist;
           p.y -= p.uy / p.uz * B.z_waist;
         }
-        if (B.x0 != 0.0) p.x += B.x0;
-        if (B.y0 != 0.0) p.y += B.y0;
+        if (K == 1 && B.x0 != 0.0) p.x += B.x0;  // with copies: the offset after turning (below)
+        if (K == 1 && B.y0 != 0.0) p.y += B.y0;
         p.q = B.charge / B.macroparticles * M;
         finish(p);
         return p;
       };
-      for (int k = 0; k < ncent; ++k) cent.push_back(sample());
+      for (int k = 0; k < ncent / K; ++k) cent.push_back(sample());
       refineAxis(sample);
+      if (K > 1) {  // K copies turned by 2 pi j / K about the bunch axis, then the offset
+        const size_t n = cent.size();
+        cent.resize(n * size_t(K));
+        for (int j = K - 1; j >= 0; --j) {
+          const double cs = std::cos(2.0 * PI * j / K), sn = std::sin(2.0 * PI * j / K);
+          for (size_t i = 0; i < n; ++i) {
+            Particle p = cent[i];
+            const double x = p.x, y = p.y, ux = p.ux, uy = p.uy;
+            p.x = cs * x - sn * y + B.x0; p.y = sn * x + cs * y + B.y0;
+            p.ux = cs * ux - sn * uy; p.uy = sn * ux + cs * uy;
+            cent[size_t(j) * n + i] = p;
+          }
+        }
+      }
     }
     if (M == 1) {
       beam.insert(beam.end(), cent.begin(), cent.end());

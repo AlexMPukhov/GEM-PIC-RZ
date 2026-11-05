@@ -279,6 +279,9 @@ struct BunchConfig {
   // sampled axis_refine times as often, each with 1 / axis_refine of the charge (same density)
   int axis_refine = 1;
   double axis_radius = 0.0;  // 0: the first four radial cells
+  // azimuthal symmetry of the loading (generated bunches): every sampled centre comes with K copies turned by
+  // 2 pi j / K about the bunch axis (x, y and u_x, u_y), so the modes 1 ... K-1 of the bunch vanish about that axis
+  int azimuthal_copies = 1;
 };
 
 // ---------------------------------------------------------------- undulator
