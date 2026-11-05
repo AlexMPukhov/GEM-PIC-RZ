@@ -790,6 +790,8 @@ void PipelineRun::step(Buffer& F) {
       else S.stream = S.backup;
       S.born.clear();
       if (!S.cfg.ions.empty()) S.sliceFieldBound = std::max(S.fieldBound(S.fnew, n + 1), S.fieldBound(S.fnew, n));
+      const bool relax = it > 0 && num.relaxation < 1.0;
+      if (relax) S.c1s.saveHalf(n, S.relaxJ);
       S.c1s.zeroHalf(n);
       S.ionKey = ionKeySlice(keyStep, n, it);
       if (threads > 1) {
@@ -804,6 +806,7 @@ void PipelineRun::step(Buffer& F) {
         }
       }
       S.smoothStream(S.c1s, n);
+      if (relax) S.c1s.relaxHalf(n, S.relaxJ, num.relaxation);  // numerics.relaxation (Simulation::march)
       // numerics.predictor = zeta (Simulation::march); half-cell b: the change sent by the front rank
       if (num.predictor == 1 && n > 0 && n + 1 < S.Nz) {
         const bool own = n + 1 <= b - 1;

@@ -1505,6 +1505,8 @@ void Simulation::march(double s1) {
       else stream = backup;
       born.clear();  // electrons freed by ionization: only the last pass counts
       if (!cfg.ions.empty()) sliceFieldBound = std::max(fieldBound(fnew, n + 1), fieldBound(fnew, n));
+      const bool relax = it > 0 && cfg.numerics.relaxation < 1.0;
+      if (relax) c1s.saveHalf(n, relaxJ);
       c1s.zeroHalf(n);
       ionKey = ionKeySlice(keyStep, n, it);
       for (auto& p : stream) {
@@ -1515,6 +1517,11 @@ void Simulation::march(double s1) {
         pushStreamParticle(p, n, s1);
       }
       smoothStream(c1s, n);
+      // numerics.relaxation: the current of half-cell n enters the solve of slice n, whose fields push the particles of
+      // the next pass; with the weight 3 theta Delta / 4 the gain of this loop passes -1 near theta Delta h k_p^2 = 6 and
+      // the passes diverge. Under-relaxation w j + (1 - w) j_prev damps it; the code switches it on there (README,
+      // "Coarse zeta steps")
+      if (relax) c1s.relaxHalf(n, relaxJ, cfg.numerics.relaxation);
       // numerics.predictor = zeta: j^1 of half-cell n-1 (not yet pushed) is predicted by j^0 there plus the change
       // j^1 - j^0 extrapolated linearly from the half-cells n, n+1 of this pass. The change of the current between the
       // levels enters R(n) with the weight Delta/4; predicted by zero (predictor = level), its error drives the plasma

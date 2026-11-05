@@ -143,6 +143,26 @@ struct Currents {
     std::fill_n(&rho[d(k, 0)], N, 0.0);
     std::fill_n(&rhoi[d(k, 0)], N, 0.0);
   }
+  // numerics.relaxation: j_r, j_phi, j_z of half-cell k (all modes) into buf, and back as j <- w j + (1 - w) buf
+  void saveHalf(int k, std::vector<cd>& buf) const {
+    const size_t nf = size_t(M + 1) * (N + 1), nc = size_t(M + 1) * N;
+    buf.resize(nf + 2 * nc);
+    for (int m = 0; m <= M; ++m) {
+      std::copy_n(&jr[f(m, k, 0)], N + 1, &buf[size_t(m) * (N + 1)]);
+      std::copy_n(&jp[c(m, k, 0)], N, &buf[nf + size_t(m) * N]);
+      std::copy_n(&jz[c(m, k, 0)], N, &buf[nf + nc + size_t(m) * N]);
+    }
+  }
+  void relaxHalf(int k, const std::vector<cd>& buf, double w) {
+    const size_t nf = size_t(M + 1) * (N + 1), nc = size_t(M + 1) * N;
+    for (int m = 0; m <= M; ++m) {
+      for (int i = 0; i <= N; ++i) jr[f(m, k, i)] = w * jr[f(m, k, i)] + (1.0 - w) * buf[size_t(m) * (N + 1) + i];
+      for (int i = 0; i < N; ++i) {
+        jp[c(m, k, i)] = w * jp[c(m, k, i)] + (1.0 - w) * buf[nf + size_t(m) * N + i];
+        jz[c(m, k, i)] = w * jz[c(m, k, i)] + (1.0 - w) * buf[nf + nc + size_t(m) * N + i];
+      }
+    }
+  }
 };
 
 }  // namespace gem

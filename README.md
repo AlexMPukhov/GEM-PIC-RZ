@@ -187,6 +187,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/long_wake.sh`, `tests/long_wake.deck` | long linear plasma wake (`numerics.predictor`): k_p amplitude of the on-axis E_z against the linear theory, no growth from step to step; the old prediction (`level`) must grow, per backend |
 | `tests/proton.sh` | proton bunches (400 GeV): energy in `bunches.txt`, quadrupole and plasma lens with the gradients scaled by Bρ against the linear optics of `tests/transport_expect.awk` (planes swapped by the positive charge) |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
+| `tests/pass_relaxation.sh` | `numerics.relaxation` at θΔh k_p² = 7.5: with relaxation 1 in the deck the code warns and the passes diverge at the axis (on-axis E_x 72); without the key it switches on relaxation 0.4 with 4 passes and explains it, E_x stays at the noise and the wake within 5 % of the half ζ step; nothing switched on at the half step; serial = parallel backend |
 | `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
@@ -638,6 +639,38 @@ periods). Uniform plasma, weak driver, window 1000 c/ω_p (160 periods), h = 1/6
 | 20 (60–80 steps) | grows ×1.4 per 5 steps | 8.2 … 8.3 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ |
 
 With up to ~20 periods (laser wakefield windows) 2 passes are enough.
+
+**Coarse ζ steps: relaxation of the passes (`numerics.relaxation`).** The current of half-cell n + ½ enters the
+R update of slice n with the weight 3θΔ/4 (once directly, twice through the prediction), and the fields of slice n
+push the particles of that half-cell in the next pass. The gain of this loop grows with X = θΔh k_p² (Δ, h the steps
+in s and ζ) and passes −1 at X_c ≈ 6 with the modes m ≥ 1 (the first face next to the axis, m = 1, goes first) and
+X_c ≈ 10 for m = 0 alone (about 3 times larger with `predictor = level`, estimated). Beyond it the passes diverge
+within one step, alternating in sign, and more passes do not help; the converged scheme itself is stable. Without
+relaxation, m_max = 1: X = 5 (Δ = 400, h = 1/48) and 6.25 (Δ = 200, h = 1/16, θ = 0.5) are stable; X = 7.5
+(Δ = 100, h = 1/8; Δ = 400, h = 1/32; Δ = 200, h = 1/16) and 8.3 diverge, with 2, 4 or 8 passes. m = 0 only: 7.5 is
+stable, 12.5 diverges.
+
+Under-relaxing the current of the half-cell between passes, j ← w j + (1 − w) j_prev, damps the loop and leaves the
+converged result unchanged. With r = X/X_c > 0.9 and no `numerics.relaxation` in the deck, the code switches it on
+(w = 0.4, at least 4 passes, 6 for r > 2.5), prints a warning that explains why, and marks it "automatic" in the run
+summary. A value in the deck is kept (1 switches it off); the code then only warns if it looks insufficient (w > 0.5 or
+too few passes). Beyond r = 3.4 it also warns that this is outside the checked range. 50 pC driver in
+7 × 10¹⁴ cm⁻³, Δ = 200 c/ω_p, θ = 0.6, maxima on the axis after two steps (`tests/pass_relaxation.sh`: first three rows):
+
+| m_max | h [c/ω_p] | X (r) | relaxation, passes | E_x on the axis | max \|E_z\| on the axis |
+|---|---|---|---|---|---|
+| 1 | 1/32 (reference) | 3.75 (0.6) | 1, 4 | noise | 1.255 × 10⁻⁴ |
+| 1 | 1/16 | 7.5 (1.25) | 1, 4 | 72 | 0.16 |
+| 1 | 1/16 | 7.5 (1.25) | 0.4, 4 (automatic) | 1.6 × 10⁻⁵ (noise) | 1.251 × 10⁻⁴ |
+| 1 | 1/12, 1/10, 1/8 | 10, 12, 15 (≤ 2.5) | 0.4, 4 | noise | 1.241, 1.233, 1.223 × 10⁻⁴ |
+| 1 | 1/7, 1/6 | 17, 20 | 0.4, 4 | 0.2, 0.4 | – |
+| 1 | 1/6 | 20 (3.3) | 0.4, 6 (automatic) | noise | 1.228 × 10⁻⁴ |
+| 0 | 1/8, 1/5, 1/4 | 15, 24, 30 (≤ 3) | 0.4, 4 | – | 1.223, 1.186, 1.141 × 10⁻⁴ |
+
+The slow decrease of E_z with h is the discretization error of the coarse step. Relaxation needs more than 2 passes:
+w = 0.4 with 2 passes diverges at X = 7.5. Larger and smaller w are worse at large X (X = 15, 4 passes: w = 0.5 and
+0.27 diverge, 0.4 is stable; 0.27 needs 8 passes). Serial, OpenMP, GPU emulation and 3 MPI ranks give the same result.
+AWAKE (Δ = 200, h = 1/64, θ = 0.6) has X = 1.9; no deck in `benchmarks/` or `tests/` reaches r = 0.9.
 
 **Checks.**
 - `tests/long_wake.sh` (window 60 c/ω_p, Δ = 100 c/ω_p, 8 steps): the k_p amplitude of E_z on the axis is

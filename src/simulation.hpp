@@ -112,6 +112,7 @@ class Simulation {
   FieldSolver solver;
   std::vector<Particle> stream, backup, beam;
   std::vector<cd> predR, predP, predRprev, predPprev, Jr, Jp, jr1, jp1, jz1;
+  std::vector<cd> relaxJ;  // numerics.relaxation: the current of half-cell n from the previous pass
   std::mt19937_64 rng;
   uint64_t ionKey = 0;                       // key of the ionization random numbers of the current pass
   std::vector<AdkRates> adk;                 // per ion block (empty levels without ionization)

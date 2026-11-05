@@ -1157,6 +1157,7 @@ struct EngineState {
   dev::CurrStore Cb[2], Cs[2];
   int iold = 0;  // F[iold] = level s^0 (fold), Cb[iold] = c0b, Cs[iold] = c0s
   par::Array<cplx> pred[2], predP[2];  // predicted j^1 (index ip = current slice)
+  par::Array<cplx> relaxJ;              // numerics.relaxation: j_r, j_phi, j_z of half-cell n from the previous pass
   int ip = 0;
   par::Array<cplx> solveScratch;
   // plasma.smooth_length
@@ -1352,6 +1353,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   par::upload(E.Cs[E.iold].rhoi.data(), sim.c0s.rhoi.data(), E.nd);
   for (int k = 0; k < 2; ++k) { E.pred[k].clear(size_t(M + 1) * (N + 1)); E.predP[k].clear(size_t(M + 1) * N); }
   E.solveScratch.clear(size_t(M + 1) * dev::SOLVE_SCRATCH * (N + 1));
+  if (sim.cfg.numerics.relaxation < 1.0) E.relaxJ.clear(size_t(M + 1) * (N + 1) + 2 * size_t(M + 1) * N);
   if (sim.sfilter.on()) {  // factors of the source filter (constant for the run)
     std::vector<cplx> band;
     for (const Banded5& B : sim.sfilter.vectorFactors())
@@ -1653,6 +1655,8 @@ void Engine::march(const MarchSpec& ms) {
   const double Delta = P.Delta, s1 = ms.s1;
   const int iters = sim.cfg.numerics.iterations;
   const bool predZ = sim.cfg.numerics.predictor == 1;  // numerics.predictor = zeta
+  const double relaxW = sim.cfg.numerics.relaxation;
+  cplx* relaxJ = E.relaxJ.data();
   const int iold = E.iold, inew = 1 - iold;
   const FieldsV fo = E.fview(iold), fn = E.fview(inew);
   const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
@@ -1686,7 +1690,8 @@ void Engine::march(const MarchSpec& ms) {
     const cplx* predRprev = E.pred[1 - E.ip].data();
     const cplx* predPprev = E.predP[1 - E.ip].data();
     for (int it = 0; it < iters; ++it) {
-      // prepare: predicted j^1 at n-1, predictor fields, zero half-cell n, |E| bound
+      const bool relax = it > 0 && relaxW < 1.0;  // numerics.relaxation (Simulation::march)
+      // prepare: predicted j^1 at n-1, predictor fields, zero half-cell n (relaxation: keep it), |E| bound
       par::teams(1, GEM_LAMBDA(const Team& t) {
         if (it == 0) {
           par::teamFor(t, int(npf), [&](int idx) {
@@ -1708,10 +1713,15 @@ void Engine::march(const MarchSpec& ms) {
         }
         par::teamFor(t, int(npf), [&](int idx) {
           const int m = idx / (N + 1), i = idx % (N + 1);
+          if (relax) relaxJ[idx] = c1s.jr[c1s.f(m, n, i)];
           c1s.jr[c1s.f(m, n, i)] = cplx();
         });
         par::teamFor(t, int(npc), [&](int idx) {
           const int m = idx / N, i = idx % N;
+          if (relax) {
+            relaxJ[npf + idx] = c1s.jp[c1s.c(m, n, i)];
+            relaxJ[npf + npc + idx] = c1s.jz[c1s.c(m, n, i)];
+          }
           c1s.jp[c1s.c(m, n, i)] = cplx();
           c1s.jz[c1s.c(m, n, i)] = cplx();
         });
@@ -1810,6 +1820,20 @@ void Engine::march(const MarchSpec& ms) {
         cplx* fs = E.filtScratch.data();
         par::teams(M + 1, GEM_LAMBDA(const Team& t) {
           filterTeam(t, FV, t.league, n, c1s, fs + size_t(t.league) * (4 * size_t(N) + 1));
+        });
+      }
+      if (relax) {  // numerics.relaxation: j <- w j + (1 - w) j of the previous pass
+        par::forN(long(npf), GEM_LAMBDA(long idx) {
+          const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+          cplx& j = c1s.jr[c1s.f(m, n, i)];
+          j = relaxW * j + (1.0 - relaxW) * relaxJ[idx];
+        });
+        par::forN(long(npc), GEM_LAMBDA(long idx) {
+          const int m = int(idx / N), i = int(idx % N);
+          cplx& jp = c1s.jp[c1s.c(m, n, i)];
+          cplx& jz = c1s.jz[c1s.c(m, n, i)];
+          jp = relaxW * jp + (1.0 - relaxW) * relaxJ[npf + idx];
+          jz = relaxW * jz + (1.0 - relaxW) * relaxJ[npf + npc + idx];
         });
       }
       // numerics.predictor = zeta (Simulation::march): j^1 of half-cell n-1 = j^0 + the change extrapolated from n, n+1

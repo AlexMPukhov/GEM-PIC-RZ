@@ -1355,6 +1355,9 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
               : td == "partition" ? NumericsConfig::Tridiag::Partition : NumericsConfig::Tridiag::Auto;
   N.iterations = int(r.integer("iterations", N.iterations));
   N.predictor = (r.word("predictor", "zeta", {"zeta", "level"}) == "zeta") ? 1 : 0;
+  N.relaxation_set = r.has("relaxation");
+  N.relaxation = r.num("relaxation", Dim::None, N.relaxation);
+  if (!(N.relaxation > 0.0 && N.relaxation <= 1.0)) r.failKey("relaxation", "must be in (0, 1]");
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
   N.beam_smooth_length = r.num("beam_smooth_length", Dim::Length, 0.0);
@@ -1565,6 +1568,45 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
       warn.push_back("the window holds " + std::to_string(int(periods)) +
                      " plasma periods: long wakes need numerics.iterations = 4 (here " +
                      std::to_string(c.numerics.iterations) + "), otherwise they grow from step to step");
+  }
+  // passes per slice (README, "Coarse zeta steps"): the current of the half-cell being solved acts back on the particles
+  // of the next pass with a gain that grows with X = theta Delta h k_p^2; beyond r = X / Xc ~ 1 (Xc ~ 6 with the modes
+  // m >= 1, ~ 10 for m = 0 alone, ~3x larger with the predictor level) the passes diverge within one step. Relaxation
+  // 0.4 with 4 passes was checked stable up to r = 2.5 (m = 1: X = 15; m = 0: X = 30), with 6 passes up to r = 3.4.
+  // Without numerics.relaxation in the deck the code switches it on there; an explicit value is kept.
+  if (c.plasma.present && c.plasma.n0 > 0 && c.numerics.iterations > 1) {
+    auto& N = c.numerics;
+    const auto& G = c.grid;
+    const double X = N.theta * G.dz_max * G.dzeta_max * c.plasma.n0;
+    const double Xc = (G.M >= 1 ? 6.0 : 10.0) * (N.predictor == 1 ? 1.0 : 3.0), rX = X / Xc;
+    const int need = rX > 2.5 ? 6 : 4;
+    const double W = 0.4;
+    char buf[900];
+    if (rX > 0.9 && !N.relaxation_set) {
+      const int it0 = N.iterations;
+      N.relaxation = W;
+      N.relaxation_auto = true;
+      N.iterations = std::max(N.iterations, need);
+      std::snprintf(buf, sizeof buf,
+                    "theta dz dzeta k_p^2 = %.3g is %.2g times the limit %.3g of the passes per slice: the current of a "
+                    "half-cell acts back on its own particles in the next pass with a gain above 1, and the passes "
+                    "would diverge within one step%s. The code switched on "
+                    "numerics.relaxation = %.2g (the current of the half-cell becomes w j + (1 - w) j of the previous "
+                    "pass; the converged result does not depend on w) and uses %d passes per slice (deck: %d). Set "
+                    "numerics.relaxation = 1 to switch this off, or use a smaller dzeta or dz",
+                    X, rX, Xc, G.M >= 1 ? " (first at the axis, m = 1)" : "", W, N.iterations, it0);
+      warn.push_back(buf);
+    } else if (rX > 0.9 && (N.relaxation > 0.5 || N.iterations < need)) {
+      std::snprintf(buf, sizeof buf,
+                    "theta dz dzeta k_p^2 = %.3g is %.2g times the limit %.3g of the passes per slice: with "
+                    "numerics.relaxation = %.3g and %d passes they may diverge within one step; leave relaxation out of "
+                    "the deck (the code then chooses %.2g with %d passes) or use a smaller dzeta or dz",
+                    X, rX, Xc, N.relaxation, N.iterations, W, need);
+      warn.push_back(buf);
+    }
+    if (rX > 3.4)
+      warn.push_back("theta dz dzeta k_p^2 is beyond the range where the relaxation of the passes was checked (3.4 times "
+                     "the limit): the run may still blow up; use a smaller dzeta or dz");
   }
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
   for (const auto& A : c.boxAdvice()) {
@@ -1927,9 +1969,10 @@ std::string Config::summary() const {
     line("beam self-fields: theta per radial mode %s, consistent beam sources %s",
          numerics.theta_stiff > 0 ? ("on (theta_stiff = " + std::to_string(numerics.theta_stiff) + ")").c_str() : "off",
          numerics.beam_consistent ? "on" : "off");
-  line("output: dir '%s', every %d steps; numerics: %d iterations/slice (predictor %s), theta %.3g, trap advance %.3g dz, beam "
+  line("output: dir '%s', every %d steps; numerics: %d iterations/slice (predictor %s, relaxation %.3g%s), theta %.3g, trap advance %.3g dz, beam "
        "filter %d, beam pusher %s, beam field %s, seed %lu, backend %s",
-       output.dir.c_str(), output.every, numerics.iterations, numerics.predictor == 1 ? "zeta" : "level", numerics.theta, numerics.trap_advance, numerics.beam_filter,
+       output.dir.c_str(), output.every, numerics.iterations, numerics.predictor == 1 ? "zeta" : "level", numerics.relaxation,
+       numerics.relaxation_auto ? " automatic" : "", numerics.theta, numerics.trap_advance, numerics.beam_filter,
        numerics.beam_vay ? "vay" : "boris", numerics.beam_field == BEAM_FIELD_MEAN ? "mean of s^0, s^1" : "s^0",
        numerics.seed,
        numerics.backend == NumericsConfig::Backend::Cuda     ? "cuda"
