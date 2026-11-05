@@ -594,7 +594,9 @@ all particles, like the undulators; the field solver does not see them. Several 
 - **Thin chicane:** the shift is applied when the beam passes `z` (at the end of that step), without transverse
   dispersion or synchrotron radiation. The co-moving self-field of the beam moves with it (subtracted at the old,
   added at the new positions; vacuum is assumed at the chicane); the radiation in the window stays. About 0.6 % of the
-  field energy of a γ = 1000 bunch remains at its old position. Not available in MPI runs with several ranks yet.
+  field energy of a γ = 1000 bunch remains at its old position. MPI runs: the pipeline is drained at the chicane step
+  and all ranks apply it together to the gathered beam (a synchronization point, README "MPI"); particles move to the
+  rank that owns their new position. The results equal the serial run (`tests/mpi_events.sh`).
 - **Resolution:** the beam push must resolve the elements: `numerics.beam_dz_max` ≤ 0.1/k_β (k_β = √(G/Bρ) or
   B/(2Bρ)), and an element should span ≥ 4 sub-steps. Warnings are printed otherwise. The step `grid.dz` may be larger.
 - **Check (`tests/transport.sh`):** a cold bunch (γ = 1000) through a 100 T/m quadrupole, a plasma lens and a 5 T

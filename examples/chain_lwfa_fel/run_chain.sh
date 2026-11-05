@@ -2,7 +2,8 @@
 # The chained example (README.md): stage 1 (FBPIC, down-ramp injection) -> handoff.py -> stage 2 (GEM-PIC-RZ,
 # acceleration) -> stage 3 (GEM-PIC-RZ, plasma lens, chicane, undulator). Prints the beam after each import and the
 # power at the resonant wavelength along the undulator.
-# usage: sh run_chain.sh                 (in a work directory; the decks are taken from this script's directory)
+# usage: sh run_chain.sh [ranks]         (in a work directory; the decks are taken from this script's directory)
+#        ranks > 1: stages 2 and 3 on that many MPI ranks (MPIEXEC, default mpirun), OMP_NUM_THREADS threads each
 # environment: GEMPIC = gempic_rz executable (default: gempic_rz in PATH), PYTHON (default python3, with numpy and
 #              h5py; stage 1 needs FBPIC), OMP_NUM_THREADS = threads (numerics.backend = openmp).
 # Stage 1 is skipped if stage1/hdf5/data00006000.h5 exists (e.g. computed on a GPU machine and copied here).
@@ -11,7 +12,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 GEMPIC=${GEMPIC:-gempic_rz}
 PYTHON=${PYTHON:-python3}
 export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
+NP=${1:-1}
 RUN="$GEMPIC"
+if [ "$NP" -gt 1 ]; then RUN="${MPIEXEC:-mpirun} -n $NP $GEMPIC"; fi
 S1=stage1/hdf5/data00006000.h5
 if [ ! -f "$S1" ]; then
   echo "== stage 1: FBPIC, density down-ramp injection (0.2 mm)"

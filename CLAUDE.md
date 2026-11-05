@@ -105,4 +105,17 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     Against the modal theory of the tube (tests/wall.py, the scheme's dispersion relation): 0.8 % straight, 1.0 %
     12 -> 9 um taper. Open: varying radius with theta_stiff; reflections (backward waves) are outside the model.
     Asked for by Alexander (waveguides of variable radius); dielectric structures were discussed, not started.
+  - **Chained runs** (2026-11-05; handoff CLAUDE-notes gem-pic-rz/chain_handoff.md): `examples/chain_lwfa_fel/`
+    (stage 1 down-ramp injection with FBPIC, stage1_fbpic.py; handoff.py; stage 2 acceleration and stage 3 lens,
+    chicane, helical undulator with GEM-PIC-RZ; run_chain.sh [ranks]; README there with the numbers), ctest `chain`
+    (tests/chain.sh: import moments vs python, chicane shift on the particle data, FEL growth) and `mpi_chain`.
+    Alexander: down-ramp injection belongs to a full PIC code (GEM-PIC-RZ traps there, charge unreliable); ionization
+    injection, acceleration, transport and FEL in GEM-PIC-RZ. The FEL stage of the example keeps one plasma lens on
+    purpose (his choice: demo as is); a matched lattice is the next step for a quantitative case.
+    MPI synchronization points (pipeline.cpp eventIn / drain / syncEvent / exchangeGhosts): `bunch.z_start` (PR #25,
+    merged) and thin chicanes (branch mpi-chicane): the pipeline is drained at the event step, the beam gathered, the
+    event applied as serially (self-fields solved across the ranks), ghosts from the owners, restart-like new start;
+    ctest mpi_events (1-4 ranks, mean push, restarts across the event, device emulation = serial). Under Slurm run MPI
+    tests with --ntasks >= 4 (a 1-task allocation binds all ranks to one core). Open: E (import of protons/ions from
+    openPMD files), ask Alexander first.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

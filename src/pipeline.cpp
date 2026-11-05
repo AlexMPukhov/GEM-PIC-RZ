@@ -181,7 +181,8 @@ class PipelineRun {
   }
 
   void partition();
-  // events at the end of a step that act on the whole beam (bunch.z_start; S.loadBunches): the pipeline is drained
+  // events at the end of a step that act on the whole beam (thin chicanes, S.applyChicanes, and bunch.z_start,
+  // S.loadBunches): the pipeline is drained
   // (all ranks at level s^K, as at the end of the run), the event is applied by all ranks together on the gathered
   // beam list (the bunch self-fields are built block-wise, as at the start), the ghosts are taken from their owners
   // and the pipeline starts again as after a restart from a checkpoint of step K
@@ -1641,9 +1642,11 @@ void PipelineRun::reportProfile() {
 }
 
 // ----------------------------------------------------------------------------
-// synchronization points (bunch.z_start): see the class declaration
+// synchronization points (chicanes, bunch.z_start): see the class declaration
 // ----------------------------------------------------------------------------
 bool PipelineRun::eventIn(double za, double zb) const {
+  for (const auto& C : S.cfg.chicanes)
+    if (za < C.z && C.z <= zb) return true;  // as Simulation::applyChicanes
   for (const auto& B : S.cfg.bunches) {
     const double zs = B.z_start, eps = 1e-9 * std::max(1.0, zs);  // as Simulation::loadBunches
     if (zs > 0 && za < zs - eps && zs - eps <= zb) return true;
@@ -1761,7 +1764,9 @@ void PipelineRun::syncEvent(int K, double za, double zb) {
     is >> S.rng;
   }
   S.beam.swap(all);
-  S.loadBunches(za, zb);  // collective: the bunch self-field is solved across the ranks
+  // collective (the self-fields are solved across the ranks); the order of Simulation::step
+  if (!S.cfg.chicanes.empty()) S.applyChicanes(za, zb);
+  S.loadBunches(za, zb);
   exchangeGhosts();
   // the output of step K with the own particles, then a new start of the pipeline (as from a checkpoint of step K)
   all.clear();
@@ -1789,12 +1794,6 @@ int PipelineRun::run() {
 #if defined(_OPENMP)
   if (S.cfg.numerics.backend == NumericsConfig::Backend::OpenMP) threads = std::max(1, omp_get_max_threads());
 #endif
-  if (!S.cfg.chicanes.empty()) {
-    if (comm::rank() == 0)
-      std::fprintf(stderr, "error: chicane blocks are not supported in MPI runs yet (the chicane moves the beam "
-                           "across the domains of the ranks); run on one rank with numerics.backend = openmp\n");
-    return 1;
-  }
   r = comm::rank();
   S.externalOutput = true;  // rank 0 streams the output block by block (reportStep)
   t0 = std::chrono::steady_clock::now();
