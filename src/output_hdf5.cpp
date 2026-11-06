@@ -713,9 +713,9 @@ struct Simulation::Hdf5Sink : Simulation::Sink {
       col("y", [](const Particle& p) { return p.y; }, si.L, um, "position y");
       col("z", [](const Particle& p) { return p.z; }, si.L, um, "lab position z (= s)");
       col("zeta", [](const Particle& p) { return p.zeta; }, si.L, um, "zeta = z - c t");
-      col("ux", [](const Particle& p) { return p.ux; }, 1.0, "m_e c", "momentum gamma v_x / c");
-      col("uy", [](const Particle& p) { return p.uy; }, 1.0, "m_e c", "momentum gamma v_y / c");
-      col("uz", [](const Particle& p) { return p.uz; }, 1.0, "m_e c", "momentum gamma v_z / c");
+      col("ux", [](const Particle& p) { return p.ux; }, 1.0, "m c", "momentum gamma v_x / c (m: mass of the species)");
+      col("uy", [](const Particle& p) { return p.uy; }, 1.0, "m c", "momentum gamma v_y / c (m: mass of the species)");
+      col("uz", [](const Particle& p) { return p.uz; }, 1.0, "m c", "momentum gamma v_z / c (m: mass of the species)");
       col("charge", [](const Particle& p) { return p.q; }, si.Q0, "e n_c / k0^3", "macroparticle charge (signed)");
       std::vector<int> sp(np);
       for (size_t k = 0; k < np; ++k) sp[k] = beam[k].sp;
@@ -726,6 +726,17 @@ struct Simulation::Hdf5Sink : Simulation::Sink {
       std::string names;
       for (size_t b = 0; b < S.cfg.bunches.size(); ++b) names += (b ? "," : "") + S.cfg.bunches[b].name;
       Writer::attr(bg, "bunch_names", names);
+      // mass [m_e] and charge [e] of one particle of each bunch (for the import of this file: bunch.file)
+      std::string masses, charges;
+      char num[40];
+      for (size_t b = 0; b < S.cfg.bunches.size(); ++b) {
+        std::snprintf(num, sizeof num, "%s%.17g", b ? "," : "", S.cfg.bunches[b].mass);
+        masses += num;
+        std::snprintf(num, sizeof num, "%s%.17g", b ? "," : "", S.cfg.bunches[b].charge_e);
+        charges += num;
+      }
+      Writer::attr(bg, "bunch_masses", masses);
+      Writer::attr(bg, "bunch_charges", charges);
       std::string ions;
       for (size_t s = 0; s < S.cfg.ions.size(); ++s) ions += (s ? "," : "") + S.cfg.ions[s].name;
       Writer::attr(bg, "ion_names", ions);
@@ -1127,9 +1138,11 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       component("momentum/x", [](const Particle& p) { return p.ux; }, MS * C_LIGHT);
       component("momentum/y", [](const Particle& p) { return p.uy; }, MS * C_LIGHT);
       component("momentum/z", [](const Particle& p) { return p.uz; }, MS * C_LIGHT);
-      // real particles per macroparticle: |q| Q0 / e (all S.beam particles carry one elementary charge)
+      // charge of one real particle [e] (bunches: -1, +1 or +Z; trapped species: electrons)
+      const double qe = (Sp_.id >= 0) ? S.cfg.bunches[size_t(Sp_.id)].charge_e : -1.0;
+      // real particles per macroparticle: |q| Q0 / (|qe| e)
       {
-        for (size_t k = 0; k < np; ++k) col[k] = std::fabs(ps[k]->q) * Q0 / E_CHARGE_C;
+        for (size_t k = 0; k < np; ++k) col[k] = std::fabs(ps[k]->q) * Q0 / (std::fabs(qe) * E_CHARGE_C);
         Handle ds(Wr.plain(sg + "/weighting", {np}, col.data()), H5Dclose, "weighting");
         Writer::attr(ds, "unitDimension", unitDim(0, 0, 0, 0));
         Writer::attr(ds, "timeOffset", 0.0);
@@ -1137,14 +1150,13 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
         Writer::attr(ds, "weightingPower", 1.0);
         Writer::attr(ds, "unitSI", 1.0);
       }
-      const double qsign = (Sp_.id >= 0) ? (S.cfg.bunches[size_t(Sp_.id)].qm < 0 ? -1.0 : 1.0) : -1.0;
       {
         Handle h(Wr.groups(sg + "/charge"), H5Gclose, "charge");
         Writer::attr(h, "unitDimension", unitDim(0, 0, 1, 1));
         Writer::attr(h, "timeOffset", 0.0);
         Writer::attrU32(h, "macroWeighted", 0u);
         Writer::attr(h, "weightingPower", 1.0);
-        Writer::attr(h, "value", qsign * E_CHARGE_C);
+        Writer::attr(h, "value", qe * E_CHARGE_C);
         Writer::attr(h, "shape", std::vector<unsigned long long>{np});
         Writer::attr(h, "unitSI", 1.0);
       }

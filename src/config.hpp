@@ -18,6 +18,7 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <vector>
 
@@ -234,9 +235,16 @@ struct IonConfig {
 struct BunchConfig {
   enum class Shape { Gaussian, Flattop, Function, File };
   std::string name;
-  double qm = -1.0;         // charge-to-mass ratio [e/m_e]: -1 electron, +1 positron, +m_e/m_p proton
+  double qm = -1.0;         // charge-to-mass ratio [e/m_e]: -1 electron, +1 positron, +m_e/m_p proton, Z m_e/m ion
   double mass = 1.0;        // particle mass [m_e]
-  const char* speciesName() const { return mass > 1.0 ? "protons" : (qm < 0 ? "electrons" : "positrons"); }
+  double charge_e = -1.0;   // charge of one particle [e]: -1 electron, +1 positron or proton, +Z ion (files)
+  std::string speciesName() const {
+    if (mass == 1.0) return charge_e < 0 ? "electrons" : "positrons";
+    if (charge_e == 1.0 && std::fabs(mass / MP_OVER_ME - 1.0) < 1e-6) return "protons";
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "ions (charge %+g e, mass %.6g u)", charge_e, mass / U_OVER_ME);
+    return buf;
+  }
   double charge = 0.0;      // total charge [code units], signed
   double charge_pC = 0.0;   // |charge| in pC, for printing
   double gamma = 1000.0;

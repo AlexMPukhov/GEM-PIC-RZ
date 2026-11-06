@@ -223,7 +223,7 @@ void Simulation::initLasers() {
 void Simulation::initBunches(int only) {
   std::normal_distribution<double> nd(0.0, 1.0);
   std::uniform_real_distribution<double> ud(0.0, 1.0);
-  const double Qe = 1.602176634e-19 / (cfg.units.codeToPC(1.0) * 1e-12);  // one electron [code charge]
+  const double Qe = 1.602176634e-19 / (cfg.units.codeToPC(1.0) * 1e-12);  // e [code charge]
   for (size_t b = 0; b < cfg.bunches.size(); ++b) {
     const auto& B = cfg.bunches[b];
     if (only >= 0 ? int(b) != only : B.z_start > 0) continue;  // bunch.z_start > 0: loaded later (loadBunches)
@@ -435,7 +435,7 @@ void Simulation::initBunches(int only) {
     const double k = 2.0 * PI / B.noise_wavelength;
     const int H = B.quiet ? 0 : (M - 1) / 2;
     for (const auto& c : cent) {
-      const double Ne = std::fabs(c.q) / Qe;  // electrons in the beamlet
+      const double Ne = std::fabs(c.q) / (Qe * std::fabs(B.charge_e));  // real particles in the beamlet
       double a[16] = {0}, bb[16] = {0};
       for (int h = 1; h <= H && h < 16; ++h) {
         const double sg = std::sqrt(2.0 / (h * h * Ne));

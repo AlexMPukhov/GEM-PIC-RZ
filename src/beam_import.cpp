@@ -94,15 +94,31 @@ ImportedBeam readOpenPMD(const File& F, const std::string& species, long iterati
   B.species = sp;
   const std::string g = ip + sp + "/";
   const size_t n = F.count(g + "position/x");
-  // charge and mass of one particle: electrons or positrons only
-  const double q = F.exists(g + "charge") ? F.component(g + "charge", n)[0] : -QE;
-  const double m = F.exists(g + "mass") ? F.component(g + "mass", n)[0] : ME;
-  if (std::fabs(std::fabs(q) / QE - 1.0) > 1e-3 || std::fabs(m / ME - 1.0) > 1e-3)
-    F.fail("species '" + sp + "' is not electrons or positrons (charge " + std::to_string(q) + " C, mass " +
-           std::to_string(m) + " kg)");
-  B.charge_sign = q < 0 ? -1.0 : 1.0;
   const std::vector<double> w = F.exists(g + "weighting") ? F.component(g + "weighting", n)
                                                           : std::vector<double>(n, 1.0);
+  // charge and mass of one real particle (macroWeighted records: divided by w^weightingPower); one value for the
+  // whole species, the charge a non-zero multiple of e (no electrons when absent: the default species)
+  auto perParticle = [&](const std::string& rec, double dflt) {
+    if (!F.exists(g + rec)) return std::vector<double>(n, dflt);
+    std::vector<double> v = F.component(g + rec, n);
+    if (F.hasAttr(g + rec, "macroWeighted") && F.attrD(g + rec, "macroWeighted")[0] != 0.0) {
+      const double pw = F.attr1(g + rec, "weightingPower", 1.0);
+      for (size_t k = 0; k < n; ++k) v[k] *= std::pow(w[k], -pw);
+    }
+    for (size_t k = 1; k < n; ++k)
+      if (std::fabs(v[k] - v[0]) > 1e-6 * std::fabs(v[0]))
+        F.fail("species '" + sp + "': the " + rec + " differs between particles (one species with one " + rec +
+               " is needed; select the particles of one charge state in a separate species)");
+    return v;
+  };
+  const double q = perParticle("charge", -QE)[0], m = perParticle("mass", ME)[0];
+  const double Z = q / QE;
+  if (!(std::fabs(Z) >= 0.999) || std::fabs(Z - std::round(Z)) > 1e-3)
+    F.fail("species '" + sp + "': the charge " + std::to_string(q) + " C is not a non-zero multiple of e");
+  if (!(m > 0.0)) F.fail("species '" + sp + "': the mass " + std::to_string(m) + " kg is not positive");
+  B.charge_e = std::round(Z);
+  B.mass = std::fabs(m / ME - 1.0) < 1e-6 ? 1.0 : m / ME;  // electrons and positrons: exactly m_e
+  const double MC = B.mass * ME * CL;                     // momenta in units of m c of the species
   std::vector<double> pos[3], mom[3];
   const char* ax[3] = {"x", "y", "z"};
   for (int a = 0; a < 3; ++a) {
@@ -117,8 +133,8 @@ ImportedBeam readOpenPMD(const File& F, const std::string& species, long iterati
   B.p.resize(n);
   for (size_t k = 0; k < n; ++k) {
     const double f = mw ? std::pow(w[k], -wp) : 1.0;
-    B.p[k] = ImportedParticle{pos[0][k], pos[1][k], pos[2][k], mom[0][k] * f / (ME * CL), mom[1][k] * f / (ME * CL),
-                              mom[2][k] * f / (ME * CL), w[k]};
+    B.p[k] = ImportedParticle{pos[0][k], pos[1][k], pos[2][k], mom[0][k] * f / MC, mom[1][k] * f / MC,
+                              mom[2][k] * f / MC, w[k]};
   }
   return B;
 }
@@ -153,6 +169,19 @@ ImportedBeam readNative(const File& F, const std::string& species) {
   if (!ids.count(sp)) F.fail("species '" + sp + "' not found (species: " + join(all) + ")");
   B.species = sp;
   const int id = ids[sp];
+  // mass [m_e] and charge [e] of one particle of a bunch (attributes bunch_masses, bunch_charges; files written
+  // before they existed hold electron or positron bunches only); trapped species are electrons
+  auto listAttr = [&](const char* a, size_t b, double dflt) {
+    if (id < 0 || !F.hasAttr("/particles/beam", a)) return dflt;
+    std::stringstream ss(F.attrS("/particles/beam", a));
+    std::string t;
+    for (size_t i = 0; std::getline(ss, t, ','); ++i)
+      if (i == b) return std::stod(t);
+    F.fail(std::string("attribute ") + a + " has no entry for bunch '" + sp + "'");
+    return dflt;
+  };
+  B.mass = listAttr("bunch_masses", size_t(std::max(id, 0)), 1.0);
+  const double Zb = listAttr("bunch_charges", size_t(std::max(id, 0)), 0.0);  // 0: sign from the particle charge
   const auto x = F.data("/particles/beam/x"), y = F.data("/particles/beam/y"), zeta = F.data("/particles/beam/zeta");
   const auto ux = F.data("/particles/beam/ux"), uy = F.data("/particles/beam/uy"), uz = F.data("/particles/beam/uz");
   const auto q = F.data("/particles/beam/charge"), s = F.data("/particles/beam/species");
@@ -160,9 +189,9 @@ ImportedBeam readNative(const File& F, const std::string& species) {
   bool signSet = false;
   for (size_t k = 0; k < x.size(); ++k) {
     if (int(std::lround(s[k])) != id) continue;
-    if (!signSet) { B.charge_sign = q[k] < 0 ? -1.0 : 1.0; signSet = true; }
+    if (!signSet) { B.charge_e = Zb != 0.0 ? Zb : (q[k] < 0 ? -1.0 : 1.0); signSet = true; }
     B.p.push_back(ImportedParticle{x[k] * L, y[k] * L, (zeta[k] + z0) * L, ux[k], uy[k], uz[k],
-                                   std::fabs(q[k]) * Q / QE});
+                                   std::fabs(q[k]) * Q / (QE * std::fabs(B.charge_e))});
   }
   return B;
 }

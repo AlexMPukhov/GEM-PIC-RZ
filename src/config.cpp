@@ -951,7 +951,8 @@ void readBunchFile(const Block& b, const Deck& d, const Units& u, const GridConf
     r.failKey("file", e.what());
   }
   const double L = u.k0inv_um() * 1e-6;  // code length [m]
-  const double Qc = 1.602176634e-19 / (u.codeToPC(1.0) * 1e-12);  // one electron in code charge units
+  const double Qc = 1.602176634e-19 / (u.codeToPC(1.0) * 1e-12)  // the charge of one particle in code units
+                    * std::fabs(imp.charge_e);
   // longitudinal coordinate relative to the charge centroid of the species
   double sw = 0.0, sz = 0.0;
   for (const auto& p : imp.p) { sw += p.w; sz += p.w * p.z; }
@@ -999,8 +1000,10 @@ void readBunchFile(const Block& b, const Deck& d, const Units& u, const GridConf
     const double gm = std::sqrt(1.0 + f.ux * f.ux + f.uy * f.uy + f.uz * f.uz);
     g2 += f.q / Q * (gm - g1) * (gm - g1);
   }
-  B.qm = imp.charge_sign;
-  B.charge = imp.charge_sign * Q;
+  B.mass = imp.mass;
+  B.charge_e = imp.charge_e;
+  B.qm = imp.charge_e / imp.mass;
+  B.charge = (imp.charge_e < 0 ? -1.0 : 1.0) * Q;
   B.charge_pC = u.codeToPC(Q);
   B.gamma = g1;
   if (!(B.gamma > 1.0)) r.failKey("file", "the mean gamma of the beam is not > 1");
@@ -1051,7 +1054,8 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   }
   const std::string sp = r.word("species", "electron", {"electron", "positron", "proton"});
   B.mass = (sp == "proton") ? MP_OVER_ME : 1.0;
-  B.qm = ((sp == "electron") ? -1.0 : 1.0) / B.mass;
+  B.charge_e = (sp == "electron") ? -1.0 : 1.0;
+  B.qm = B.charge_e / B.mass;
   // charge: magnitude from the deck, sign from the species
   const double q = std::fabs(r.num("charge", Dim::Charge));
   if (!(q > 0)) r.failKey("charge", "must not be zero");
@@ -1937,7 +1941,7 @@ std::string Config::summary() const {
     const auto& B = bunches[i];
     line("bunch[%zu] '%s': %s, Q = %.4g pC, E = %.5g MeV (gamma %.5g), dE/E = %.3g, sigma_x,y = %.4g, %.4g um, "
          "eps_n = %.4g, %.4g um, %s %.4g um at zeta = %.4g um, %d macroparticles",
-         i, B.name.c_str(), B.speciesName(), B.charge_pC, (B.gamma - 1.0) * MC2_MEV * B.mass, B.gamma,
+         i, B.name.c_str(), B.speciesName().c_str(), B.charge_pC, (B.gamma - 1.0) * MC2_MEV * B.mass, B.gamma,
          B.energy_spread, B.sigma_x * um, B.sigma_y * um, B.emittance_x * um, B.emittance_y * um,
          B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? "sigma_z" : "length",
          (B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? B.sigma_z : B.length) * um,
