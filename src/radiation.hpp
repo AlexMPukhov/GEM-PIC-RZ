@@ -24,6 +24,7 @@
 #include <math.h>
 #include <stdint.h>
 
+#include "external.hpp"
 #include "hd.hpp"
 #include "particles.hpp"
 #include "rng.hpp"
@@ -39,6 +40,9 @@ struct RadParams {
 };
 
 constexpr double RAD_ALPHA = 7.2973525693e-3;
+// undulator variance factor (radUndulatorFactor): F(K) = A K + 1 / (1 + a K + b K^2)
+constexpr double RAD_FH_A = 1.5, RAD_FH_B = 0.95;   // helical (Saldin, Schneidmiller, Yurkov 1996; integral: 0.5 %)
+constexpr double RAD_FP_A = 1.34, RAD_FP_B = 0.43;   // planar (fit to the radiation integral, K = 0.25-4: 0.8 %)
 
 struct RadStep { double lam, m1, m2; };
 
@@ -91,6 +95,44 @@ GEM_HD inline double radLoss(const RadStep& s, int model, uint64_t key) {
   return (s2 / r1) * radGamma(r1 * r1 / s2, key, 1);
 }
 
+// Inside an undulator the local constant-field kernel gets the mean loss right (Larmor) but not the variance: the
+// photons of a weak undulator are the harmonics, not a synchrotron spectrum. Factor exact / local for the variance,
+// from the classical radiation integral over all harmonics (tools/undulator_diffusion.py):
+//   d<dgamma^2>/dz = c r_e lambdabar_C gamma^4 k_u^3 K^2 F(K),  c = 14/15 (helical), 7/15 (planar, peak K)
+//   F(K) = A K + 1 / (1 + a K + b K^2),  A K = the local-field limit (helical 1.4174 K, planar 1.2032 K)
+// helical: (a, b) = Saldin et al.'s fit; planar: own fit. Factor F(K) / (A K) = 1 + 1 / (A K (1 + a K + b K^2)).
+GEM_HD inline double radUndulatorFactor(const ExternalV& X, double z) {
+  for (int k = 0; k < X.n; ++k) {
+    const UndulatorV& U = X.u[k];
+    const double g = undulatorEnvelope(U, z);
+    if (g == 0.0) continue;
+    double b = U.B0 * g;
+    if (U.nk > 0) {  // taper table, as addExternal
+      const double t = (z - U.z0) / U.dzk;
+      const int j = t < double(U.nk - 2) ? int(t) : U.nk - 2;
+      const double w = t - j;
+      b = g * ((1.0 - w) * X.k[U.koff + j] + w * X.k[U.koff + j + 1]);
+    }
+    const double K = fabs(b) / U.ku;
+    if (!(K > 1e-6)) return 1.0;
+    const double A = U.helical ? 1.4174 : 1.2032;
+    const double a = U.helical ? RAD_FH_A : RAD_FP_A, bb = U.helical ? RAD_FH_B : RAD_FP_B;
+    return 1.0 + 1.0 / (A * K * (1.0 + a * K + bb * K * K));
+  }
+  return 1.0;
+}
+
+// remove the energy S (units M c^2) along u; gamma >= 1 is kept
+GEM_HD inline void radApplyLoss(Particle& p, double S) {
+  if (S == 0.0) return;
+  const double p2 = p.ux * p.ux + p.uy * p.uy + p.uz * p.uz;
+  if (!(p2 > 0.0)) return;
+  double gn = sqrt(1.0 + p2) - S;
+  if (gn < 1.0) gn = 1.0;
+  const double s = sqrt((gn - 1.0) * (gn + 1.0) / p2);
+  p.ux *= s; p.uy *= s; p.uz *= s;
+}
+
 GEM_HD inline uint64_t radBits(double x) {
   union { double d; uint64_t u; } b;
   b.d = x;
@@ -100,7 +142,7 @@ GEM_HD inline uint64_t radBits(double x) {
 // radiation of one sub-step: u0 = momentum before the Lorentz push (chi, Lambda), p = particle after it; the key
 // hashes the state at the start of the sub-step (x0, y0, zeta0, z0)
 GEM_HD inline void radiate(const RadParams& R, Particle& p, double ux0, double uy0, double uz0, double x0, double y0,
-                           double zeta0, double z0, const EB& f, double dt) {
+                           double zeta0, double z0, const EB& f, double dt, double c2 = 1.0) {
   const double aq = fabs(p.qm);
   if (R.model == RAD_OFF || aq == 0.0) return;
   const double g0 = sqrt(1.0 + ux0 * ux0 + uy0 * uy0 + uz0 * uz0);
@@ -109,17 +151,27 @@ GEM_HD inline void radiate(const RadParams& R, Particle& p, double ux0, double u
   const double ve = vx * f.Ex + vy * f.Ey + vz * f.Ez;
   const double w = fmax(Fx * Fx + Fy * Fy + Fz * Fz - ve * ve, 0.0);
   const double chi = R.K * aq * aq * g0 * sqrt(w);
-  const RadStep st = radStep(g0, chi, 1.0 / aq, R.K, fabs(dt));
+  RadStep st = radStep(g0, chi, 1.0 / aq, R.K, fabs(dt));
+  st.m2 *= c2;  // undulator correction of the variance (radUndulatorFactor)
   const uint64_t key =
       mix64(R.seed ^ mix64(radBits(x0) ^ mix64(radBits(y0) ^ mix64(radBits(zeta0) ^ mix64(radBits(uz0) ^ mix64(radBits(z0)))))));
-  const double S = radLoss(st, R.model, key);
-  if (S == 0.0) return;
-  const double p2 = p.ux * p.ux + p.uy * p.uy + p.uz * p.uz;
-  if (!(p2 > 0.0)) return;
-  double gn = sqrt(1.0 + p2) - S;
-  if (gn < 1.0) gn = 1.0;
-  const double s = sqrt((gn - 1.0) * (gn + 1.0) / p2);
-  p.ux *= s; p.uy *= s; p.uz *= s;
+  radApplyLoss(p, radLoss(st, R.model, key));
+}
+
+// thin chicane (Simulation::applyChicanes): n dipoles of bending angle theta and length L each for the reference
+// momentum u_ref (field B = u_ref theta / (|qm| L)), traversed in one go: Lambda, m1, m2 of the whole path n L in
+// the field of the particle (chi ~ gamma), one draw; key from the state and the chicane position
+GEM_HD inline void radiateChicane(const RadParams& R, Particle& p, double uref, double theta, double L, int n,
+                                  double zc) {
+  const double aq = fabs(p.qm);
+  if (R.model == RAD_OFF || aq == 0.0 || !(theta > 0.0) || !(L > 0.0) || n <= 0) return;
+  const double g = gammaOf(p);
+  const double B = uref * theta / (aq * L);
+  const double chi = R.K * aq * aq * g * B;
+  const RadStep st = radStep(g, chi, 1.0 / aq, R.K, n * L);
+  const uint64_t key = mix64(R.seed ^ 0xC41C4E5ULL ^
+      mix64(radBits(p.x) ^ mix64(radBits(p.y) ^ mix64(radBits(p.zeta) ^ mix64(radBits(p.uz) ^ mix64(radBits(zc)))))));
+  radApplyLoss(p, radLoss(st, R.model, key));
 }
 
 }  // namespace gem

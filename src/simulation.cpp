@@ -1075,7 +1075,8 @@ void Simulation::pushBeamParticle(Particle& p) {
       const Particle p0 = p;
       if (cfg.numerics.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
       else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
-      radiate(rad, p, p0.ux, p0.uy, p0.uz, p0.x, p0.y, p0.zeta, p0.z, fr, dt);
+      radiate(rad, p, p0.ux, p0.uy, p0.uz, p0.x, p0.y, p0.zeta, p0.z, fr, dt,
+              rad.model != RAD_OFF ? radUndulatorFactor(ext, p0.z) : 1.0);
       gm = gammaOf(p);
       p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
       p.zeta += (p.uz / gm - 1.0) * dt;
@@ -1469,6 +1470,8 @@ void Simulation::applyChicanes(double za, double zb) {
       p.zeta += d;
       sh += std::fabs(p.q) * d; sh2 += std::fabs(p.q) * d * d; w += std::fabs(p.q);
       if (p.zeta < 0.0 || p.zeta >= top) p.status = 2;
+      // incoherent synchrotron radiation in the dipoles (numerics.radiation_reaction, bend_angle and bend_length)
+      radiateChicane(rad, p, std::sqrt(C.gamma_ref * C.gamma_ref - 1.0), C.bend_angle, C.bend_length, C.dipoles, C.z);
     }
     const size_t n0 = beam.size();
     beam.erase(std::remove_if(beam.begin(), beam.end(), [](const Particle& p) { return p.status != 0; }), beam.end());

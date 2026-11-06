@@ -575,7 +575,8 @@ bool PipelineRun::pushBeamParticle(Particle& p, const Fields& F0, const Fields* 
     const Particle p0 = p;
     if (num.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
-    radiate(S.rad, p, p0.ux, p0.uy, p0.uz, p0.x, p0.y, p0.zeta, p0.z, fr, dt);
+    radiate(S.rad, p, p0.ux, p0.uy, p0.uz, p0.x, p0.y, p0.zeta, p0.z, fr, dt,
+            S.rad.model != RAD_OFF ? radUndulatorFactor(S.ext, p0.z) : 1.0);
     gm = gammaOf(p);
     p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
     p.zeta += (p.uz / gm - 1.0) * dt;

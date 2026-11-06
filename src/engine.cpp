@@ -555,7 +555,8 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
     const double ux0 = p.ux, uy0 = p.uy, uz0 = p.uz, x0 = p.x, y0 = p.y, zeta0 = p.zeta, z0 = p.z;
     if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
-    radiate(P.rad, p, ux0, uy0, uz0, x0, y0, zeta0, z0, fr, dt);
+    radiate(P.rad, p, ux0, uy0, uz0, x0, y0, zeta0, z0, fr, dt,
+            P.rad.model != RAD_OFF ? radUndulatorFactor(P.ext, z0) : 1.0);
     gm = gammaOf(p);
     p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
     p.zeta += (p.uz / gm - 1.0) * dt;
@@ -591,7 +592,8 @@ GEM_HD inline bool pushBeamCont(const Params& P, const FieldsV& F, Particle& p, 
     const double ux0 = p.ux, uy0 = p.uy, uz0 = p.uz, x0 = p.x, y0 = p.y, zeta0 = p.zeta, z0 = p.z;
     if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
-    radiate(P.rad, p, ux0, uy0, uz0, x0, y0, zeta0, z0, fr, dt);
+    radiate(P.rad, p, ux0, uy0, uz0, x0, y0, zeta0, z0, fr, dt,
+            P.rad.model != RAD_OFF ? radUndulatorFactor(P.ext, z0) : 1.0);
     gm = gammaOf(p);
     p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
     p.zeta += (p.uz / gm - 1.0) * dt;

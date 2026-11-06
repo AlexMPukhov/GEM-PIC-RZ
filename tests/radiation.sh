@@ -4,6 +4,8 @@
 # RK4 of the Landau-Lifshitz energy and the Sokolov-Ternov variance (on the given backend); the deterministic
 # classical run against serial (1e-9). The stochastic runs of two backends agree only statistically: the random
 # numbers hash the particle state, which the engine and the serial code reproduce only to rounding.
+# Then (tests/radiation_extra.py) a planar undulator with K = 1 (variance of the radiation integral over all
+# harmonics, 1.29 x the local constant field) and a thin chicane (one draw of Lambda = 2.1 photons: exp(-Lambda)).
 # With an mpiexec as 4th argument all runs are made on 3 ranks (MPI pipeline).
 # usage: sh tests/radiation.sh <gempic_rz> <compare_columns> <backend> [mpiexec]   (exit 77: skipped, needs numpy and h5py)
 set -e
@@ -23,6 +25,18 @@ for m in classical stochastic gaussian; do
   $RUN "$SRC/tests/radiation.deck" numerics.backend=$B numerics.radiation_reaction=$m output.dir=out_$m > run_$m.log
 done
 python3 "$SRC/tests/radiation.py" out_classical out_stochastic out_gaussian 2e5 20.6 0.01 0.07 0.8e-6
+# planar undulator, K = 1: the variance of the radiation integral (1.29 x the local constant field)
+U="undulator.type=planar undulator.period=1mm undulator.K=1 undulator.periods=100 undulator.natural_focusing=false"
+U="$U grid.dz=62.5um grid.z_end=10cm numerics.beam_dz_max=62.5um bunch.macroparticles=40000"
+for m in classical stochastic; do
+  $RUN "$SRC/tests/radiation.deck" $U numerics.backend=$B numerics.radiation_reaction=$m output.dir=und_$m > und_$m.log
+done
+python3 "$SRC/tests/radiation_extra.py" undulator und_classical und_stochastic 2e5 1 1e-3 100 1
+# thin chicane: Lambda = 2.1 photons in one draw
+for m in classical stochastic gaussian; do
+  $RUN "$SRC/tests/radiation_chicane.deck" numerics.backend=$B numerics.radiation_reaction=$m output.dir=chic_$m > chic_$m.log
+done
+python3 "$SRC/tests/radiation_extra.py" chicane chic_classical chic_stochastic chic_gaussian 2e4 2.5e-3 0.2 4
 if [ "$B" != serial ] || [ -n "$MPIEXEC" ]; then
   "$EXE" "$SRC/tests/radiation.deck" numerics.backend=serial numerics.radiation_reaction=classical \
     output.dir=out_serial > run_serial.log

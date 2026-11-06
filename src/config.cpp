@@ -1335,6 +1335,12 @@ void readChicane(const Block& b, const Deck& d, const Units& u, ChicaneConfig& C
   if (r.oneOf("energy", "gamma") == 0) C.gamma_ref = 1.0 + r.num("energy", Dim::Energy) / MC2_MEV;
   else C.gamma_ref = r.num("gamma", Dim::None);
   if (!(C.gamma_ref > 1.0)) r.failKey(r.has("gamma") ? "gamma" : "energy", "the reference must be relativistic");
+  C.bend_angle = std::fabs(r.num("bend_angle", Dim::Angle, 0.0));
+  C.bend_length = r.num("bend_length", Dim::Length, 0.0);
+  C.dipoles = int(r.integer("dipoles", 4));
+  if (C.dipoles < 1) r.failKey("dipoles", "must be >= 1");
+  if ((C.bend_angle > 0.0) != (C.bend_length > 0.0)) r.failKey("bend_length", "give bend_angle and bend_length together");
+  if (C.bend_length < 0.0) r.failKey("bend_length", "must be > 0");
 }
 
 // block 'dielectric': a layer of constant eps (r_in <= r < r_out, z_start <= z < z_end) or eps(r, z)

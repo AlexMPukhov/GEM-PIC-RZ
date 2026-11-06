@@ -213,6 +213,8 @@ deck of the skill for 3 steps with the real executable. Details and the result o
 | `tools/openpmd_rectilinear.py` | Python reader of openPMD meshes on regular and rectilinear (non-uniform) grids, GEM-PIC-RZ and QUARZ |
 | `tests/hdf5.sh` | HDF5 files read back against the text output (double and single precision) |
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
+| `tests/radiation.sh` (+ `.deck`, `.py`, `radiation_chicane.deck`, `radiation_extra.py`) | radiation reaction of the beam list: wiggler (Landau–Lifshitz, Sokolov–Ternov), planar undulator (radiation-integral variance), thin chicane (zero-loss probability) |
+| `tools/undulator_diffusion.py` | quantum diffusion in an undulator from the classical radiation integral over all harmonics (reference of the undulator factor) |
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
 | `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
 | `tests/flying_focus_beat.sh` | flying focus of two luminal Bessel components (J0 + J1 e^{±iφ}; circular polarization with both helicities in m ≤ 1, linear with m = 2) against the analytic field: E_x in the plane y = 0 and the intensity maximum that turns around the axis (`check_physics ffbeat`) |
@@ -1198,6 +1200,24 @@ sub-step, not of the order in which the particles are pushed. The serial code, t
 pipeline reproduce each other's beam states only to rounding, so their random draws differ and stochastic runs agree
 statistically (the `classical` model agrees to rounding).
 
+**Undulators.** In an undulator the local constant-field kernel gives the mean loss exactly (Larmor) but not the
+variance: for K ≲ 2 the photons are the undulator harmonics, not a synchrotron spectrum. Inside an `undulator` block
+the variance (m₂) is therefore multiplied by F(K)/(A K), with the quantum diffusion
+d⟨Δγ²⟩/dz = c r_e ƛ_C γ⁴ k_u³ K² F(K) (c = 14/15 helical, 7/15 planar with the peak K) and
+F(K) = A K + 1/(1 + a K + b K²); A K is the local-field limit (A = 1.4174 helical, 1.2032 planar).
+`tools/undulator_diffusion.py` computes the rate from the classical radiation integral over all harmonics (Jackson
+14.67): helical: Saldin, Schneidmiller and Yurkov's fit (a, b) = (1.5, 0.95) agrees to 0.5 % for K = 0.25…3;
+planar: (a, b) = (1.34, 0.43) fitted, within 0.8 % for K = 0.25…4. The factor is 1.29 at K = 1 (planar), 1.20
+(helical), 1.93 / 1.71 at K = 0.5, and → 1 for a wiggler. K is the local value (ramps, tapers). The coherent
+emission that the grid resolves is in the fields; the incoherent loss added here is the spontaneous emission of the
+real electrons (with a quiet beam loading the macroparticles add little incoherent emission of their own).
+
+**Thin chicanes.** With `bend_angle` and `bend_length` (and `dipoles`, default 4) in a `chicane` block, the
+incoherent synchrotron radiation of the dipoles is applied with the chicane, in one draw per particle: the field
+B = p_ref θ/(e L), χ ∝ γ of the particle, the path n L; Λ = (5/(2√3)) α γ θ n photons. One draw of a thin element
+can carry many photons; the zero-inflated Gamma keeps the exact zero-loss probability, mean and variance. The
+transverse effects of the dispersion (emittance growth) are not modelled, as for the thin chicane itself.
+
 **Validity.** χ ≲ 10⁻² (the quantum reduction of the emitted power, ≈ 1 − 5.95 χ, is not included), a loss per
 sub-step small compared with γ. The photons are not tracked.
 
@@ -1206,7 +1226,10 @@ K = 20.6, 7 cm, χ = 10⁻³, 8 photons per particle, 0.09 per sub-step), agains
 the Sokolov–Ternov variance: `classical` loss 1.0003 × reference; `stochastic` and `gaussian` mean loss within the
 statistical error, rms γ 0.997 / 1.001 × Sokolov–Ternov; particles that gained energy: none with `stochastic`,
 8.8 % with `gaussian`. Without the point evaluation of the wiggler field the loss was 1.3 % low (sinc² of the
-sub-step average).
+sub-step average). Planar undulator, K = 1, γ = 2·10⁵, 100 periods of 1 mm: mean loss = Larmor (1.0003), rms of
+(stochastic − classical) 1.013 × the radiation integral (the local field alone would give 0.878). Thin chicane
+(10 GeV, 4 × 2.5 mrad × 0.2 m, Λ = 2.1): zero-loss fraction 0.1212 against e^{−Λ} = 0.1217, mean Λm₁ and variance
+Λm₂ (1.015, statistical error ~1 %); no energy gain (Gaussian: 24 % of the particles).
 
 ## Corrections of earlier versions
 

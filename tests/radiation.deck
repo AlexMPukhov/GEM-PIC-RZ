@@ -10,5 +10,5 @@ grid {
 undulator { type = helical; period = 1 cm; K = 20.6; periods = 7; ramp_periods = 1 }
 bunch { name = b; charge = 1 fC; gamma = 2e5; sigma_x = 0.1 um; emittance_x = 0 um
         sigma_z = 0.1 um; zeta_center = 1 um; macroparticles = 100000 }
-output { dir = rad_out; every = 0; format = hdf5; particles = true }
+output { dir = rad_out; every = 0; format = hdf5; particles = true; fel = false }
 numerics { iterations = 1; beam_dz_max = 0.625 mm; beam_filter = 0; radiation_reaction = stochastic }

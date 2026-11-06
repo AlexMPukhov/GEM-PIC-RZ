@@ -361,6 +361,9 @@ struct BoundElectronsConfig {
 // thin magnetic chicane at z: the beam particles move by r56 * delta - delay in zeta
 struct ChicaneConfig {
   double z = 0.0, r56 = 0.0, delay = 0.0, gamma_ref = 1.0;
+  // incoherent synchrotron radiation (with numerics.radiation_reaction): dipoles of bending angle and length
+  double bend_angle = 0.0, bend_length = 0.0;
+  int dipoles = 4;
 };
 
 // ---------------------------------------------------------------- output / numerics
