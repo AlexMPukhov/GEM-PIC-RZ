@@ -32,6 +32,9 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   if (sb) { blk = *sb; partial = true; }
   sLo = std::max(0, blk.sa);
   sHi = std::min(Nz, blk.sb + 1);
+  rad.model = cfg.numerics.radiation_reaction;
+  rad.K = 3.8615926796e-13 * 2.0 * PI / (cfg.units.lambda0_um * 1e-6);  // reduced Compton wavelength * k0
+  rad.seed = mix64(uint64_t(cfg.numerics.radiation_seed) * 0xD1B54A32D192ED03ULL + 0x5ad1a7e0ULL);
   {
     std::vector<double> nodes(Nz + 1);
     for (int n = 0; n <= Nz; ++n) nodes[n] = cfg.grid.zetaNode(n);
@@ -1066,9 +1069,13 @@ void Simulation::pushBeamParticle(Particle& p) {
         f = {b * f.Ex + wNew * f1.Ex, b * f.Ey + wNew * f1.Ey, b * f.Ez + wNew * f1.Ez,
              b * f.Bx + wNew * f1.Bx, b * f.By + wNew * f1.By, b * f.Bz + wNew * f1.Bz};
       }
+      EB fr = f;  // radiation: the external field at the point, not averaged over the sub-step
+      if (rad.model != RAD_OFF) addExternal(ext, p.x, p.y, p.z, fr);
       addExternal(ext, p.x, p.y, p.z, f, dz);
+      const Particle p0 = p;
       if (cfg.numerics.beam_vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
       else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+      radiate(rad, p, p0.ux, p0.uy, p0.uz, p0.x, p0.y, p0.zeta, p0.z, fr, dt);
       gm = gammaOf(p);
       p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
       p.zeta += (p.uz / gm - 1.0) * dt;

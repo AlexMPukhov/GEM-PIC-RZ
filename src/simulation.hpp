@@ -28,6 +28,7 @@
 #include "grid.hpp"
 #include "ionization.hpp"
 #include "particles.hpp"
+#include "radiation.hpp"
 #include "bound.hpp"
 #include "smoothing.hpp"
 #include "solver.hpp"
@@ -144,6 +145,7 @@ class Simulation {
   std::vector<double> undK;      // tapered undulators: tables of B0(z)
   std::vector<MagnetV> magV;     // transport elements
   ExternalV ext;                 // view of undV
+  RadParams rad;                 // radiation reaction of the beam list (numerics.radiation_reaction)
 
   void beginStep();  // Delta of this step, matrices of the field solver
 

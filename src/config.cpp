@@ -1441,6 +1441,11 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
     N.beam_field = bf == "level" ? BEAM_FIELD_LEVEL : bf == "mean" ? BEAM_FIELD_MEAN : -1;
   }
   N.beam_vay = r.word("beam_pusher", "vay", {"vay", "boris"}) == "vay";
+  {
+    const std::string rr = r.word("radiation_reaction", "off", {"off", "classical", "stochastic", "gaussian"});
+    N.radiation_reaction = rr == "classical" ? 1 : rr == "stochastic" ? 2 : rr == "gaussian" ? 3 : 0;
+  }
+  N.radiation_seed = static_cast<unsigned long>(r.integer("radiation_seed", long(N.radiation_seed)));
   N.seed = static_cast<unsigned long>(r.integer("seed", long(N.seed)));
   N.beam_dz_max = r.num("beam_dz_max", Dim::Length, N.beam_dz_max);
   N.vz_min = r.num("vz_min", Dim::None, N.vz_min);
