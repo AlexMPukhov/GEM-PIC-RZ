@@ -79,6 +79,52 @@ gempic_rz drive.deck                                       # numerics.backend = 
 - **Steps:** dz = 2 mm field steps. The beam push takes 1 mm sub-steps (≤ 0.1/k_β of the quadrupoles).
 - **Cost:** 2530 steps for 5 m.
 
+## Plots and the structure exit
+
+```bash
+python3 plot_wake.py run              # wake_axis.png, wake_map.png, beam.png in run/ (numpy + matplotlib)
+```
+
+- `wake_axis.png`: on-axis E_z against ξ = ζ − ζ_driver (driver centre at 0, wake at ξ < 0), one curve per output
+  step, with the modal theory ±127 MV/m dotted.
+- `wake_map.png`: E_z(ξ, x) at the last step.
+- `beam.png`: energy, energy spread, σ_x and ε_nx of the driver against z.
+- The script reads the text output (`axis_*`, `map_*`, `bunches.txt`). The same fields are in the openPMD files
+  `fields_*.h5` (openPMD-viewer).
+
+**Example: a short run** (`figures/`): `python3 make_deck.py --length 0.5 --every 25 > short.deck`, 280 steps,
+2 min on 24 cores, then `python3 plot_wake.py run --steps 50 150 250 275 280`.
+
+![on-axis wake](figures/wake_axis.png)
+- Inside the lining (z = 100, 300, 500 mm) the wake is steady at the modal value 127 MV/m.
+- The dashed curves are 40 and 50 mm after the end of the lining (see the structure exit below).
+
+![wake map](figures/wake_map.png)
+![drive beam](figures/beam.png)
+- The bunch loses 52 MeV/m at the centre; the rms energy spread grows to 2.2 % over 0.5 m.
+- σ_x = 50 µm with ε_n = 1 µm is far from matched to this FODO. The matched beta is ~0.1–0.2 m, so the matched
+  σ is ~10 µm. The envelope oscillates (σ_x down to ~2 µm at z = 9 cm), and with the energy spread ε_nx grows
+  to 8.7 µm.
+- The bunch starts at a waist; matching it (σ_x, σ_y in the deck) is left to the user.
+
+**Structure exit.** The run continues `--exit` (5 cm) beyond the end of the lining in the empty copper pipe. Steps after
+`dielectric.z_end` no longer show the wake of the structure:
+- The quartz mode turns into the modes of the empty pipe (TM₀₁ and TM₀₂ propagate at 301 GHz). On the axis the field
+  rises and beats, e.g. to 230–260 MV/m 5 cm after the exit.
+- The bunch no longer drives a wake (v = c in a smooth pipe). Behind it, a zone of length (1 − β_g) Δz empties:
+  - β_g = 0.934 for TM₀₁ of the empty pipe (GEM system 0.9336, Maxwell 0.9332);
+  - so 3.3 mm after Δz = 5 cm.
+- Measured (drive deck, 0.1 m structure; |E_z|max on the axis in 1 mm bins behind the driver):
+
+  | z | 0–1 mm | 1–2 | 2–3 | 3–4 | 4–5 | further back |
+  |---|---|---|---|---|---|---|
+  | 100 mm (inside the lining) | 129 | 129 | 126 | 132 | 128 | 128–138 |
+  | 160 mm (5 cm after the exit) | 34 | 54 | 80 | 151 | 243 | 229–260 |
+
+- The reflection at the end of the lining is not in the model (backward wave).
+- With `--length 0.5` (a 1/10 test) the last output step is in the pipe. Compare the wake at steps with
+  z < `dielectric.z_end`.
+
 ## Model limits
 
 - **Backward waves:** the GEM system drops them. Reflections at the ends of the structure and between the two
