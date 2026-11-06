@@ -412,7 +412,7 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `name` | string | `bunchI` | label in the output |
-| `species` | `electron` \| `positron` \| `proton` | `electron` | `proton`: mass m_p, charge +e (e.g. the SPS bunch of AWAKE). `energy` is then the kinetic energy (γ − 1) m_p c², and `bunches.txt` and the openPMD `mass` use m_p. Bunches from files are electrons or positrons |
+| `species` | `electron` \| `positron` \| `proton` | `electron` | `proton`: mass m_p, charge +e (e.g. the SPS bunch of AWAKE). `energy` is then the kinetic energy (γ − 1) m_p c², and `bunches.txt` and the openPMD `mass` use m_p. Bunches from files take the species from the file (electrons, positrons, protons, ions; see below) |
 | `charge` | charge | — | total charge. Only the magnitude is used; the sign comes from `species` |
 | `energy` *or* `gamma` | energy / number | — | kinetic energy, or the Lorentz factor |
 | `energy_spread` | number | 0 | relative rms spread of p_z (e.g. `0.1 %`) |
@@ -497,7 +497,7 @@ bunch {
 | `file` | path | — | openPMD file (one iteration per file or all in one) or a native `data_NNNNN.h5` |
 | `file_species` | name | the only species | openPMD species; native files: a bunch name, `trapped` or `inj_<ion>` |
 | `file_iteration` | integer | the last | openPMD iteration |
-| `select` | function of x, y, z, ux, uy, uz, gamma | all | particles with a non-zero value are kept. z is the lab position relative to the charge centroid of the species, momenta in m_e c |
+| `select` | function of x, y, z, ux, uy, uz, gamma | all | particles with a non-zero value are kept. z is the lab position relative to the charge centroid of the species, momenta in m c with the mass m of the species (m_e for electrons) |
 | `zeta_center` | length | — | the charge centroid of the selected particles is placed here |
 | `x0`, `y0` | length | 0 | transverse shift |
 | `charge` | charge | from the file | rescales the weights to this total charge |
@@ -506,12 +506,29 @@ bunch {
 
 - **Coordinates:** positions and momenta are converted to this run's units (the files carry SI factors). The
   longitudinal position is taken relative to the centroid, so the time of the file does not matter.
-- **Species:** electrons and positrons only (charge and mass are checked).
+- **Species:** any species with one charge and one mass: electrons, positrons, protons, ions in a given charge
+  state. The charge q = Ze and the mass m of one particle are taken from the `charge` and `mass` records of the
+  species (constant or per particle, also `macroWeighted`); without them the species is electrons. The charge must
+  be a non-zero multiple of e and the same for all particles of the species (ions in several charge states are
+  written by most codes as one species per charge state: import each as its own bunch). The bunch then moves with
+  q/m = Z m_e/m, `bunches.txt` gives the kinetic energy per particle (γ − 1) m c², the emittances use p/(m c), and
+  the summary names the species ("protons", or "ions (charge +6 e, mass 12 u)"). Fawley shot noise counts the real
+  particles, Q/(Ze). The particle output writes the species back with its charge, mass and weighting (number of
+  ions); native data files record them in the attributes `bunch_masses` [m_e] and `bunch_charges` [e] of
+  `/particles/beam` (older files: electrons or positrons).
 - **Moments:** the summary prints the charge, energy, spread, rms sizes and emittances of the imported bunch, which
   also define its initial self-field (γ: the mean).
 - **Restart:** a restarted run reads the beam from its checkpoint; the file is opened again only for the checks.
 - **Check:** a bunch written by a run (openPMD or native) and read into a new run has the same moments to all
   printed digits (`tests/beam_import.sh`).
+- **Check, ions (`tests/ion_import.sh`, ctest `ion_import`):** an openPMD file written by python (`tests/ion_beam.py`)
+  with C⁶⁺ (charge 6e, mass 12 u) and protons. A warm C⁶⁺ beam (charge, mass and momentum `macroWeighted`, unequal
+  weights): charge, kinetic energy per ion, spread, sizes and emittances equal those computed by python from the
+  file (worst deviation 5 % of the 1e-3 tolerance); written by the run as openPMD and native and read back: the
+  same moments. A cold C⁶⁺ beam at γ = 100 through the quadrupole of `tests/transport.sh` with the gradient scaled by
+  Bρ = p/(6e): size ratios 1.64493 and 0.38409 against 1.64531 and 0.38374 of the linear optics (planes swapped by
+  the positive charge). Protons of 400 GeV: named and with the right energy. Two charge states in one species and
+  neutral particles are refused.
 
 Each bunch starts with its relativistic vacuum self-field: E⊥ = −∇⊥ψ with −Δ⊥ψ = j_z, and B = ẑ × E. This assumes γ ≫ 1; a warning is printed for γ < 10. The field is initialized even if the plasma begins at z = 0: the bunch then enters the plasma with its vacuum field.
 
@@ -548,7 +565,8 @@ down-ramp injection with FBPIC, acceleration, plasma lens, chicane and undulator
 - **Selection and resampling:** `select` keeps a part of the beam (e.g. an energy window: `"gamma > 290"`), its
   centroid then defines `z`; `macroparticles` resamples to equal weights, `shot_noise = fawley` with
   `noise_wavelength = λ_r` gives the shot noise of the real number of electrons for an FEL stage.
-- **Other codes:** any code that writes openPMD 1.x particles (FBPIC, HiPACE++, WarpX, …): electrons or positrons;
+- **Other codes:** any code that writes openPMD 1.x particles (FBPIC, HiPACE++, WarpX, …): electrons, positrons,
+  protons or ions (one charge state per bunch; e.g. a proton driver handed over from another code);
   choose the species with `file_species` and the iteration with `file_iteration`.
 - **Check (`tests/chain.sh`, ctest `chain`):** 2 steps of `tests/regression.deck` → import with a selection → drift,
   thin chicane and 10 undulator periods (`tests/chain_fel.deck`): the moments of the imported beam (charge, energy,
@@ -810,7 +828,7 @@ p = FromOpenPMDProfile("diag/lasy/laser_00200.h5", "laserEnvelope")
 | `/fields/Er`, `Bphi`, `Bz` | [M+1][Nz+1][Nr+1] | complex modes on the faces |
 | `/fields/Ephi`, `Br`, `Ez` | [M+1][Nz+1][Nr] | complex modes on the centres |
 | `/densities/ne_over_n0`, `Zni_over_n0` | [Nz][Nr] | electron density and ion charge density / n0 (m = 0), half-cells × centres |
-| `/particles/beam/x`, `y`, `z`, `zeta`, `ux`, `uy`, `uz`, `charge`, `species` | [Np] | beam list: bunches and trapped particles (species as in `beam_NNNNN.txt`; attribute `bunch_names`) |
+| `/particles/beam/x`, `y`, `z`, `zeta`, `ux`, `uy`, `uz`, `charge`, `species` | [Np] | beam list: bunches and trapped particles (species as in `beam_NNNNN.txt`; attributes `bunch_names`, `bunch_masses` [m_e], `bunch_charges` [e]; momenta u = p/(m c) with the mass of the species) |
 | `/input_deck` | string | the deck after command-line overrides |
 
 - **Mode convention:** F(r, φ) = F₀(r) + 2 Re Σₘ Fₘ(r) e^{imφ}.

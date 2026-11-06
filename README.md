@@ -193,6 +193,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
 | `tests/chain.sh`, `tests/chain_fel.deck` | chained runs: openPMD hand-off (moments of the selected beam against python on the stage-1 file), thin chicane on the particle data (shift R56 δ − delay), FEL power growth in the reduced undulator stage; ctest `mpi_chain`: stage 2 on 2 MPI ranks = 1 rank |
+| `tests/ion_import.sh`, `tests/ion_beam.py` | protons and ions from openPMD files: moments of an imported C⁶⁺ beam against python on the file, write/read round trip (openPMD, native), a cold C⁶⁺ beam through a quadrupole scaled by Bρ = p/(Ze) against the linear optics, protons; mixed charge states and neutral species refused |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
 | `tests/mpi_events.sh` | MPI synchronization points: `bunch.z_start` and a thin chicane on 1–4 ranks (also mean-field push, restarts, device march) = serial |
@@ -1127,11 +1128,11 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
 - **Input deck:** the deck, with physical units, validation and overrides, replaces the `key=value` command-line parameters.
 - **Several laser pulses:** each pulse has its own wavelength, focal position (initialized with wavefront curvature and Gouy phase), polarization (linear at any angle, or circular) and CEP.
 - **Plasma profiles:** a piecewise-linear longitudinal profile, and a uniform, parabolic-channel or tabulated radial profile.
-- **Several bunches:** electrons, positrons or protons (the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
+- **Several bunches:** electrons, positrons or protons (from files also ions; the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
 - **Lasers from and to LASY files:** import (exact propagation, boundary injection) and export of envelope files.
-- **Beams from files:** a bunch can be read from an openPMD file of any code or from a native data file (selection, placement, resampling), and **Fawley shot noise** gives the bunching noise of the real electrons for FEL start-up.
+- **Beams from files:** a bunch can be read from an openPMD file of any code or from a native data file (selection, placement, resampling; electrons, positrons, protons or ions, with charge and mass from the file), and **Fawley shot noise** gives the bunching noise of the real electrons for FEL start-up.
 - **Dopant profiles:** an ion block can have its own density profile (`profile = own`), e.g. a nitrogen-doped section for localized ionization injection.
 - **FEL diagnostics:** `fel.txt` gives the radiation energy, peak power and bunching factor at every step, so gain curves and saturation are read directly.
 - **Transport elements:** quadrupoles, active plasma lenses, solenoids and thin chicanes (R56, delay) for matching and compressing a beam between stages.

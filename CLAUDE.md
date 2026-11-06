@@ -128,9 +128,13 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     injection, acceleration, transport and FEL in GEM-PIC-RZ. The FEL stage of the example keeps one plasma lens on
     purpose (his choice: demo as is); a matched lattice is the next step for a quantitative case.
     MPI synchronization points (pipeline.cpp eventIn / drain / syncEvent / exchangeGhosts): `bunch.z_start` (PR #25,
-    merged) and thin chicanes (branch mpi-chicane): the pipeline is drained at the event step, the beam gathered, the
+    merged) and thin chicanes (merged, PR #27): the pipeline is drained at the event step, the beam gathered, the
     event applied as serially (self-fields solved across the ranks), ghosts from the owners, restart-like new start;
     ctest mpi_events (1-4 ranks, mean push, restarts across the event, device emulation = serial). Under Slurm run MPI
-    tests with --ntasks >= 4 (a 1-task allocation binds all ranks to one core). Open: E (import of protons/ions from
-    openPMD files), ask Alexander first.
+    tests with --ntasks >= 4 (a 1-task allocation binds all ranks to one core).
+    Protons and ions from openPMD files (branch ion-import, 2026-11-06): charge Ze and mass m from the species'
+    records (BunchConfig::charge_e, mass; qm = Z/m; momenta p/(m c)); one charge state per bunch; output writes charge,
+    mass and weighting back, native files bunch_masses / bunch_charges; Fawley noise counts Q/(Ze). ctest ion_import
+    (python-written C6+ / proton file: moments, round trip, quadrupole scaled by B rho = p/(Ze) vs linear optics).
+    Note: the thin chicane uses gamma / gamma_ref - 1 as delta (= dp/p only for gamma >> 1).
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
