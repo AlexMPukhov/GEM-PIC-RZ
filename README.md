@@ -916,6 +916,44 @@ are unchanged.
 Example: `examples/dwa_proton_microbuncher/` (a 1 mm quartz-lined tube with an external FODO channel, drive beam,
 proton microbuncher and klystron; its thin lining fills the wake within 4 % of Maxwell's group velocity).
 
+**Corrugated metal pipes** (a THz source; `tests/corrugated.*`, ctest `corrugated`).
+
+The corrugation itself is outside the model:
+- its fields vary along z on the scale of the period p ≪ λ (near-wall Floquet harmonics, standing fields in the
+  slots), so ∂_s L is large there;
+- in a slot (k_z = 0) the reduced system has k⊥² = 4k²/3 instead of k²;
+- strongly evanescent harmonics cannot be represented at all.
+
+Small corrugations can instead be replaced by an equivalent thin dielectric layer, for which GEM is exact
+(synchronous wake):
+- **Equivalent layer.** Take a bore radius a and corrugations of depth h, period p and gap g, with h, p ≪ a
+  (K. Bane, G. Stupakov, PRST-AB 6, 024401 (2003)). A slot is a short-circuited parallel-plate line, so the wall
+  has the surface impedance Z_s = −iZ₀k h g/p. A dielectric layer of thickness h has Z_s = −iZ₀k h (ε − 1)/ε.
+  The two are equal for
+
+  `wall { radius = a + h }`  and  `dielectric { epsilon = p/(p − g); r_in = a; r_out = a + h }`.
+- **Leading order in h/a:** k₀ = √(2p/(a h g)), 1 − β_g = 4hg/(ap), κ = Z₀c/(2πa²).
+- **The modal theory of the layer converges to these values as h/a → 0** (a = 1 mm, p = 230 µm, g = 115 µm,
+  ε = 2):
+
+  | h | k₀ layer / formula [1/mm] | 1 − β_g layer / formula | κ layer / formula [kV/pC/m] |
+  |---|---|---|---|
+  | 240 µm | 3.727 / 4.082 | 0.305 / 0.480 | 13.2 / 18.0 |
+  | 60 µm | 7.968 / 8.165 | 0.107 / 0.120 | 16.6 / 18.0 |
+  | 15 µm | 16.23 / 16.33 | 0.029 / 0.030 | 17.6 / 18.0 |
+
+- **Code run** (h = 60 µm: λ = 789 µm, 380 GHz; 1 nC, σ_z = 50 µm, 39 mm of structure; 80 steps, 26 s serial).
+  The on-axis wake behind the bunch has wavenumber 7.9586/mm against 7.9680 for the layer (−1.2·10⁻³) and
+  amplitude 30.70 MV/m against 30.68 MV/m (+8·10⁻⁴).
+- The leading-order formulas give 8.165/mm and 33.1 MV/m. That difference is the h/a correction of the
+  equivalence, not a numerical error.
+
+Limits:
+- The layer describes the synchronous mode, i.e. the wake behind a bunch with σ_z ≳ p.
+- It does not describe the higher slot resonances, Smith–Purcell emission (p > λ/2), or the reflection at the
+  ends of the structure.
+- Open structures without a jacket (rings) would need an anisotropic ε: the metal annuli short E_r and E_φ.
+
 **Limits.** Backward waves are outside the model: reflections at the ends of the medium, at steps and at the jacket
 in −z are missing; gratings and dielectric laser accelerators are out of scope. The energy flow of non-synchronous
 fields follows the reduced system (above). A laser in a dense medium has the index (4 + 3χ)/(4 + χ), and the step
