@@ -22,9 +22,9 @@ lining, metal wall, quadrupoles, proton bunches, thin chicane.
 
 | mode | λ | f | β_g (Maxwell) | β_g (GEM system) | loss factor κ |
 |---|---|---|---|---|---|
-| TM₀₁ | 996 µm | 301 GHz | 0.8230 | 0.8285 | 15.5 V/pC/m |
-| TM₀₂ | 194 µm | 1.55 THz | 0.9161 | 0.9174 | 1.44 V/pC/m |
-| TM₀₃ | 100 µm | 3.0 THz | 0.9191 | 0.9203 | 0.40 V/pC/m |
+| TM₀₁ | 996 µm | 301 GHz | 0.8230 | 0.8285 | 15.5 kV/pC/m |
+| TM₀₂ | 194 µm | 1.55 THz | 0.9161 | 0.9174 | 1.44 kV/pC/m |
+| TM₀₃ | 100 µm | 3.0 THz | 0.9191 | 0.9203 | 0.40 kV/pC/m |
 
 The on-axis TM₀₁ wake behind 5 nC with σ_z = 0.1 mm is about 127 MV/m.
 
