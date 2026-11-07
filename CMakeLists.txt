@@ -304,6 +304,9 @@ if(GEMPIC_HAVE_HDF5)
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/dielectric.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
     set_tests_properties(dielectric_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
   endif()
+  # corrugated pipe as an equivalent thin dielectric layer (Bane-Stupakov): wake vs the modal theory of the layer
+  add_test(NAME corrugated COMMAND sh ${CMAKE_SOURCE_DIR}/tests/corrugated.sh $<TARGET_FILE:gempic_rz> serial)
+  set_tests_properties(corrugated PROPERTIES SKIP_RETURN_CODE 77)
   # bound electrons (Maxwell-Bloch, Rb D1/D2): Rabi flopping, weak-field Lorentz dispersion, static limit vs the
   # dielectric, depopulation by ionization with ADK per level; per backend and in the GPU emulation
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)

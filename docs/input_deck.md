@@ -665,6 +665,10 @@ Exactly one of `epsilon`, `epsilon_function` is given. Example, a quartz-lined c
   tube the TM₀₁ wake fills behind the bunch with β_g = 0.40 instead of Maxwell's 0.33); a laser has the index
   (4 + 3χ)/(4 + χ) instead of √(1 + χ) (χ = ε − 1: equal to O(χ²), 1.6 % off for glass). The step must resolve the
   dephasing of a laser, k (n − 1) Δz ≲ 1. Reflections at the ends of the medium and at steps are missing.
+- **Corrugated metal pipe** (bore a, depth h, period p, gap g; h, p ≪ a): use the equivalent thin layer
+  `wall { radius = a + h }` and `dielectric { epsilon = p/(p − g); r_in = a; r_out = a + h }`. It gives the synchronous
+  wake of small corrugations (Bane–Stupakov). The corrugation itself (period ≪ λ) cannot be resolved by the wall
+  block. README, "Corrugated metal pipes"; ctest `corrugated`.
   README, section "Dielectric media".
 - **Not combined yet:** `numerics.theta_stiff`, `numerics.beam_consistent`.
 
