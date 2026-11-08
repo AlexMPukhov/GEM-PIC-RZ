@@ -72,6 +72,7 @@ test: all
 	sh tests/physics.sh $(BUILD)/gempic_rz $(BUILD)/check_physics numerics.backend=serial
 	sh tests/regression.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns numerics.backend=$(PAR)
 	sh tests/physics.sh $(BUILD)/gempic_rz $(BUILD)/check_physics numerics.backend=$(PAR)
+	sh tests/output_volume.sh $(BUILD)/gempic_rz $(PAR)
 ifeq ($(HDF5),1)
 	sh tests/hdf5.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract $(BUILD)/compare_columns
 	sh tests/restart.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns serial

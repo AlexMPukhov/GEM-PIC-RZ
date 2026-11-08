@@ -229,7 +229,11 @@ class Simulation {
   };
   struct OutputSet {
     std::vector<std::unique_ptr<Sink>> sinks;
+    long long dirBytes = -1;  // size of output.dir before the first file output (volume report), -1: not measured
   };
+  bool volumeReported = false;  // the output volume of a file step was measured and reported (endOutput)
+  int outputStepsAfter(int k) const;                 // file-output steps after step k until z_end
+  std::string volumeMessage(long long bytes) const;  // console report of the volume of one output step
   std::unique_ptr<OutputSet> beginOutput(const OutputPlan& plan);
   void outputBlock(OutputSet& o, int n0, int n1);
   std::vector<std::string> endOutput(OutputSet& o);

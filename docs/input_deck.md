@@ -721,7 +721,7 @@ bound_electrons { element = Rb; ion = Rb }
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `dir` | string | `diag` | output directory |
-| `every` | integer | 25 | field/particle files every N steps (0: only at the start and end) |
+| `every` | integer | 25 | field/particle files every N steps (0: only at the start and end). The first output step reports its size and the projection for the run (`output volume: … GB per output step …`), with a warning if that exceeds the free space of `dir` or if `dir` is on tmpfs (README, "Memory and output volume") |
 | `map_stride` | integer | 4 | every n-th slice in the 2D maps |
 | `axis`, `maps`, `particles` | true/false | true | which files to write (`particles` also controls the beam list in the HDF5 files) |
 | `format` | one or more of `text`, `hdf5`, `openpmd` (`both` = `text, hdf5`) | `text` | `text`: `axis_`, `map_`, `beam_NNNNN.txt`; `hdf5`: one file `data_NNNNN.h5` per output step with all modes on the native grid (see below); `openpmd`: openPMD 1.1.0 files `openpmd/openpmd_<step>.h5` (see below). E.g. `format = text, openpmd` |
