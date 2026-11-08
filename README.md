@@ -437,8 +437,9 @@ much larger than that, and they grow with every output step:
   single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` (the uniform copy of the fields
   is dropped). `bunches.txt` has the beam moments of every step anyway.
 - **Test:** `output_volume` (serial and parallel backend) compares the reported volume with the bytes of the files
-  written (within 1 %, it agrees to 0.4 %). It checks that the peak memory after 80 steps equals that after 20
-  (within 2 % + 5 MB) and that an output directory on `/dev/shm` is reported.
+  written (within 1 %, it agrees to 0.4 %). It checks that the peak memory after 160 steps equals that after 20
+  (within 5 % + 20 MB; measured: the same to 1 MB after 20, 80 and 320 steps, serial and OpenMP) and that an output
+  directory on `/dev/shm` is reported.
 
 ## Free-hand grids (r, ζ, z)
 

@@ -4,8 +4,9 @@
 #  1. The volume report of the first output step ("output volume: X GB per output step in '<dir>', N more output
 #     steps") against the files actually written: X = the bytes of the files of the last output step (axis_, map_,
 #     beam_NNNNN.txt) within 1 %, N = the number of output steps after the first.
-#  2. Bounded memory: the peak resident memory ("peak memory: X GB", getrusage) of a run of 4 x the steps is that of
-#     the short run within 2 % + 5 MB (a list or buffer that grows with the step count would show here).
+#  2. Bounded memory: the peak resident memory ("peak memory: X GB", getrusage) of a run of 8 x the steps (160) is
+#     that of the short run (20) within 5 % + 20 MB (scatter of the peak under load ~10 MB; a list or buffer that grows
+#     with the step count by more than ~0.15 MB per step would show here).
 #  3. Linux, /dev/shm on tmpfs: an output directory there is reported (the files take RAM).
 # usage: sh tests/output_volume.sh <gempic_rz> [backend]
 set -e
@@ -30,9 +31,9 @@ awk -v x="$X" -v b="$BYTES" 'BEGIN { d = x * 1e9 / b - 1; if (d < 0) d = -d; exi
   { echo "  volume per output step: FAILED"; exit 1; }
 [ "$N" -eq $((FILES - 1)) ] || { echo "  number of output steps: FAILED"; exit 1; }
 
-# 2. peak memory of 20 and 80 steps
+# 2. peak memory of 20 and 160 steps
 "$EXE" "$D" $G grid.z_end=0.4mm output.every=0 output.dir=m1 > m1.log
-"$EXE" "$D" $G grid.z_end=1.6mm output.every=0 output.dir=m4 > m4.log
+"$EXE" "$D" $G grid.z_end=3.2mm output.every=0 output.dir=m4 > m4.log
 P1=$(sed -n 's/^peak memory: \([0-9.e+-]*\) GB.*/\1/p' m1.log)
 P4=$(sed -n 's/^peak memory: \([0-9.e+-]*\) GB.*/\1/p' m4.log)
 if [ -z "$P1" ] || [ -z "$P4" ]; then
@@ -40,7 +41,7 @@ if [ -z "$P1" ] || [ -z "$P4" ]; then
 else
   S1=$(grep -c '^step' m1.log); S4=$(grep -c '^step' m4.log)
   echo "  peak memory: $P1 GB after $((S1 - 1)) steps, $P4 GB after $((S4 - 1)) steps"
-  awk -v a="$P1" -v b="$P4" 'BEGIN { exit !(b <= a * 1.02 + 0.005) }' || { echo "  memory grows with the steps: FAILED"; exit 1; }
+  awk -v a="$P1" -v b="$P4" 'BEGIN { exit !(b <= a * 1.05 + 0.02) }' || { echo "  memory grows with the steps: FAILED"; exit 1; }
 fi
 
 # 3. output on tmpfs
