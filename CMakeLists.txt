@@ -161,6 +161,9 @@ foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
             -DSRC=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/tests/regression.cmake)
   add_test(NAME long_wake${sfx}
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/long_wake.sh $<TARGET_FILE:gempic_rz> ${b})
+  # output volume report against the written files; peak memory bounded in the number of steps; tmpfs warning
+  add_test(NAME output_volume${sfx}
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/output_volume.sh $<TARGET_FILE:gempic_rz> ${b})
 endforeach()
 if(TARGET gempic_rz_gpuemu)
   # the GPU code paths, emulated on CPU threads, against the serial reference

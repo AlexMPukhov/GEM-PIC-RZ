@@ -416,6 +416,31 @@ restart checks them. See
 - **Tests:** `restart_serial` and `restart_openmp` (`restart_cuda` in a GPU build) compare an interrupted and restarted run with the uninterrupted one. They cover a restart from a checkpoint file and a stop at the wall-time limit followed by `--restart latest`.
 - **Hard case:** the ionization-injection example at a0 = 2.5 was also restarted at step 10, after which 4256 more particles are re-streamed. All tables, 6915 beam particles and the HDF5 files at step 14 are identical to the uninterrupted run.
 
+## Memory and output volume
+
+The memory of a run does not grow with the number of steps. It is set by the window and the particles: about
+0.25 MB per ζ-slice for 153 radial cells and m ≤ 1, plus about 0.1 kB per macroparticle. The output files can be
+much larger than that, and they grow with every output step:
+
+- **Volume report:** the first output step measures how many bytes it wrote. The console then shows the projection for
+  the whole run and the free space of `output.dir`:
+  `output volume: 0.404 GB per output step in 'run_mb', 106 more output steps: 42.8 GB until z_end (free there: …)`.
+  A warning follows if the projection exceeds the free space, or if `output.dir` is on tmpfs (in RAM).
+- **Peak memory:** the last console line gives the peak resident memory of the process (`peak memory: 2.4 GB
+  resident`; with MPI that of rank 0).
+- **Files that fill the memory:** on tmpfs, `/dev/shm`, or in a container whose memory limit counts the file cache, the
+  output files take RAM. Example: the DWA microbuncher deck (`examples/dwa_proton_microbuncher`, 1 m lining, 30 mm
+  window, 7500 slices) with `every = 5`, `particles = true` and `format = text, openpmd` writes 0.40 GB per output
+  step, 41 GB by z = 1.02 m. On a 46 GB virtual machine this filled the memory, while the 16 MPI ranks together needed
+  a constant 4.4 GB.
+- **Fewer bytes:** a larger `every`; `particles = false` except at a few steps; one format only; `hdf5_precision =
+  single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` (the uniform copy of the fields
+  is dropped). `bunches.txt` has the beam moments of every step anyway.
+- **Test:** `output_volume` (serial and parallel backend) compares the reported volume with the bytes of the files
+  written (within 1 %, it agrees to 0.4 %). It checks that the peak memory after 160 steps equals that after 20
+  (within 5 % + 20 MB; measured: the same to 1 MB after 20, 80 and 320 steps, serial and OpenMP) and that an output
+  directory on `/dev/shm` is reported.
+
 ## Free-hand grids (r, ζ, z)
 
 All three axes take their step from reference points, with linear

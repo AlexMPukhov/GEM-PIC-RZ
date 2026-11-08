@@ -22,6 +22,9 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#if defined(__linux__)
+#include <sys/vfs.h>
+#endif
 
 #include "comm.hpp"
 #include "simulation.hpp"
@@ -559,8 +562,80 @@ struct Simulation::TextSink : Simulation::Sink {
   }
 };
 
+namespace {
+// bytes in the regular files below dir (0 if it does not exist)
+long long dirSize(const std::string& dir) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  long long n = 0;
+  for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code e2;
+    if (it->is_regular_file(e2)) {
+      const auto s = it->file_size(e2);
+      if (!e2) n += (long long)s;
+    }
+  }
+  return n;
+}
+// output.dir on tmpfs / ramfs: the files are kept in memory
+bool inMemoryFilesystem(const std::string& dir) {
+#if defined(__linux__)
+  struct statfs st;
+  if (statfs(dir.c_str(), &st) != 0) return false;
+  return st.f_type == 0x01021994 /* TMPFS_MAGIC */ || st.f_type == (decltype(st.f_type))0x858458f6 /* RAMFS_MAGIC */;
+#else
+  (void)dir;
+  return false;
+#endif
+}
+}  // namespace
+
+// number of file-output steps after step k (output.every, and always the last step)
+int Simulation::outputStepsAfter(int k) const {
+  const int last = k + cfg.grid.stepsFrom(s0);
+  const int e = cfg.output.every;
+  int n = (e > 0) ? last / e - k / e : 0;
+  if (e <= 0 || last % e != 0) n += (last > k) ? 1 : 0;
+  return n;
+}
+
+// the first file output measures its own volume: bytes of this step, the projection for the rest of the run and the
+// free space of output.dir (output files on tmpfs, or a container whose memory limit counts the file cache, fill the
+// memory: one output step of a large window with particles can be ~0.5 GB)
+std::string Simulation::volumeMessage(long long bytes) const {
+  namespace fs = std::filesystem;
+  const auto& O = cfg.output;
+  const int more = outputStepsAfter(step_no);
+  const double gb = 1e-9, total = double(bytes) * more;
+  char buf[1024];
+  std::string msg;
+  std::snprintf(buf, sizeof buf,
+                "output volume: %.3g GB per output step in '%s', %d more output steps: %.3g GB until z_end", bytes * gb,
+                O.dir.c_str(), more, total * gb);
+  msg = buf;
+  std::error_code ec;
+  const fs::space_info sp = fs::space(O.dir, ec);
+  if (!ec) {
+    std::snprintf(buf, sizeof buf, " (free there: %.3g GB)", double(sp.available) * gb);
+    msg += buf;
+    if (total > double(sp.available)) {
+      std::snprintf(buf, sizeof buf,
+                    "\nWARNING: the output of this run (%.3g GB) does not fit into the free space of '%s' (%.3g GB); "
+                    "reduce it with output.every, output.particles = false, output.format, output.hdf5_precision = "
+                    "single or output.hdf5_compression",
+                    total * gb, O.dir.c_str(), double(sp.available) * gb);
+      msg += buf;
+    }
+  }
+  if (inMemoryFilesystem(O.dir))
+    msg += "\nWARNING: output.dir '" + O.dir + "' is on tmpfs (in memory): the output files take RAM; " +
+           "write them to a disk";
+  return msg;
+}
+
 std::unique_ptr<Simulation::OutputSet> Simulation::beginOutput(const OutputPlan& plan) {
   auto o = std::make_unique<OutputSet>();
+  if (plan.files && !volumeReported) o->dirBytes = dirSize(cfg.output.dir);
   if (plan.files && cfg.output.text) o->sinks.push_back(std::make_unique<TextSink>(*this));
   if (plan.files && cfg.output.hdf5) o->sinks.push_back(makeHdf5Sink(*this, 0));
   if (plan.files && cfg.output.openpmd) o->sinks.push_back(makeHdf5Sink(*this, 1));
@@ -580,6 +655,10 @@ std::vector<std::string> Simulation::endOutput(OutputSet& o) {
     if (!m.empty()) msg.push_back(m);
   }
   o.sinks.clear();
+  if (o.dirBytes >= 0) {
+    volumeReported = true;
+    msg.push_back(volumeMessage(std::max(0LL, dirSize(cfg.output.dir) - o.dirBytes)));
+  }
   return msg;
 }
 

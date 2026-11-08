@@ -133,4 +133,9 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     ctest mpi_events (1-4 ranks, mean push, restarts across the event, device emulation = serial). Under Slurm run MPI
     tests with --ntasks >= 4 (a 1-task allocation binds all ranks to one core). Open: E (import of protons/ions from
     openPMD files), ask Alexander first.
+  - **Memory / output volume** (branch `output-volume`, 2026-11-08): Alexei Petrenko's DWA microbuncher run (16 MPI
+    ranks, every = 5, particles, text + openPMD) filled a 46 GB VM at z = 1.02 m. Not a leak: the 16 ranks stay at
+    4.4 GB; the output files (0.40 GB per output step, 41 GB) took the RAM. Now the first output step reports
+    "output volume: ..." with a warning for tmpfs / too little free space, and the run ends with "peak memory: ...";
+    ctest output_volume. README "Memory and output volume".
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
