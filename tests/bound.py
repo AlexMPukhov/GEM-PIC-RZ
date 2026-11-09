@@ -145,15 +145,16 @@ def static(a):
     return 0 if err < tol else 1
 
 
-def adk_code(U_eV, E_code, lam0):
-    """ADK rate (ionization.hpp: s-state, Z after = 1, capped at its maximum) [1/omega0] in the field E [m c omega0/e]"""
+def adk_code(U_eV, E_code, lam0, l=0):
+    """standard ADK rate (ionization.hpp with l: l* = n* - 1, factor 2l + 1, m = 0, Z after = 1, capped at its maximum)
+    [1/omega0] in the field E [m c omega0/e]"""
     from math import gamma
     UH, Ea, wa = 13.605693122994, 5.14220674763e11, 4.1341373335e16
     w0 = 2 * np.pi * 299792458.0 / (lam0 * 1e-6)
     Eunit = 9.1093837015e-31 * 299792458.0 * w0 / 1.602176634e-19
     E = np.abs(np.asarray(E_code, dtype=float)) * Eunit
     ns = np.sqrt(UH / U_eV)
-    C2 = 2 ** (2 * ns) / (ns * gamma(ns + 1) * gamma(ns))
+    C2 = 2 ** (2 * ns) / (ns * gamma(2 * ns)) * (2 * l + 1)
     x = (U_eV / UH) ** 1.5 * Ea
     Epk = (2.0 / 3.0) * x / (2 * ns - 1)
     Ee = np.minimum(np.maximum(E, 1e-30), Epk)
@@ -178,7 +179,7 @@ def vsystem(E, dt, lines, ips, lam0):
             H[j + 1, j + 1] = w[j]
         return -1j * (H @ rho - rho @ H)
     def loss(rho, e, t):  # exact decay of the levels over t (stiff rates beyond barrier suppression)
-        g = np.array([adk_code(ips[k], e, lam0) for k in range(nl + 1)])
+        g = np.array([adk_code(ips[k], e, lam0, 0 if k == 0 else 1) for k in range(nl + 1)])   # ground s, excited p
         f = np.exp(-0.5 * g * t)
         return rho * np.outer(f, f)
     rho = np.zeros((nl + 1, nl + 1), dtype=complex)

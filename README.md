@@ -176,6 +176,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), openPMD output, LASY envelope files, checkpoints (`checkpoint_NNNNN.h5`) and restart |
 | `src/main.cpp` | command-line driver |
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
+| `tests/test_adk.cpp` | ctest `adk`: `AdkRates` with orbital quantum numbers against the analytic standard ADK (Rb 5s, 5p₁/₂, 5p₃/₂ at 0.003–0.02 E_a, 1.5e-14), hydrogen against the Landau rate, the ion-species prefactor unchanged |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
 | `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); a γ = 100 bunch keeps its energy in its own field; ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
 | `tools/h5_extract.cpp` | reads the HDF5 files and the native records of the openPMD files: tables of axis, map, beam, field line-outs (also an example reader) |
@@ -1014,7 +1015,10 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
 **Ionization (`ion = <ion block>`, depopulation).**
 - The atoms are the neutral atoms of an ionizable ion species.
 - Every level ionizes with its own ADK rate: ground 4.177 eV; excited I_p − ℏω_j ≈ 2.6 eV, beyond barrier
-  suppression already at 10¹¹–10¹² W/cm².
+  suppression already at 10¹¹–10¹² W/cm². The rate is the standard ADK (l* = n* − 1, factor 2l + 1, m = 0; ground s,
+  excited p; `AdkRates::setup` with the orbital quantum numbers, ctest `adk`), the same form as VLPL's field ionization
+  (Alexander, 2026-11-09). Before, the bound electrons used the l* = 0 prefactor of the ion species without 2l + 1: the
+  standard rates are 0.418 (5s), 0.719 (5p₁/₂) and 0.708 (5p₃/₂) of those.
 - In ρ the level k decays as e^{−w_k t} and the coherence kl as e^{−(w_k+w_l)t/2}. The trace is the neutral
   fraction; the oscillators are depopulated, and the removal of their dipoles is part of J.
 - The macro-atoms of the species ionize 0 → 1 with Σ_k p_k w_k (populations at their position). So the grid's neutral
@@ -1060,15 +1064,24 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
 
    | a0 | ionized | grid | reference | particles vs grid (ionized fraction, area mean) |
    |---|---|---|---|---|
-   | 4·10⁻⁴ | 42 % | 0.5834 | 0.5796 | 0.0079 vs 0.0076 |
-   | 10⁻³ | 97 % | 0.0293 | 0.0350 | 0.2206 vs 0.2237 |
+   | 4·10⁻⁴ | 32 % | 0.6806 | 0.6774 | 0.0054 vs 0.0056 |
+   | 10⁻³ | 96 % | 0.0351 | 0.0412 | 0.2174 vs 0.2195 |
 
    (dζ = λ/64; at 10⁻³ the residual 3 % neutrals converge with dζ: grid − reference 9.5, 5.8, 2.4·10⁻³ at λ/32, λ/64,
    λ/128.)
 
-   At a0 = 4·10⁻⁴ ground-state ADK alone leaves the atoms neutral; the 42 % come almost only from the resonantly
-   excited 5P. Rb then ionizes completely at a0 = 5·10⁻⁴ instead of ~10⁻³ (ground-state ADK at 10⁻³: 59 %). The
-   resonant excitation moves the ionization front of the vapour.
+   At a0 = 4·10⁻⁴ ground-state ADK alone leaves the atoms neutral; the 32 % come almost only from the resonantly
+   excited 5P. Rb then ionizes completely at a0 = 5·10⁻⁴ instead of ~10⁻³ (ground-state ADK alone at 10⁻³: ~31 %). The
+   resonant excitation moves the ionization front of the vapour. A scan of the neutral fraction on the axis (same deck,
+   dζ = λ/64, standard ADK):
+
+   | a0 | 3·10⁻⁴ | 4·10⁻⁴ | 5·10⁻⁴ | 6·10⁻⁴ | 7·10⁻⁴ | 8·10⁻⁴ | 10⁻³ | 1.2·10⁻³ | 1.5·10⁻³ |
+   |---|---|---|---|---|---|---|---|---|---|
+   | neutral | 0.997 | 0.681 | 0.0019 | 0.0022 | 0.011 | 0.025 | 0.035 | 0.0023 | 0 |
+
+   Above 5·10⁻⁴ the residual neutral fraction grows again up to 10⁻³ before ground-state ADK takes over: the
+   stronger drive presumably shifts and saturates the D lines (less time-averaged 5P population), so the excited-state channel
+   weakens. (With the earlier l* = 0 rates the table above read 42 % at 4·10⁻⁴ and 97 % at 10⁻³.)
 
 **Backends.** The medium runs on all backends.
 - Engine (OpenMP, CUDA): node kernels per slice in the device march: field at the nodes, Bloch step, projection to
@@ -1083,8 +1096,9 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
 **Limits.**
 - Scalar dipole along x: circular polarization and the orientation of other field components are not modelled.
 - No hyperfine, Zeeman or Doppler structure; T1 and T2 are optional constants.
-- ADK for the excited 5P is the s-state formula with the 5P binding energy (beyond barrier suppression the rate is
-  capped at the maximum of the ADK expression, as for all levels).
+- ADK for the excited 5P: the standard form with l = 1, m = 0 and the 5P binding energy (beyond barrier suppression
+  the rate is capped at the maximum of the ADK expression, as for all levels). The ion species (block `ion`) keep the
+  l* = 0 prefactor for now (open: whether they should get the standard form too).
 - The physics questions of the Rb case (the choice of the V-type atom, ADK per level) were decided by Alexander.
 
 ## Corrections of earlier versions
