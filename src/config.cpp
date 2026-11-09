@@ -836,6 +836,7 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
     I.Znuc = el->Znuc;
     I.mass = el->mass_u * U_OVER_ME;
     I.ip_eV = el->ip_eV;
+    I.ion_l = removedOrbitalL(el->symbol);
   } else {
     I.mass = r.num("mass", Dim::Mass);
     if (!(I.mass > 0)) r.failKey("mass", "must be positive");
@@ -856,6 +857,16 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
     I.ip_eV = v;
     if (!I.ionization) warn.push_back(b.label() + ": ionization_potentials given, but ionization = none");
   }
+  if (r.has("ionization_l")) {        // the orbital quantum numbers of the removed electrons (standard ADK prefactor)
+    const std::vector<double> v = r.vec("ionization_l", Dim::None);
+    I.ion_l.clear();
+    for (double x : v) {
+      if (!(x >= 0) || x != std::floor(x)) r.failKey("ionization_l", "integers >= 0");
+      I.ion_l.push_back(int(x));
+    }
+    if (I.ion_l.size() != I.ip_eV.size()) r.failKey("ionization_l", "one value per ionization energy");
+  }
+  if (I.ion_l.size() != I.ip_eV.size()) I.ion_l.assign(I.ip_eV.size(), 0);   // given potentials without l: s electrons
   if (I.ionization && I.ip_eV.empty())
     r.failKey("ionization", "needs ionization energies: give 'element' (NIST data) or 'ionization_potentials'");
 

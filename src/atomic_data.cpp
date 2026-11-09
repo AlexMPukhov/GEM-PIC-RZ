@@ -99,4 +99,42 @@ const char* atomicDataSource() {
          "ionization energies retrieved 2026-09-27";
 }
 
+
+std::vector<int> removedOrbitalL(const std::string& symbol) {
+  // l of the electron removed in k -> k+1: the last subshell of NIST's ground configuration of the ion of charge k (where
+  // NIST gives none: Madelung filling); the same table as VLPL data/ionization_energies.def (NIST ASD 5.12, 2026-11-08)
+  struct Row { const char* s; std::vector<int> l; };
+  static const std::vector<Row> rows = {
+      {"H", {0}},
+      {"D", {0}},
+      {"He", {0, 0}},
+      {"Li", {0, 0, 0}},
+      {"Be", {0, 0, 0, 0}},
+      {"B", {1, 0, 0, 0, 0}},
+      {"C", {1, 1, 0, 0, 0, 0}},
+      {"N", {1, 1, 1, 0, 0, 0, 0}},
+      {"O", {1, 1, 1, 1, 0, 0, 0, 0}},
+      {"F", {1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Ne", {1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Na", {0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Mg", {0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Al", {1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Si", {1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Ar", {1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Cu", {0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Kr", {1, 1, 1, 1, 1, 1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Ag", {0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Xe", {1, 1, 1, 1, 1, 1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+      {"Au", {0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1, 1, 1, 1, 3, 3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0}},
+  };
+  std::string u;
+  for (char c : symbol) u += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  for (const Row& r : rows) {
+    std::string t;
+    for (const char* p = r.s; *p; ++p) t += static_cast<char>(std::tolower(static_cast<unsigned char>(*p)));
+    if (t == u) return r.l;
+  }
+  return {};
+}
+
 }  // namespace gem

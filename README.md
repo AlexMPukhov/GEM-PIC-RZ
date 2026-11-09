@@ -176,7 +176,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), openPMD output, LASY envelope files, checkpoints (`checkpoint_NNNNN.h5`) and restart |
 | `src/main.cpp` | command-line driver |
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
-| `tests/test_adk.cpp` | ctest `adk`: `AdkRates` with orbital quantum numbers against the analytic standard ADK (Rb 5s, 5p₁/₂, 5p₃/₂ at 0.003–0.02 E_a, 1.5e-14), hydrogen against the Landau rate, the ion-species prefactor unchanged |
+| `tests/test_adk.cpp` | ctest `adk`: `AdkRates` with orbital quantum numbers against the analytic standard ADK (Rb 5s, 5p₁/₂, 5p₃/₂ at 0.003–0.02 E_a, 1.5e-14), hydrogen against the Landau rate, the nitrogen ion species with the l of its element table (1.6e-14) |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
 | `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); a γ = 100 bunch keeps its energy in its own field; ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
 | `tools/h5_extract.cpp` | reads the HDF5 files and the native records of the openPMD files: tables of axis, map, beam, field line-outs (also an example reader) |
@@ -589,7 +589,7 @@ the console shows its on-axis maximum. See `docs/input_deck.md`.
 `ion { element = N; charge_state = 5; ionization = adk; density = 3.5e16 cm^-3 }`
 makes a species field-ionizable.
 
-- **Rate:** the ADK tunnel rate of every level, evaluated with the instantaneous |E| at the ion (the laser carrier is resolved).
+- **Rate:** the ADK tunnel rate of every level, evaluated with the instantaneous |E| at the ion (the laser carrier is resolved). The standard ADK (Ammosov, Delone, Krainov 1986) with l* = n* − 1 and the factor 2l + 1 of the removed electron (m = 0), as VLPL's field ionization (Alexander, 2026-11-09). l per charge state comes from the NIST ground configurations (`removedOrbitalL` in `src/atomic_data.cpp`, the table of VLPL; `ionization_l` overrides it). Before, the code used C² = 2^{2n*}/(n* Γ(n*+1) Γ(n*)) without 2l + 1: equal for hydrogen and hydrogen-like ions, for nitrogen the standard rates of N⁰⁺…N⁶⁺ are 3.10, 2.07, 1.57 (2p), 0.48, 0.39 (2s), 1.06, 1.00 (1s) times the former ones (ctest `adk`).
 - **Energies:** ionization energies of all charge states of H, D, He, Li, Be, B, C, N, O, F, Ne, Na, Mg, Al, Si, Ar, Cu, Kr, Ag, Xe and Au, taken from the NIST Atomic Spectra Database (ver. 5.12, retrieved 2026-09-27). Provenance and NIST uncertainty flags are in `src/atomic_data.cpp`. `ionization_potentials` can replace them.
 - **Algorithm:** a Monte Carlo per macroparticle, with sequential ionization of several levels within one step. The random numbers are counter-based (`src/rng.hpp`): a hash of (seed, particle, step, slice, pass). All backends therefore draw the same numbers, independent of the thread schedule. The rate is averaged over the two slices of each step. The rate of the averaged field would underestimate strongly nonlinear ionization, by 6% for H near threshold at 25 points per wavelength.
 - **Freed electrons:** created at rest relative to the ion and tagged by their parent species. Ionization-injected electrons appear as `inj_<name>` in `bunches.txt`.
@@ -1097,8 +1097,8 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
 - Scalar dipole along x: circular polarization and the orientation of other field components are not modelled.
 - No hyperfine, Zeeman or Doppler structure; T1 and T2 are optional constants.
 - ADK for the excited 5P: the standard form with l = 1, m = 0 and the 5P binding energy (beyond barrier suppression
-  the rate is capped at the maximum of the ADK expression, as for all levels). The ion species (block `ion`) keep the
-  l* = 0 prefactor for now (open: whether they should get the standard form too).
+  the rate is capped at the maximum of the ADK expression, as for all levels). The ion species (block `ion`) use the same
+  standard form with the l of their element table (section "Field ionization").
 - The physics questions of the Rb case (the choice of the V-type atom, ADK per level) were decided by Alexander.
 
 ## Corrections of earlier versions

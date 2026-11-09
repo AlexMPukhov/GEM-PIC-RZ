@@ -1,11 +1,12 @@
 // ctest adk: the ADK rates of AdkRates against the analytic standard ADK (Ammosov, Delone, Krainov 1986: l* = n* - 1,
 // C^2 = 2^{2n*} / (n* Gamma(2n*)), factor 2l + 1 for m = 0), written out independently here, for the bound electrons of Rb
-// (5s: l = 0, 5p_1/2 and 5p_3/2: l = 1) at several fields; hydrogen against the Landau rate; the ion-species prefactor (l* = 0)
-// unchanged; the ratios standard / l* = 0 for Rb (expected 0.418, 0.719, 0.708).
+// (5s: l = 0, 5p_1/2 and 5p_3/2: l = 1) at several fields; hydrogen against the Landau rate;
+// the nitrogen species with the element table's l; the ratios standard / l* = 0 (Rb: 0.418, 0.719, 0.708).
 #include <cmath>
 #include <cstdio>
 #include <vector>
 
+#include "atomic_data.hpp"
 #include "ionization.hpp"
 #include "units.hpp"
 
@@ -50,12 +51,34 @@ int main() {
   std::printf("adk: AdkRates with l against the analytic standard ADK (Rb 5s, 5p1/2, 5p3/2, E = 0.003 .. 0.02 E_a): %.1e, adkRateSI %.1e\n",
               worst, worst_si);
   if (!(worst < 1e-12 && worst_si < 1e-12)) ++fails;
-  // the ion species (no l): the l* = 0 prefactor, unchanged
+  // the ion species: nitrogen with the l of the element table (removedOrbitalL: 2p, 2p, 2p, 2s, 2s, 1s, 1s) against the
+  // analytic standard ADK per level, at a field well below each level's ADK maximum; the ratios to the former l* = 0 form
+  {
+    const gem::Element* el = gem::findElement("N");
+    const std::vector<int> lN = gem::removedOrbitalL("N");
+    gem::AdkRates R;
+    R.setup(el->ip_eV, 0, 7, u, 1e3, lN);
+    double d = 0;
+    std::printf("  N, standard / (l* = 0) per level:");
+    for (int k = 0; k < 7; ++k) {
+      const double x = el->ip_eV[size_t(k)] / UH, ns = (k + 1) / std::sqrt(x), xx = std::pow(x, 1.5) * EA;
+      const double E = 0.05 * xx / (2 * ns - 1);
+      const double pw = std::pow(2 * xx / E, 2 * ns - 1) * std::exp(-(2.0 / 3.0) * xx / E) * WA * (x / 2);
+      const double st = pw * std::pow(2.0, 2 * ns) / (ns * std::tgamma(2 * ns)) * (2 * lN[size_t(k)] + 1);
+      const double old = pw * std::pow(2.0, 2 * ns) / (ns * std::tgamma(ns + 1) * std::tgamma(ns));
+      const double code = R.rate(k, E / E0) * w0;
+      if (code > 0) d = std::max(d, std::abs(code / st - 1));
+      std::printf(" %d+ %.3f", k, st / old);
+    }
+    std::printf("\nadk: nitrogen species with the element's l against the analytic standard ADK: %.1e\n", d);
+    if (!(lN.size() == 7 && lN[0] == 1 && lN[3] == 0 && lN[6] == 0 && d < 1e-12)) ++fails;
+  }
+  // no l given: s electrons (l = 0)
   {
     gem::AdkRates R;
     R.setup({U[0]}, 0, 1, u, 1e3);
-    const double E = 0.01 * EA, d = std::abs(R.rate(0, E / E0) * w0 / adk_lstar0(U[0], E) - 1);
-    std::printf("adk: ion species (no l) keep the l* = 0 prefactor: %.1e\n", d);
+    const double E = 0.01 * EA, d = std::abs(R.rate(0, E / E0) * w0 / adk_standard(U[0], 0, E) - 1);
+    std::printf("adk: no l given = l = 0: %.1e\n", d);
     if (!(d < 1e-12)) ++fails;
   }
   // hydrogen, standard with l = 0: the Landau rate 4 omega_a (E_a / E) exp(-2 E_a / 3E)

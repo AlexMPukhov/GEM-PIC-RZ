@@ -372,6 +372,7 @@ Each block represents one ion species of the plasma by macroparticles. It serves
 | `ionization` | `none` \| `adk` | `none` | ADK tunnel ionization, see below |
 | `max_charge_state` | integer | atomic number | highest charge state reachable by ionization |
 | `ionization_potentials` | energy list | NIST | ionization energies of the charge states 0, 1, 2, … (e.g. `552.07, 667.05 eV`). For an `element` they replace the NIST values (all Znuc values); for an ion given by `mass` they define the levels |
+| `ionization_l` | integer list | element table | orbital quantum number l of the electron removed in each charge state 0, 1, 2, … (the standard ADK factor 2l + 1). Default: the NIST ground configurations (`removedOrbitalL`, src/atomic_data.cpp) for an `element`, l = 0 for potentials given without one |
 | `profile` | `plasma` \| `own` | `plasma` | `own`: the species has its own density profile (see below) |
 | `name` | string | e.g. `N5+`, `He` | label |
 

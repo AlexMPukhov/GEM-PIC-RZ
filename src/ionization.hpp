@@ -2,16 +2,15 @@
 //  ionization.hpp -- ADK tunnel-ionization rates for the levels of one species
 //
 //  Rate for the transition k -> k+1 (Ammosov, Delone, Krainov, JETP 64, 1191
-//  (1986)), m = 0:
+//  (1986)), the standard form with l* = n* - 1 and the orbital quantum number l of the removed electron, m = 0:
 //
-//    w = omega_a C^2 f_l (U/2U_H) [2 (U/U_H)^{3/2} E_a/E]^{2n*-1} exp[-(2/3)(U/U_H)^{3/2} E_a/E],   n* = (k+1) sqrt(U_H/U).
+//    w = omega_a C^2 (2l + 1) (U/2U_H) [2 (U/U_H)^{3/2} E_a/E]^{2n*-1} exp[-(2/3)(U/U_H)^{3/2} E_a/E],
+//    n* = (k+1) sqrt(U_H/U),   C^2 = 2^{2n*} / (n* Gamma(2n*)),
 //
-//  Two prefactors:
-//   - ion species (setup without orbital quantum numbers): C^2 = 2^{2n*} / (n* Gamma(n*+1) Gamma(n*)), f_l = 1, i.e.
-//     C_{n* l*}^2 with l* = 0 (the form of this code so far; the comment used to call it l* = n* - 1, which it is not);
-//   - standard ADK (setup with the orbital quantum numbers l; the bound electrons, Alexander 2026-11-09):
-//     l* = n* - 1, C^2 = 2^{2n*} / (n* Gamma(2n*)), f_l = 2l + 1 (m = 0), as VLPL's field ionization.
-//     For Rb 5s, 5p_1/2, 5p_3/2 the standard rates are 0.418, 0.719, 0.708 of the l* = 0 ones.
+//  as VLPL's field ionization (Alexander, 2026-11-09: the correct ionization physics in all codes). l per charge state
+//  from removedOrbitalL (atomic_data.hpp) or `ionization_l`; the bound electrons: ground s, excited p. Before, the code used
+//  C^2 = 2^{2n*} / (n* Gamma(n*+1) Gamma(n*)) (the l* = 0 form, called l* = n* - 1 here) without 2l + 1; equal for n* = 1
+//  (hydrogen, hydrogen-like ions), 6 % for N5+ (n* = 0.94), Rb 5s 0.418, p electrons of outer shells up to ~2x.
 //
 //  U = ionization energy of the level (NIST), E = instantaneous |E| at the
 //  atom (the laser carrier is resolved, so the static-field rate applies),
@@ -35,13 +34,13 @@ constexpr double OMEGA_ATOMIC = 4.1341373335e16;     // atomic frequency [1/s]
 
 // reference implementation in SI units: rate [1/s] for a level with energy U [eV]
 // of an ion that has charge Zafter after the ionization, in the field E [V/m]
-double adkRateSI(double U_eV, int Zafter, double E_Vm, int l = -1);   // l >= 0: standard ADK (l* = n* - 1, 2l + 1)
+double adkRateSI(double U_eV, int Zafter, double E_Vm, int l = 0);   // standard ADK, l of the removed electron
 
 class AdkRates {
  public:
   // levels k = Z0 ... Zmax-1 with energies ip_eV[k]; code units from `u`;
   // T = longest time a particle spends in the window (for the skip threshold)
-  // l: orbital quantum numbers per level (index k; empty: the ion-species prefactor with l* = 0, see above)
+  // l: orbital quantum numbers of the removed electrons per level (index k; missing entries: l = 0)
   void setup(const std::vector<double>& ip_eV, int Z0, int Zmax, const Units& u, double T, const std::vector<int>& l = {});
 
   int zmax() const { return Zmax; }

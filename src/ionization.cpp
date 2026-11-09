@@ -11,12 +11,11 @@ namespace gem {
 namespace {
 // ln of omega_a C^2 (U/2U_H) (2 (U/U_H)^{3/2} E_a)^{2n*-1}  (SI, E in V/m),
 // and the power 2n*-1 and exponent factor -(2/3)(U/U_H)^{3/2} E_a
-// l < 0: C^2 with l* = 0 (the ion species); l >= 0: standard ADK, l* = n* - 1 and the factor 2l + 1 (m = 0)
-void adkCoefficients(double U_eV, int Zafter, double& logpre, double& power, double& expo, int l = -1) {
+// standard ADK: l* = n* - 1 (C^2 = 2^{2n*} / (n* Gamma(2n*))) and the factor 2l + 1 of the removed electron (m = 0)
+void adkCoefficients(double U_eV, int Zafter, double& logpre, double& power, double& expo, int l) {
   const double x = U_eV / U_H_EV;
   const double nstar = Zafter / std::sqrt(x);
-  const double logC2 = l < 0 ? 2.0 * nstar * std::log(2.0) - std::log(nstar) - std::lgamma(nstar + 1.0) - std::lgamma(nstar)
-                             : 2.0 * nstar * std::log(2.0) - std::log(nstar) - std::lgamma(2.0 * nstar) + std::log(2.0 * l + 1.0);
+  const double logC2 = 2.0 * nstar * std::log(2.0) - std::log(nstar) - std::lgamma(2.0 * nstar) + std::log(2.0 * l + 1.0);
   power = 2.0 * nstar - 1.0;
   logpre = std::log(OMEGA_ATOMIC) + logC2 + std::log(0.5 * x) + power * std::log(2.0 * std::pow(x, 1.5) * E_ATOMIC_VM);
   expo = -(2.0 / 3.0) * std::pow(x, 1.5) * E_ATOMIC_VM;
@@ -41,7 +40,7 @@ void AdkRates::setup(const std::vector<double>& ip_eV, int Z0_, int Zmax_, const
   for (int k = Z0; k < Zmax; ++k) {
     Level& L = lev[k];
     double logpre, power, expo;
-    adkCoefficients(ip_eV[k], k + 1, logpre, power, expo, size_t(k) < l.size() ? l[size_t(k)] : -1);
+    adkCoefficients(ip_eV[k], k + 1, logpre, power, expo, size_t(k) < l.size() ? l[size_t(k)] : 0);
     // w_code(E) = w_SI(E E0) / omega0
     L.power = power;
     L.logpre = logpre - std::log(omega0) - power * std::log(E0);

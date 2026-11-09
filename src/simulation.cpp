@@ -82,7 +82,7 @@ Simulation::Simulation(const Config& c, const std::string& restartFile, bool use
   for (size_t s = 0; s < cfg.ions.size(); ++s) {
     const auto& I = cfg.ions[s];
     exitStates[s].assign(std::max(I.Zmax, I.Z) + 1, 0.0);
-    if (I.ionization) adk[s].setup(I.ip_eV, I.Z, I.Zmax, cfg.units, 2.0 * zv.node(Nz));
+    if (I.ionization) adk[s].setup(I.ip_eV, I.Z, I.Zmax, cfg.units, 2.0 * zv.node(Nz), I.ion_l);   // standard ADK (l per level)
   }
   if (cfg.flying_focus.present) setupFlyingFocus();
   // lasers from files

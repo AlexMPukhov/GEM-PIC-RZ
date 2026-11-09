@@ -16,6 +16,11 @@ struct Element {
   std::vector<double> ip_eV;    // ip_eV[k]: ionization energy of charge state k -> k+1 [eV], size Znuc
 };
 
+// the orbital quantum number l of the electron removed in k -> k+1 (the last subshell of NIST's ground configuration of the
+// ion of charge k; the table of VLPL data/ionization_energies.def), size Znuc; empty for an unknown symbol. Used by the
+// standard ADK prefactor (ionization.hpp).
+std::vector<int> removedOrbitalL(const std::string& symbol);
+
 // all elements of the table, in order of the atomic number
 const std::vector<Element>& elements();
 
