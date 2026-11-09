@@ -8,6 +8,7 @@
 | `downramp_fbpic/` | FBPIC 0.27 | density down-ramp injection (2 → 1 n0 over 10 µm), a0 = 1.8 | **open:** GEM-PIC-RZ traps 9–28 pC above 2 MeV depending on the step, FBPIC 51 pC (paper Sec. "Density down-ramp injection: an open problem") |
 | `harmonics/` | radiation integral | coherent emission of a short bunch in a planar undulator, per azimuthal mode; deck of a seeded planar FEL (10.6 nm, K = 1.5, 4 kA) | emission per azimuthal mode m = 0…3 within 0.3–1.8 % of the radiation integral |
 | `laser_evolution/` | FBPIC 0.27 and the envelope code Wake-T 0.9.1 | 6.8 fs pulse, a0 = 1.5, n0 = 1.7·10¹⁹ cm⁻³, 300 µm: diffraction, depletion, red-shift | laser energy to 1.3 %, red-shift to 0.002 k0, peak field to 5 % (FBPIC); Wake-T underestimates the depletion fivefold |
+| `quickpic_laser/` | FBPIC 0.27 (and QUARZ, digitized OSIRIS curves) | the LWFA cases of the QuickPIC laser-module paper (Meng et al., PPCF 2026): a0 = 2.5, k0/k_p = 34, 500 c/ω_p; a0 = 4, k0/k_p = 20, 200 c/ω_p | on-axis E_z in front of the bubble closure to 0.4–0.9 % (case 1) and 1.1–1.6 % (case 2); laser peak field to 0.7–1.6 % |
 | `fel_paper/` | GENESIS 1.3 v4, Puffin, Ming Xie | input decks of the FEL paper (arXiv:2611.01640): seeded planar FEL with harmonics (clean reference), focused helical SASE, GENESIS time-dependent inputs, 1D averaging model | see the paper; the README there maps each figure and table to its deck |
 
 The runs were made on 2 CPU cores. The decks, input files and scripts are here; the GEM-PIC-RZ output

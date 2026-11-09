@@ -1,0 +1,25 @@
+# Laser wakefield benchmark of Meng et al., PPCF (2026), doi 10.1088/1361-6587/aebd1b (QuickPIC laser module), case 1:
+# |a| = 2.5, k_p w0 = 3.162, k0/k_p = 34, omega_p tau_FWHM = 2.26, uniform plasma; outputs every 50 c/omega_p to 500.
+# Same parameters as the QUARZ deck benchmarks/quickpic_laser/case1.in of the QUARZ repository (lengths there in c/omega_p,
+# here in k0^-1 = (c/omega_p)/34). Window xi = -5 ... 12 c/omega_p around the initial pulse centre, dr = 0.1 c/omega_p.
+grid {
+  lambda0     = 0.8 um
+  m_max       = 1
+  radial_grid = uniform
+  dr          = 3.4 k0^-1          # 0.1 c/omega_p
+  nr          = 150                # r_max = 15 c/omega_p
+  dzeta       = 0.25 k0^-1         # lambda0 / 25
+  nzeta       = 2312               # 17 c/omega_p
+  dz          = 17 k0^-1           # 0.5 c/omega_p
+  z_end       = 17000 k0^-1        # 500 c/omega_p
+}
+laser {
+  a0          = 2.5
+  waist       = 107.508 k0^-1      # 3.162 c/omega_p
+  length_1e   = 46.148 k0^-1       # 1.3573 c/omega_p (omega_p tau_FWHM = 2.26 = FWHM of the field envelope)
+  zeta_center = 408 k0^-1          # 12 c/omega_p from the rear end of the window
+}
+plasma {
+  density = 8.6505e-4 n_c          # (k_p/k0)^2 = 1/34^2
+}
+output { dir = gem_case1; every = 100; maps = false; particles = false }

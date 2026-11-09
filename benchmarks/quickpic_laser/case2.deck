@@ -1,0 +1,25 @@
+# Laser wakefield benchmark of Meng et al., PPCF (2026), doi 10.1088/1361-6587/aebd1b (QuickPIC laser module), case 2 (strongly nonlinear):
+# |a| = 4, k_p w0 = 4, k0/k_p = 20, omega_p tau_FWHM = 2.26 assumed (not given), outputs every 10 c/omega_p to 200.
+# Same parameters as the QUARZ deck benchmarks/quickpic_laser/case2.in of the QUARZ repository (lengths there in c/omega_p,
+# here in k0^-1 = (c/omega_p)/20). Window xi = -5 ... 12 c/omega_p around the initial pulse centre, dr = 0.1 c/omega_p.
+grid {
+  lambda0     = 0.8 um
+  m_max       = 1
+  radial_grid = uniform
+  dr          = 2 k0^-1            # 0.1 c/omega_p
+  nr          = 150                # r_max = 15 c/omega_p
+  dzeta       = 0.25 k0^-1         # lambda0 / 25
+  nzeta       = 1360               # 17 c/omega_p
+  dz          = 10 k0^-1           # 0.5 c/omega_p
+  z_end       = 4000 k0^-1         # 200 c/omega_p
+}
+laser {
+  a0          = 4.0
+  waist       = 80 k0^-1           # 4.0 c/omega_p
+  length_1e   = 27.146 k0^-1       # 1.3573 c/omega_p (omega_p tau_FWHM = 2.26 = FWHM of the field envelope)
+  zeta_center = 240 k0^-1          # 12 c/omega_p from the rear end of the window
+}
+plasma {
+  density = 2.5e-3 n_c            # 1/20^2
+}
+output { dir = gem_case2; every = 20; maps = false; particles = false }
