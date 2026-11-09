@@ -36,8 +36,9 @@ void BoundMedium::setup(const BoundElectronsConfig& c, const RadialGrid& grid, i
   L.T2 = c.T2;
   ion = c.ionIndex >= 0;
   if (ion) {
-    adkL[0].setup({c.ip_ground_eV}, 0, 1, u, T);
-    for (int j = 0; j < c.lines; ++j) adkL[j + 1].setup({c.ip_excited_eV[j]}, 0, 1, u, T);
+    // standard ADK (l* = n* - 1, 2l + 1, m = 0; Alexander 2026-11-09): ground s (l = 0), excited p (l = 1) as for the D lines
+    adkL[0].setup({c.ip_ground_eV}, 0, 1, u, T, {0});
+    for (int j = 0; j < c.lines; ++j) adkL[j + 1].setup({c.ip_excited_eV[j]}, 0, 1, u, T, {1});
   }
   if (M > 63) throw std::runtime_error("bound_electrons: m_max must be < 64");
   cs.resize(nphi);

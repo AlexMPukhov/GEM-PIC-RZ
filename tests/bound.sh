@@ -9,9 +9,9 @@
 #  3. static limit (tests/bound_static.deck): a line at 10 omega0 against the dielectric of the same chi: the group
 #     delays differ by the dispersion of the line (9 %);
 #  4. ionization (tests/bound_ionize.deck, Rb vapour as a neutral ion species): the neutral fraction on the axis
-#     against the V-type atom with ADK losses per level (5S 4.177 eV, 5P 2.6 eV) integrated in the code's field
-#     (dzeta = lambda/64: 4e-3 at a0 = 4e-4, 42 % ionized almost only through the excited state; 6e-3 at a0 = 1e-3,
-#     97 % ionized), and the mean
+#     against the V-type atom with standard ADK losses per level (5S 4.177 eV, l = 0; 5P 2.6 eV, l = 1) in the code's field
+#     (dzeta = lambda/64: 3.2e-3 at a0 = 4e-4, 32 % ionized almost only through the excited state; 6.1e-3 at a0 = 1e-3,
+#     96 % ionized), and the mean
 #     charge state of the macro-atoms leaving the window against the grid's area mean (1e-3).
 # usage: sh tests/bound.sh <gempic_rz> [backend]     (exit 77: skipped, needs python3 with numpy)
 set -e
