@@ -793,7 +793,7 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
                  std::string("GEM-PIC-RZ (Galilean GT2 scheme): position snapshot at the plane z = s (snapshotType = "
                              "position): slice zeta = z - c t crossed the plane at t = (s - zeta) / c; axis label "
                              "z = zeta + s, time = s / c; particles carry their crossing time in the record time; "
-                             "see docs/openpmd_zplane.md; input deck in /data/<T>/input_deck"));
+                             "see docs/openpmd_zplane.md; input deck in /input_deck (outside basePath)"));
     base = "/data/" + std::to_string(S.step_no);
     {
       Handle it(W->groups(base), H5Gclose, "group " + base);
@@ -809,7 +809,7 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       Writer::attr(it, "snapshotPositionUnitSI", si.L);
       Writer::attr(it, "snapshotAxisVelocity", 1.0);  // c, in snapshotPositionUnitSI / timeUnitSI
     }
-    W->text(base + "/input_deck", S.deckText);
+    W->text("/input_deck", S.deckText);  // outside basePath: readers see only openPMD records in the iteration
     // ---- output grid
     dr = O.openpmd_dr > 0 ? O.openpmd_dr : 1e300;
     dzo = O.openpmd_dzeta > 0 ? O.openpmd_dzeta : 1e300;
@@ -1035,8 +1035,9 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
         const bool ions = (q == 1);
         std::vector<double> d(size_t(nr) * dc);
         auto val = [&](int kk, int i) {
-          return ions ? (S.c0s.rhoi[S.c0s.d(kk, i)] + S.c0b.rhoi[S.c0b.d(kk, i)])
-                      : -(S.c0s.rho[S.c0s.d(kk, i)] + S.c0b.rho[S.c0b.d(kk, i)]);
+          // in units of n0 = n_ref n_c (unitSI = n_ref n_c), as the native records
+          return (ions ? (S.c0s.rhoi[S.c0s.d(kk, i)] + S.c0b.rhoi[S.c0b.d(kk, i)])
+                       : -(S.c0s.rho[S.c0s.d(kk, i)] + S.c0b.rho[S.c0b.d(kk, i)])) / S.n_ref;
         };
         for (int j = 0; j < nr; ++j) {
           const int a = da[j];

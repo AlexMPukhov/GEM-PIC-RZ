@@ -144,6 +144,8 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     snapshotType = "position", snapshotAxis, snapshotPosition(+UnitSI), snapshotAxisVelocity; particle record `time`
     (BeamPhysics); axis label z = zeta + s and time = s/c kept for old readers. Proposal docs/openpmd_zplane.md
     (Alexander opens the openPMD pull request himself; issue #161 of openPMD-standard is related). Also:
+    Bug fixed (Anton): uniform n_e, Zn_i came out multiplied by n_ref = n0/n_c in SI (too small; missing / n_ref; native records were
+    right); ctest openpmd checks the SI density of a uniform plasma. input_deck moved out of the iteration (/input_deck).
     native_* records only with openpmd_grid = native/both (default now uniform), every species in every file
     (empty = zero-length), bunch.file picks the only non-empty species. ctest openpmd_viewer (openpmd-viewer 1.11
     on atto in /storage2/pukhov/opmdv/pylib). Not done (option): reconstructed t = const output by copying each
