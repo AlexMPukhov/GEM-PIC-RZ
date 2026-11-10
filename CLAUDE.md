@@ -138,4 +138,15 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     4.4 GB; the output files (0.40 GB per output step, 41 GB) took the RAM. Now the first output step reports
     "output volume: ..." with a warning for tmpfs / too little free space, and the run ends with "peak memory: ...";
     ctest output_volume. README "Memory and output volume".
+  - **openPMD z = const snapshots** (branch `openpmd-zplane`, 2026-11-10; feedback of Anton Golovanov, FBPIC user):
+    an output step is the plane z = s (slice zeta crossed it at t = (s - zeta)/c), not a t = const snapshot.
+    Alexander's decision: extend openPMD with position snapshots, GEM-PIC-RZ writes them. Iteration attributes
+    snapshotType = "position", snapshotAxis, snapshotPosition(+UnitSI), snapshotAxisVelocity; particle record `time`
+    (BeamPhysics); axis label z = zeta + s and time = s/c kept for old readers. Proposal docs/openpmd_zplane.md
+    (Alexander opens the openPMD pull request himself; issue #161 of openPMD-standard is related). Also:
+    native_* records only with openpmd_grid = native/both (default now uniform), every species in every file
+    (empty = zero-length), bunch.file picks the only non-empty species. ctest openpmd_viewer (openpmd-viewer 1.11
+    on atto in /storage2/pukhov/opmdv/pylib). Not done (option): reconstructed t = const output by copying each
+    slice at the level s = c t* + zeta (about L/dz steps of buffering). Waiting: Anton's markdown (one more
+    "straightforward mistake"), his deck + LASY file for the field-energy growth with ionized He (flying focus).
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

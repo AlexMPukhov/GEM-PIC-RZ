@@ -389,12 +389,19 @@ layout is listed in `docs/input_deck.md`.
 `output { format = openpmd }` (combinable: `format = text, openpmd`) writes files that follow the openPMD standard
 1.1.0, `<dir>/openpmd/openpmd_<step>.h5`, readable with openPMD-viewer, openPMD-api, VisualPIC or ParaView. The fields
 are written in `thetaMode` on a uniform r–ζ grid (`openpmd_dr`, `openpmd_dzeta`; interpolated as in the particle
-gather), the lab position is z = ζ + s and the time s/c, and each bunch is a particle species with SI units. The
-files pass the openPMD validator without errors or warnings; details in
-[`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
+gather), and each bunch, the trapped electrons and the electrons from ionization of every ion block are particle
+species with SI units, written in every file (empty ones as zero-length records, so openpmd-viewer sees the same
+species in all iterations). The files pass the openPMD validator without errors or warnings, and openpmd-viewer
+reads every iteration (ctest `openpmd_viewer`); details in [`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
 
-openPMD 1.1 has no non-uniform grids. Besides the interpolated fields the files therefore hold the exact data
-on the code's own nodes (`output.openpmd_grid = both`, the default; or `native`): records `native_*` whose
+**z = const snapshots.** An output step of GEM-PIC-RZ is the plane z = s: slice ζ of the window crossed it at
+t = (s − ζ)/c. The files say so with the iteration attributes `snapshotType = "position"`, `snapshotAxis`,
+`snapshotPosition` and `snapshotAxisVelocity`, and every particle carries its crossing time in the record `time`
+(as in the openPMD BeamPhysics extension). For existing readers the longitudinal axis keeps the label z = ζ + s
+and `time` = s/c. This is our proposal for openPMD 2.0, [`docs/openpmd_zplane.md`](docs/openpmd_zplane.md).
+
+openPMD 1.1 has no non-uniform grids. On request the files also hold the exact data on the code's own nodes
+(`output.openpmd_grid = both` or `native`; default `uniform`, because openpmd-viewer fails on them): records `native_*` whose
 node positions are data sets referenced by the mesh attribute `gridCoordinates`. This is the form we propose for
 openPMD 2.0 ([`docs/openpmd_rectilinear.md`](docs/openpmd_rectilinear.md)); QUARZ writes an interim variant.
 `h5_extract` and `tools/openpmd_rectilinear.py` read both.
@@ -435,8 +442,8 @@ much larger than that, and they grow with every output step:
   step, 41 GB by z = 1.02 m. On a 46 GB virtual machine this filled the memory, while the 16 MPI ranks together needed
   a constant 4.4 GB.
 - **Fewer bytes:** a larger `every`; `particles = false` except at a few steps; one format only; `hdf5_precision =
-  single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` (the uniform copy of the fields
-  is dropped). `bunches.txt` has the beam moments of every step anyway.
+  single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` instead of the default `uniform` (smaller on
+  stretched grids, but openpmd-viewer cannot read it). `bunches.txt` has the beam moments of every step anyway.
 - **Test:** `output_volume` (serial and parallel backend) compares the reported volume with the bytes of the files
   written (within 1 %, it agrees to 0.4 %). It checks that the peak memory after 160 steps equals that after 20
   (within 5 % + 20 MB; measured: the same to 1 MB after 20, 80 and 320 steps, serial and OpenMP) and that an output

@@ -1213,7 +1213,7 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   O.openpmd_dzeta = r.num("openpmd_dzeta", Dim::Length, 0.0);
   if (O.openpmd_dr < 0) r.failKey("openpmd_dr", "must be positive");
   if (O.openpmd_dzeta < 0) r.failKey("openpmd_dzeta", "must be positive");
-  const std::string og = r.word("openpmd_grid", "both", {"uniform", "native", "both"});
+  const std::string og = r.word("openpmd_grid", "uniform", {"uniform", "native", "both"});
   O.openpmd_uniform = (og != "native");
   O.openpmd_native = (og != "uniform");
   if (!O.openpmd && r.has("openpmd_grid")) r.failKey("openpmd_grid", "needs format = openpmd");

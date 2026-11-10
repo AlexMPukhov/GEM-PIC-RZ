@@ -19,7 +19,8 @@ python3 -c "import numpy, h5py" 2>/dev/null || { echo "python3 with numpy and h5
 WORK=$(mktemp -d)
 cd "$WORK"
 "$EXE" "$SRC/tests/regression.deck" numerics.backend=serial grid.z_end=80k0^-1 output.every=2 \
-  output.format=hdf5,openpmd output.openpmd_dr=0.1um output.openpmd_dzeta=0.25k0^-1 output.dir=out > run.log
+  output.format=hdf5,openpmd output.openpmd_grid=both output.openpmd_dr=0.1um output.openpmd_dzeta=0.25k0^-1 \
+  output.dir=out > run.log
 test -f out/openpmd/openpmd_0.h5 && test -f out/openpmd/openpmd_2.h5
 if command -v openPMD_check_h5 > /dev/null 2>&1; then
   for f in out/openpmd/openpmd_0.h5 out/openpmd/openpmd_2.h5; do
