@@ -247,6 +247,10 @@ if(GEMPIC_HAVE_HDF5)
   add_test(NAME openpmd
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   set_tests_properties(openpmd PROPERTIES SKIP_RETURN_CODE 77)
+  # openPMD files read with openpmd-viewer (empty species, z = const metadata) against the native files
+  add_test(NAME openpmd_viewer
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd_viewer.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
+  set_tests_properties(openpmd_viewer PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   # beam push in a planar undulator at dz = lambda_u / 16: numerics.beam_field = mean against level
