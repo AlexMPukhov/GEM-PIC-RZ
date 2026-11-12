@@ -692,6 +692,22 @@ periods). Uniform plasma, weak driver, window 1000 c/ω_p (160 periods), h = 1/6
 
 With up to ~20 periods (laser wakefield windows) 2 passes are enough.
 
+**One pass is not enough with plasma.** `numerics.iterations = 1` uses the predicted currents without
+correction, and the laser then gains energy from step to step. Flying-focus LWFA in neutral He (LASY
+axiparabola-type pulse, 5 × 10¹⁷ cm⁻³ after full ionization, Δ = 5 µm, h = 0.04 µm, 10 mm; reported by a user
+against FBPIC), laser field energy at z = 0 → 10 mm:
+
+| passes | smoothing a | He | energy [J] |
+|---|---|---|---|
+| 1 | 0 | neutral, ADK | 0.854 → 1.006 (+18 %) |
+| 2 | 0 | neutral, ADK | 0.854 → 0.841 |
+| 2 | 0.25 µm | neutral, ADK | 0.854 → 0.841 |
+| 2 | 0.25 µm | pre-ionized | 0.854 → 0.845 |
+| FBPIC | | neutral, ADK | 0.855 → 0.842 |
+
+In vacuum 1 and 2 passes keep the energy constant (0.8541 J over 2 mm), so the growth is the uncorrected
+coupling to the plasma, not the field solve. The code warns about `iterations = 1` with plasma.
+
 **Checks.**
 - `tests/long_wake.sh` (window 60 c/ω_p, Δ = 100 c/ω_p, 8 steps): the k_p amplitude of E_z on the axis is
   3.661 × 10⁻⁷ m c ω0/e against 3.677 × 10⁻⁷ from the linear theory (Keinigs & Jones), flat from step 6 to 8;

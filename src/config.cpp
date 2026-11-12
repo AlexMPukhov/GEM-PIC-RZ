@@ -1669,6 +1669,10 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
                      " plasma periods: long wakes need numerics.iterations = 4 (here " +
                      std::to_string(c.numerics.iterations) + "), otherwise they grow from step to step");
   }
+  // one pass (predictor only) with plasma: the laser gains energy from step to step (README, "Passes per slice")
+  if (c.plasma.present && c.numerics.iterations == 1)
+    warn.push_back("numerics.iterations = 1 (predictor only) with plasma: the plasma currents are not corrected and "
+                   "the laser gains energy from step to step (+18 % over 10 mm in an LWFA run); use 2 or more");
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
   for (const auto& A : c.boxAdvice()) {
     if (A.rmax_now < A.rmax_need)
