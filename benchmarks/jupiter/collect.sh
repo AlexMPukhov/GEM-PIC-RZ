@@ -24,3 +24,14 @@ awk '
   }' "$T"
 echo "(speed-up and efficiency against the pipelined step on 1 GPU; *_engine: the single-GPU engine without the"
 echo " pipeline; *_cpu: one node without GPUs; 'pipeline': the ideal efficiency N / (N + P - 1) of the pipeline)"
+# column 9 (newer runs): s per step after the pipeline has filled (rank 0)
+awk 'NF >= 9 && $9 != "NA" { if (!h++) print "\nafter the pipeline filled (s/step):"; printf "  %-12s %6s GPUs %10s\n", $2, $1, $9 }' "$T"
+W=$RUNS/weak.txt
+if [ -f "$W" ]; then
+  echo
+  echo "weak scaling (1200 slices per GPU; efficiency = time per step after the fill on 1 GPU / on P GPUs):"
+  awk '{ if ($6 != "NA" && $1 == 1) one = $6; n[NR] = $1; st[NR] = $4; s[NR] = $5; p[NR] = $6 }
+    END { printf "  %6s %6s %10s %16s %8s\n", "GPUs", "steps", "wall s", "s/step (filled)", "effic."
+          for (i = 1; i <= NR; ++i)
+            printf "  %6s %6s %10s %16s %8s\n", n[i], st[i], s[i], p[i], (one && p[i] != "NA") ? sprintf("%.0f %%", 100 * one / p[i]) : "" }' "$W"
+fi

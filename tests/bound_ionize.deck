@@ -1,0 +1,19 @@
+# Bound electrons with ionization (tests/bound.sh): a thin Rb vapour (1e14 cm^-3, neutral atoms as an ion species,
+# no free electrons) and a 33 fs (length_1e = 10 um) 800 nm pulse. The bound electrons of the atoms (D1, D2) are
+# excited resonantly; every level ionizes with its own ADK rate (5S: 4.177 eV, 5P: 2.6 eV), which depopulates the
+# medium; the macro-atoms ionize with the population-weighted rate. tests/bound.py compares the neutral fraction on
+# the axis with the V-type atom with ADK losses integrated in the code's field, and the mean charge state of the
+# particles leaving the window with the grid's area mean.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 1 um;  r_max = 60 um;  r_absorber = 50 um
+  dzeta = 0.025 um;  window_length = 60 um
+  dz = 0.5 um;  z_end = 0.5 um
+}
+laser { a0 = 4e-4; waist = 20 um; length_1e = 10 um; zeta_center = 30 um; polarization = linear }
+plasma { density = 1e14 cm^-3; free_electrons = false; r_max = 40 um; ppc_r = 4; ppc_phi = 8 }
+ion { name = Rb; mass = 85.4678 u; charge_state = 0; ionization = adk; max_charge_state = 1
+      ionization_potentials = 4.177128, 27.2895 eV; density = 1e14 cm^-3; mobile = false }
+bound_electrons { element = Rb; ion = Rb; r_out = 45 um }
+output { dir = ionize; every = 1; format = text; particles = false }
+numerics { backend = serial }

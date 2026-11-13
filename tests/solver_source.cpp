@@ -137,7 +137,7 @@ Profile run(double dr_um, char src, double Kku, int steps, double rmax_um = 200.
       for (int i = 0; i <= N; ++i) Jr[i] = a0.r[i] + b0.r[i] + a1.r[i] + b1.r[i];
       for (int i = 0; i < N; ++i) Jp[i] = a0.p[i] + b0.p[i] + a1.p[i] + b1.p[i];
       F &o = fold[n], &u = fnew[n + 1], &w = fnew[n];
-      S.solveSlice(m, n, o.Rr.data(), o.Rp.data(), o.Ez.data(), o.Bz.data(), u.Rr.data(), u.Lr.data(), u.Rp.data(),
+      S.solveSlice(m, n, o.Rr.data(), o.Lr.data(), o.Rp.data(), o.Ez.data(), o.Bz.data(), u.Rr.data(), u.Lr.data(), u.Rp.data(),
                    u.Lp.data(), u.Ez.data(), u.Bz.data(), b1.r.data(), b1.p.data(), b1.z.data(), Jr.data(), Jp.data(),
                    w.Rr.data(), w.Lr.data(), w.Rp.data(), w.Lp.data(), w.Ez.data(), w.Bz.data());
     }

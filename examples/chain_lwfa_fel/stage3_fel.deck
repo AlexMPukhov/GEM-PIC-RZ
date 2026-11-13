@@ -1,0 +1,51 @@
+# Stage 3 of the chained example (README.md): transport and FEL. The beam of stage 2 (openPMD, species 'witness')
+# is read at the plasma exit (z = 0 here), the high-energy head is kept (gamma > 290: 9 pC, gamma 302, rms spread
+# 1.9 %, mostly a chirp with more energy at the head), and resampled with Fawley shot noise at the resonant
+# wavelength. A plasma lens collimates the diverging beam; a thin chicane (R56 > 0 moves the higher energies forward)
+# decompresses the chirped beam: the slice energy spread and the chirp per cooperation length drop by the
+# stretch factor, the current by the same factor. Then a helical undulator (period 1 cm, K = 1, 80 periods):
+# lambda_r = lambda_u (1 + K^2) / (2 gamma^2) = 109.6 nm at gamma = 302.
+#   run (run_chain.sh does it):  gempic_rz stage3_fel.deck
+grid {
+  lambda0       = 109.6 nm          # = resonant wavelength
+  m_max         = 1                 # helical undulator: mode 1
+  radial_grid   = table             # 0.5 um at the plasma exit (sigma_r 0.7 um), 3 um for the collimated beam and the radiation, 60 um at the wall
+  r_points      = 0, 10, 100, 300, 800, 2500 um
+  dr_points     = 0.5, 0.5, 3, 3, 20, 60 um
+  r_max         = 2.5 mm            # >= gamma L of the stretched beam (summary line "box for bunch")
+  dzeta         = 6.85 nm           # 16 slices per lambda_r
+  window_length = 45 um             # gap behind + beam (8 um) + slippage (80 lambda_r = 8.8 um) + gap in front
+  dz            = 0.625 mm          # 16 steps per period
+  z_end         = 0.85 m
+  r_absorber    = 3 mm              # off: the self-field reaches the wall
+}
+bunch {
+  name           = witness
+  file           = stage2/openpmd/openpmd_560.h5
+  select         = "gamma > 290"
+  zeta_center    = 18 um
+  macroparticles = 300000
+  shot_noise     = fawley
+  noise_wavelength = 109.6 nm
+}
+plasma_lens { z_start = 2 cm; length = 1 cm; gradient = 2000 T/m }   # f ~ 2.5 cm at 154 MeV: collimates
+chicane     { z = 4 cm; r56 = 100 um; delay = 0 um; gamma = 302 }  # stretch ~ 7 (no radiation yet: no delay)
+undulator {
+  type         = helical
+  period       = 1 cm
+  K            = 1
+  periods      = 80
+  ramp_periods = 1
+  z_start      = 5 cm
+}
+output {
+  dir       = stage3
+  every     = 160
+  format    = hdf5
+  particles = true
+}
+numerics {
+  iterations  = 1                   # vacuum
+  beam_dz_max = 0.625 mm
+  beam_filter = 0                   # the filter would damp the current at lambda_r
+}

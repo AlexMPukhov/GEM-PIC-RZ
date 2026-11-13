@@ -1,0 +1,19 @@
+# Corrugated copper pipe as an equivalent thin dielectric layer (tests/corrugated.sh, tests/corrugated.py):
+# bore a = 1 mm, corrugation depth h = 60 um, period p = 230 um, gap g = 115 um -> eps = p/(p - g) = 2 in
+# 1 mm < r < 1.06 mm, metal wall at 1.06 mm. Synchronous mode lambda = 789 um (380 GHz). A 1 nC, 1 GeV, 50 um
+# bunch starts in vacuum and enters the structure at z = 1 mm; the on-axis wake behind it is compared with the
+# modal theory of the layer and with the corrugated-pipe formulas of Bane and Stupakov.
+grid {
+  lambda0 = 10 um;  m_max = 0
+  radial_grid = table;  r_max = 1.07 mm
+  r_points  = 0, 0.3, 0.9, 0.99 mm
+  dr_points = 5, 10, 10, 3 um
+  dzeta = 5 um;  window_length = 5 mm
+  dz = 0.5 mm;  z_end = 40 mm
+}
+wall { radius = 1.06 mm }
+dielectric { epsilon = 2; r_in = 1 mm; r_out = 1.06 mm; z_start = 1 mm }
+bunch { name = driver; charge = 1 nC; energy = 1 GeV; sigma_x = 50 um; sigma_z = 50 um; zeta_center = 4.8 mm
+        macroparticles = 100000; azimuthal_copies = 8 }
+output { dir = corr; every = 80; format = text; particles = false }
+numerics { backend = serial }

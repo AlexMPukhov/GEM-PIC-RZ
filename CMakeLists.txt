@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
+  src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -115,7 +115,7 @@ elseif(GEMPIC_OPENMP)
     target_link_libraries(gemcore PUBLIC OpenMP::OpenMP_CXX)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
-      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
+      src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
       src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
@@ -136,6 +136,9 @@ add_executable(test_deck tests/test_deck.cpp)
 target_link_libraries(test_deck gemcore)
 target_compile_definitions(test_deck PRIVATE GEM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME deck_parser COMMAND test_deck)
+add_executable(test_adk tests/test_adk.cpp)
+target_link_libraries(test_adk gemcore)
+add_test(NAME adk COMMAND test_adk)
 
 add_executable(solver_source tests/solver_source.cpp)
 target_link_libraries(solver_source gemcore)
@@ -163,6 +166,11 @@ foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
   add_test(NAME regression${sfx}
     COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:gempic_rz> -DCMP=$<TARGET_FILE:compare_columns> -DBACKEND=${b}
             -DSRC=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/tests/regression.cmake)
+  add_test(NAME long_wake${sfx}
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/long_wake.sh $<TARGET_FILE:gempic_rz> ${b})
+  # output volume report against the written files; peak memory bounded in the number of steps; tmpfs warning
+  add_test(NAME output_volume${sfx}
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/output_volume.sh $<TARGET_FILE:gempic_rz> ${b})
 endforeach()
 if(TARGET gempic_rz_gpuemu)
   # the GPU code paths, emulated on CPU threads, against the serial reference
@@ -176,6 +184,15 @@ if(GEMPIC_HAVE_MPI AND GEMPIC_HAVE_HDF5)
   add_test(NAME mpi_pipeline
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mpi.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
             ${MPIEXEC_EXECUTABLE} ${MPIEXEC_PREFLAGS})
+  # synchronization points of the pipeline: bunch.z_start and chicanes on 1-4 ranks = serial
+  add_test(NAME mpi_events
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mpi_events.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
+            ${MPIEXEC_EXECUTABLE} ${MPIEXEC_PREFLAGS})
+  # the reduced chain (tests/chain.sh) with stage 2 also on 2 ranks (import, chicane, undulator): = 1 rank
+  add_test(NAME mpi_chain
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/chain.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
+            ${MPIEXEC_EXECUTABLE})
+  set_tests_properties(mpi_chain PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # HDF5 output and checkpoint / restart
@@ -219,13 +236,29 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME transport_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/transport.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract> ${b})
   endforeach()
+  # element edges between the sub-steps of the beam push (FODO, hard-edge solenoid) against linear optics
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME quad_edges_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/quad_edges.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
+  # proton bunches: mass, charge sign and energy against linear optics
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME proton_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/proton.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
   # beams from files (openPMD, native), selection, resampling, Fawley shot noise
   add_test(NAME beam_import
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/beam_import.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>)
+  # chained runs (examples/chain_lwfa_fel, reduced): openPMD hand-off, chicane on the particle data, FEL growth
+  add_test(NAME chain
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/chain.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>)
+  set_tests_properties(chain PROPERTIES SKIP_RETURN_CODE 77)
   # openPMD output: validator (if installed), fields and particles against the native files
   add_test(NAME openpmd
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   set_tests_properties(openpmd PROPERTIES SKIP_RETURN_CODE 77)
+  # openPMD files read with openpmd-viewer (empty species, z = const metadata) against the native files
+  add_test(NAME openpmd_viewer
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd_viewer.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
+  set_tests_properties(openpmd_viewer PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   # beam push in a planar undulator at dz = lambda_u / 16: numerics.beam_field = mean against level
@@ -237,6 +270,9 @@ if(GEMPIC_HAVE_HDF5)
   # bunch.axis_refine: more macroparticles near the axis at the same charge density
   add_test(NAME axis_refine
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/axis_refine.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
+  # bunch.azimuthal_copies: a symmetric loading keeps the modes m >= 1 of a centred bunch at round-off
+  add_test(NAME azimuthal_copies
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/azimuthal_copies.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
   # bunch.distribution_r = function, ux_function, uy_function: a helical ring on its matched orbits
   add_test(NAME bunch_functions
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bunch_functions.sh $<TARGET_FILE:gempic_rz> ${GEMPIC_PAR_BACKEND})
@@ -248,6 +284,9 @@ if(GEMPIC_HAVE_HDF5)
   # flying focus: luminal Bessel pulse fed through the radial absorber layer (pattern kept, moves at c)
   add_test(NAME flying_focus
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus.sh $<TARGET_FILE:gempic_rz>)
+  # several luminal Bessel components (beat, circular / linear polarization) against the analytic field
+  add_test(NAME flying_focus_beat
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flying_focus_beat.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:check_physics>)
   # lasers from and to LASY envelope files: import, exact propagation, boundary injection, export
   add_test(NAME lasy COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lasy.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(lasy PROPERTIES SKIP_RETURN_CODE 77)
@@ -262,7 +301,42 @@ if(GEMPIC_HAVE_HDF5)
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/thin_ring.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
     set_tests_properties(thin_ring_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
   endif()
+  # metal wall: a laser in a straight, a narrowing and a widening perfectly conducting tube against the modal theory
+  # of the guide; plasma inside the tube; per backend
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME wall_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wall.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(wall_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME wall_gpu_emulation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wall.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
+    set_tests_properties(wall_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+  # dielectric: eps = 1 = vacuum; dielectric-lined tube against the modal theory (TM_0n, HEM_1n); Cherenkov cone;
+  # laser slippage in a uniform medium against the dispersion of the scheme; per backend
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME dielectric_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/dielectric.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(dielectric_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME dielectric_gpu_emulation
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/dielectric.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
+    set_tests_properties(dielectric_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+  # corrugated pipe as an equivalent thin dielectric layer (Bane-Stupakov): wake vs the modal theory of the layer
+  add_test(NAME corrugated COMMAND sh ${CMAKE_SOURCE_DIR}/tests/corrugated.sh $<TARGET_FILE:gempic_rz> serial)
+  set_tests_properties(corrugated PROPERTIES SKIP_RETURN_CODE 77)
+  # bound electrons (Maxwell-Bloch, Rb D1/D2): Rabi flopping, weak-field Lorentz dispersion, static limit vs the
+  # dielectric, depopulation by ionization with ADK per level; per backend and in the GPU emulation
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME bound_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bound.sh $<TARGET_FILE:gempic_rz> ${b})
+    set_tests_properties(bound_${b} PROPERTIES SKIP_RETURN_CODE 77)
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME bound_gpu_emulation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/bound.sh $<TARGET_FILE:gempic_rz_gpuemu> openmp)
+    set_tests_properties(bound_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
   # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
+  add_test(NAME cone_grid COMMAND sh ${CMAKE_SOURCE_DIR}/tests/cone_grid.sh $<TARGET_FILE:gempic_rz>)
   add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(energy_spread PROPERTIES SKIP_RETURN_CODE 77)
   # GUI (tools/gempic_gui.py): runs started through its HTTP API; fields against the code's gather

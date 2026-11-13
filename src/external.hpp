@@ -62,27 +62,66 @@ GEM_HD inline double undulatorEnvelope(const UndulatorV& U, double z) {
   return fmin(1.0, fmin((z - U.z0) / U.ramp, (U.z1 - z) / U.ramp));
 }
 
-GEM_HD inline void addMagnets(const ExternalV& X, double x, double y, double z, EB& f) {
+// Solenoid profile f(z) on [z0, z1] (linear fringes of length ramp, 0 outside) and its integral from z0.
+GEM_HD inline double solenoidProfile(const MagnetV& G, double z) {
+  if (z < G.z0 || z >= G.z1) return 0.0;
+  if (G.ramp <= 0.0) return 1.0;
+  return fmin(1.0, fmin((z - G.z0) / G.ramp, (G.z1 - z) / G.ramp));
+}
+GEM_HD inline double solenoidIntegral(const MagnetV& G, double z) {
+  const double t = fmin(fmax(z, G.z0), G.z1), r = G.ramp, L = G.z1 - G.z0;
+  if (r <= 0.0) return t - G.z0;
+  if (t <= G.z0 + r) return (t - G.z0) * (t - G.z0) / (2.0 * r);
+  if (t <= G.z1 - r) return 0.5 * r + (t - G.z0 - r);
+  return L - r - (G.z1 - t) * (G.z1 - t) / (2.0 * r);
+}
+
+// The push kicks the momentum with the field at z over the sub-step dzStep: the momentum advances from
+// z - dzStep/2 to z + dzStep/2 (leapfrog). The elements have hard edges (quadrupole, lens) or kinks (solenoid
+// fringes), so the field is averaged over that interval: an element contributes with the fraction of the
+// interval it covers (the solenoid with the mean of B_z and of dB_z/dz). Point-sampled, an edge anywhere
+// inside a sub-step changed the effective length by up to one sub-step (tests/quad_edges.sh: 15 % in the rms
+// size after six quadrupoles), and a hard-edge solenoid did not focus. The integrated kick of every element is now exact for any sub-step. dzStep = 0: the field at the point z.
+GEM_HD inline void addMagnets(const ExternalV& X, double x, double y, double z, EB& f, double dzStep = 0.0) {
+  const double h = 0.5 * fabs(dzStep);
   for (int k = 0; k < X.nm; ++k) {
     const MagnetV& G = X.m[k];
-    if (z < G.z0 || z >= G.z1) continue;
-    if (G.kind == 0) {
-      f.Bx -= G.g * y;
-      f.By -= G.g * x;
-    } else if (G.kind == 1) {
-      const double r2 = x * x + y * y, R2 = G.R * G.R;
-      const double s = (r2 <= R2) ? G.g : G.g * R2 / r2;  // B_phi / r
-      f.Bx += s * y;   // B_x = -B_phi sin(phi) = g y
-      f.By -= s * x;   // B_y =  B_phi cos(phi) = -g x
-    } else {
-      double fz = 1.0, dfz = 0.0;
-      if (G.ramp > 0.0) {
-        if (z - G.z0 < G.ramp) { fz = (z - G.z0) / G.ramp; dfz = 1.0 / G.ramp; }
-        else if (G.z1 - z < G.ramp) { fz = (G.z1 - z) / G.ramp; dfz = -1.0 / G.ramp; }
+    if (z + h < G.z0 || z - h >= G.z1) continue;
+    if (G.kind == 2) {
+      double fz, dfz;
+      if (h > 0.0) {  // means over [z - h, z + h]; a hard edge (ramp = 0) gives its exact integrated B_r kick
+        fz = (solenoidIntegral(G, z + h) - solenoidIntegral(G, z - h)) / (2.0 * h);
+        dfz = (solenoidProfile(G, z + h) - solenoidProfile(G, z - h)) / (2.0 * h);
+      } else {
+        fz = solenoidProfile(G, z);
+        dfz = 0.0;
+        if (G.ramp > 0.0 && fz > 0.0) {
+          if (z - G.z0 < G.ramp) dfz = 1.0 / G.ramp;
+          else if (G.z1 - z < G.ramp) dfz = -1.0 / G.ramp;
+        }
       }
       f.Bz += G.g * fz;
       f.Bx -= 0.5 * x * G.g * dfz;
       f.By -= 0.5 * y * G.g * dfz;
+      continue;
+    }
+    double w;  // fraction of [z - h, z + h] inside [z0, z1)
+    if (h > 0.0) {
+      const double lo = fmax(z - h, G.z0), hi = fmin(z + h, G.z1);
+      if (!(hi > lo)) continue;
+      w = (hi - lo) / (2.0 * h);
+    } else {
+      if (z < G.z0 || z >= G.z1) continue;
+      w = 1.0;
+    }
+    if (G.kind == 0) {
+      f.Bx -= w * G.g * y;
+      f.By -= w * G.g * x;
+    } else {
+      const double r2 = x * x + y * y, R2 = G.R * G.R;
+      const double s = w * ((r2 <= R2) ? G.g : G.g * R2 / r2);  // B_phi / r
+      f.Bx += s * y;   // B_x = -B_phi sin(phi) = g y
+      f.By -= s * x;   // B_y =  B_phi cos(phi) = -g x
     }
   }
 }
@@ -98,7 +137,7 @@ GEM_HD inline double sincHalf(double a) {  // sin(a/2) / (a/2)
   return fabs(h) < 1e-4 ? 1.0 - h * h / 6.0 : sin(h) / h;
 }
 GEM_HD inline void addExternal(const ExternalV& X, double x, double y, double z, EB& f, double dzStep = 0.0) {
-  if (X.nm) addMagnets(X, x, y, z, f);
+  if (X.nm) addMagnets(X, x, y, z, f, dzStep);
   for (int k = 0; k < X.n; ++k) {
     const UndulatorV& U = X.u[k];
     const double g = undulatorEnvelope(U, z);

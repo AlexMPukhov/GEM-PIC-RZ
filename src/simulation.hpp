@@ -28,6 +28,7 @@
 #include "grid.hpp"
 #include "ionization.hpp"
 #include "particles.hpp"
+#include "bound.hpp"
 #include "smoothing.hpp"
 #include "solver.hpp"
 #include "zgrid.hpp"
@@ -110,6 +111,7 @@ class Simulation {
   Fields fold, fnew;            // levels s^0 and s^1
   Currents c0b, c0s, c1b, c1s;  // beam / streaming currents at s^0 and s^1
   FieldSolver solver;
+  BoundMedium bound;  // block bound_electrons (Maxwell-Bloch medium)
   std::vector<Particle> stream, backup, beam;
   std::vector<cd> predR, predP, predRprev, predPprev, Jr, Jp, jr1, jp1, jz1;
   std::mt19937_64 rng;
@@ -145,15 +147,45 @@ class Simulation {
 
   void beginStep();  // Delta of this step, matrices of the field solver
 
+  // metal wall (block 'wall'): the solver boundary of level s, particles are lost at r >= rWall (r_max without a
+  // wall); maskWall zeroes the stored fields outside the wall
+  double rWall = 0.0;
+  void setWall(double s);
+  void maskWall(Fields& F) const;
+  // the wall moved outwards past faces this step: wallFrom = its last face K0 at s^0 (-1: it did not). The field at
+  // the old wall continues into the opened annulus (zeros there would make a jump of E_r, B_phi, B_z and radiate
+  // high TM modes): faces K0+1..K1 take E_r, B_phi, B_z of face K0, the centres K0+1..K1 the wall value of E_z,
+  // R_phi, L_phi stay 0 (E_phi is tangential).
+  int wallFrom = -1;
+  void extendWall(Fields& F) const;
+  // dielectric (blocks 'dielectric'): chi = eps - 1 of the level z on the centres (cell average, equal-area samples)
+  // and the faces (harmonic mean of the neighbouring centres); setDielectric passes the levels s^0, s^1 to the solver
+  void dielectricProfile(double z, std::vector<double>& chiC, std::vector<double>& chiF) const;
+  void setDielectric(double s0_, double s1_);
+  // bound electrons: fresh atoms ahead of the window, the atom densities of the levels s^0 = sa, s^1 = sb
+  void boundBegin(double sa, double sb);
+
   void initLasers();
-  // flying focus (cfg.flying_focus): incident field G(r, zeta) of R_r,1 at s = 0 on the faces (n (N+1) + i) and
-  // centres (n N + i); at level s, R_r,1 = Re(G e^{-i kappa s}) and R_phi,1 = i R_r,1
+  // flying focus (cfg.flying_focus): incident field G_c(r, zeta) of every component c at s = 0 on the faces
+  // (c ffStrideF + n (N+1) + i) and centres (c ffStrideC + n N + i); at level s U_c = G_c e^{-i kappa_c s}, and
+  // the terms ffTerms (modes m <= M) give R_r,m and R_phi,m (FlyingFocusConfig)
   std::vector<cd> ffGf, ffGc;
+  std::vector<FlyingFocusConfig::Term> ffTerms;
+  size_t ffStrideF = 0, ffStrideC = 0;
   int ffN0 = 0;  // first slice of ffGf, ffGc (stored slices only)
   void setupFlyingFocus();
-  double ffInc(bool face, int n, int i, double s) const {
-    const cd G = face ? ffGf[size_t(n - ffN0) * (g.N + 1) + i] : ffGc[size_t(n - ffN0) * g.N + i];
-    return (G * std::polar(1.0, -cfg.flying_focus.kappa() * s)).real();
+  // incident R_r,m (face) or R_phi,m (centre) of the flying focus at level s
+  cd ffInc(int m, bool face, int n, int i, double s) const {
+    cd R = 0.0;
+    for (const auto& t : ffTerms) {
+      if (t.m != m) continue;
+      const cd G = face ? ffGf[t.comp * ffStrideF + size_t(n - ffN0) * (g.N + 1) + i]
+                        : ffGc[t.comp * ffStrideC + size_t(n - ffN0) * g.N + i];
+      cd Y = G * std::polar(1.0, -cfg.flying_focus.comps[t.comp].kappa() * s);
+      if (t.conj) Y = std::conj(Y);
+      R += face ? t.w * Y : cd(0.0, t.rps * t.w) * Y;
+    }
+    return R;
   }
   // lasers from LASY / openPMD envelope files (laser.file): field evaluators (null for the other lasers)
   std::vector<std::unique_ptr<LaserFileField>> fileFields;
@@ -197,7 +229,11 @@ class Simulation {
   };
   struct OutputSet {
     std::vector<std::unique_ptr<Sink>> sinks;
+    long long dirBytes = -1;  // size of output.dir before the first file output (volume report), -1: not measured
   };
+  bool volumeReported = false;  // the output volume of a file step was measured and reported (endOutput)
+  int outputStepsAfter(int k) const;                 // file-output steps after step k until z_end
+  std::string volumeMessage(long long bytes) const;  // console report of the volume of one output step
   std::unique_ptr<OutputSet> beginOutput(const OutputPlan& plan);
   void outputBlock(OutputSet& o, int n0, int n1);
   std::vector<std::string> endOutput(OutputSet& o);
@@ -260,6 +296,8 @@ class Simulation {
   void absorber(double s);  // at level s (flying focus: the incident field of that level)
 
   DiagSums diagSums(int n0, int n1) const;          // slices / half-cells [n0, n1) and the beam list
+  // the same for a given beam list and freed charge (the MPI pipeline computes them while the next step runs)
+  DiagSums diagSums(int n0, int n1, const std::vector<Particle>& beamList, const std::vector<double>& freedQ) const;
   void report(const DiagSums& D, bool files);       // console, tables, files
   void readCheckpoint(const std::string& path);
   void trimTables();  // restart: remove lines of later steps from bunches.txt, ionization.txt

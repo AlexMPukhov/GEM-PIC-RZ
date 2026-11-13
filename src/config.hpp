@@ -126,16 +126,53 @@ struct LaserConfig {
 // In a uniform background plasma (omega_p^2 = background) k_perp^2 = 2 omega kappa - kappa^2 - omega_p^2.
 // a(omega) Gaussian: on the axis E_x = a0 omega0 exp(-(zeta - zeta_c)^2 / L^2) cos(...). It is fed through the
 // radial absorber layer (total-field / scattered-field): there R relaxes to the incident field, and only the
-// difference (what the plasma radiates or scatters) is absorbed. Linear polarization along x, mode m = 1.
+// difference (what the plasma radiates or scatters) is absorbed. Default: linear polarization along x, mode m = 1.
+// Several components (beat_* keys): U = sum_c U_c, U_c = A_c e^{i psi_c} e^{-i kappa_c s} sum_omega a(omega)
+// J_|l_c|(k_c(omega) r) e^{i omega (zeta - zeta_c) + i cep}, Bessel order l_c (azimuthal phase e^{i l_c phi}), cone
+// angle theta_c; every component moves at c, two of them beat with the period 2 pi / |kappa_1 - kappa_0| in s.
+// Physical field: linear E_x = Re sum_c U_c e^{i l_c phi}; circular with helicity h E_x + i h E_y = sum_c U_c e^{i l_c phi}.
+// With W = e^{-i phi} (E_x + i E_y) = sum_n w_n e^{i n phi}: R_r,m = w_m + conj(w_-m), R_phi,m = -i (w_m - conj(w_-m))
+// (as envelopeToR in laser_file.cpp). Helicity +1 gives w_{l-1} = U_c, helicity -1 gives w_{-(l+1)} = conj(U_c);
+// linear polarization is the mean of both. terms() lists these contributions.
 struct FlyingFocusConfig {
+  struct Component {
+    int order = 0;         // Bessel order l
+    double theta = 0.05;   // cone angle at omega0 [rad]
+    double amp = 1.0;      // amplitude relative to a0
+    double phase = 0.0;    // psi_c
+    double kappa() const { return 1.0 - std::cos(theta); }  // omega0 (1 - cos theta), code units
+  };
+  // contribution of component comp to mode m: Y = U_c or conj(U_c) (conj), U_c = G_c e^{-i kappa_c s} at level s;
+  // R_r,m += w Y, R_phi,m += i rps w Y
+  struct Term { int comp, m; bool conj; double w, rps; };
   bool present = false;
   double a0 = 1.0;
-  double theta = 0.05;     // cone angle at omega0 [rad]
   double length_1e = 10.0; // 1/e half length of the on-axis field envelope
   double zeta_center = 0;
   double cep = 0;
   double background = 0;   // density [n_c] of a uniform plasma in which the incident field propagates (0: vacuum)
-  double kappa() const { return 1.0 - std::cos(theta); }  // omega0 (1 - cos theta), code units
+  bool circular = false;
+  int helicity = 1;
+  std::vector<Component> comps;  // comps[0]: cone_angle, order (amplitude 1); then the beat_* components
+  double thetaMax() const {
+    double t = 0.0;
+    for (const auto& c : comps) t = std::max(t, c.theta);
+    return t;
+  }
+  // all terms, also those of modes m > m_max (the caller drops them)
+  std::vector<Term> terms() const {
+    std::vector<Term> T;
+    const double w = circular ? 1.0 : 0.5;
+    for (int c = 0; c < int(comps.size()); ++c)
+      for (int h : {1, -1}) {
+        if (circular && h != helicity) continue;
+        const int n = h > 0 ? comps[c].order - 1 : -(comps[c].order + 1);
+        const bool cu = h < 0;                            // w_n = conj(U_c)
+        if (n >= 0) T.push_back({c, n, cu, w, -1.0});     // w_m, m = n
+        if (n <= 0) T.push_back({c, -n, !cu, w, 1.0});    // conj(w_-m), m = -n
+      }
+    return T;
+  }
 };
 
 // ---------------------------------------------------------------- plasma
@@ -197,7 +234,9 @@ struct IonConfig {
 struct BunchConfig {
   enum class Shape { Gaussian, Flattop, Function, File };
   std::string name;
-  double qm = -1.0;         // charge-to-mass ratio: -1 electron, +1 positron
+  double qm = -1.0;         // charge-to-mass ratio [e/m_e]: -1 electron, +1 positron, +m_e/m_p proton
+  double mass = 1.0;        // particle mass [m_e]
+  const char* speciesName() const { return mass > 1.0 ? "protons" : (qm < 0 ? "electrons" : "positrons"); }
   double charge = 0.0;      // total charge [code units], signed
   double charge_pC = 0.0;   // |charge| in pC, for printing
   double gamma = 1000.0;
@@ -240,6 +279,9 @@ struct BunchConfig {
   // sampled axis_refine times as often, each with 1 / axis_refine of the charge (same density)
   int axis_refine = 1;
   double axis_radius = 0.0;  // 0: the first four radial cells
+  // azimuthal symmetry of the loading (generated bunches): every sampled centre comes with K copies turned by
+  // 2 pi j / K about the bunch axis (x, y and u_x, u_y), so the modes 1 ... K-1 of the bunch vanish about that axis
+  int azimuthal_copies = 1;
 };
 
 // ---------------------------------------------------------------- undulator
@@ -273,6 +315,49 @@ struct MagnetConfig {
   double field = 0.0;      // solenoid: B_z [code units]
   double ramp = 0.0;       // solenoid: linear fringe at both ends (inside the length)
 };
+// perfectly conducting lateral wall at r = r_w(z) (block 'wall'): a waveguide or beam pipe of variable radius.
+// With s = z a level is the plane z = s, so the wall has one radius r_w(s) for the whole window at every step.
+struct WallConfig {
+  bool present = false;
+  double radius = 0.0;                       // constant radius (no table, no function)
+  std::vector<double> z_points, r_points;    // piecewise linear r_w(z), constant beyond the ends
+  Expr fn;                                   // radius_function(z)
+  double at(double z) const;                 // r_w(z), code units
+};
+
+// dielectric (block 'dielectric', several allowed): eps = epsilon in r_in <= r < r_out, z_start <= z < z_end, or
+// eps(r, z) = epsilon_function; the contributions eps - 1 of all blocks add up (s = z: one profile per level)
+struct DielectricConfig {
+  double epsilon = 1.0;
+  double r_in = 0.0, r_out = 1e300, z_start = -1e300, z_end = 1e300;  // code units
+  Expr fn;                                                             // epsilon_function(r, z)
+  double chi(double r, double z) const;                                // eps - 1 at (r, z)
+};
+
+// bound electrons (block 'bound_electrons'): a resonant medium of neutral atoms described by the Maxwell-Bloch
+// equations of a V-type atom (ground state and up to two excited states, e.g. Rb 5S -> 5P_1/2 (D1), 5P_3/2 (D2)). A
+// scalar dipole along the laser polarization (x) couples to E_x; the effective dipoles follow from the oscillator
+// strengths, d_j^2 = f_j e^2 hbar / (2 m omega_j), so that the weak-field susceptibility equals the Lorentz one.
+struct BoundElectronsConfig {
+  bool present = false;
+  std::string element;                 // "Rb": built-in lines
+  int lines = 0;                       // 1 or 2 transitions
+  double omega[2] = {0, 0};            // transition frequencies [omega0]
+  double f[2] = {0, 0};                // oscillator strengths
+  double dipole[2] = {0, 0};           // effective dipoles d_j / (e a0)
+  double ip_ground_eV = 0.0;           // ionization energy of the ground state
+  double ip_excited_eV[2] = {0, 0};    // of the excited states
+  double density = 0.0;                // atom density [n_c] (r < r_out, z_start <= z < z_end); not with `ion`
+  std::string ion;                     // the neutral atoms of this ion species (ionization: depopulation, ADK per level)
+  int ionIndex = -1;                   // its index in Config::ions (-1: none)
+  double r_out = 1e300, z_start = -1e300, z_end = 1e300;
+  double T1 = 0.0, T2 = 0.0;           // relaxation times [1/omega0]; 0: none
+  int n_phi = 0;                       // angles of the real-space Bloch nodes (0: 4 (m_max + 1))
+  double densityAt(double r, double z) const {
+    return (z >= z_start && z < z_end && r < r_out) ? density : 0.0;
+  }
+};
+
 // thin magnetic chicane at z: the beam particles move by r56 * delta - delay in zeta
 struct ChicaneConfig {
   double z = 0.0, r56 = 0.0, delay = 0.0, gamma_ref = 1.0;
@@ -292,8 +377,8 @@ struct OutputConfig {
   bool openpmd = false;
   double openpmd_dr = 0, openpmd_dzeta = 0;  // output grid (0: smallest steps of the grid)
   // openpmd_grid: uniform (interpolated, for any openPMD reader), native (the code's own nodes,
-  // rectilinear-mesh records "native_*"), both
-  bool openpmd_uniform = true, openpmd_native = true;
+  // rectilinear-mesh records "native_*"), both; default uniform (openpmd-viewer does not read native_*)
+  bool openpmd_uniform = true, openpmd_native = false;
   // fel.txt every step: radiation energy, peak power, bunching (default: on with undulators)
   bool fel = false;
   double fel_wavelength = 0;  // bunching wavelength (default: resonance of undulator[0] for bunch[0])
@@ -328,6 +413,8 @@ struct NumericsConfig {
   Backend backend = Backend::Serial;
 #endif
   int iterations = 2;        // passes per slice (1 = predictor only)
+  int predictor = 1;         // j^1 of the half-cell behind a slice: 1 = zeta (j^0 + the change j^1 - j^0 extrapolated from
+                             // the two half-cells ahead), 0 = level (j^0)
   double beam_smooth_length = 0.0;  // radial smoothing of the beam current (as plasma.smooth_length); 0: off
   int beam_filter = 1;       // (1,2,1) filter passes along zeta on the beam current (Nyquist Cherenkov)
   double trap_gamma = 0.0;       // ... and only if its gamma is at least this (0: any gamma)
@@ -362,6 +449,9 @@ struct Config {
   std::vector<UndulatorConfig> undulators;
   std::vector<MagnetConfig> magnets;    // quadrupole, plasma_lens, solenoid blocks
   std::vector<ChicaneConfig> chicanes;  // chicane blocks, sorted by z
+  WallConfig wall;                      // block 'wall'
+  std::vector<DielectricConfig> dielectrics;  // blocks 'dielectric'
+  BoundElectronsConfig bound;               // block 'bound_electrons'
   std::map<std::string, double> constants;  // block 'constants' (code units)
   OutputConfig output;
   NumericsConfig numerics;
@@ -385,5 +475,9 @@ struct Config {
   };
   std::vector<BoxAdvice> boxAdvice() const;
 };
+
+// warnings for undulator harmonic cones that the radial grid cannot carry (thrown back at k_perp dr > 2, or turned
+// back by numerical dispersion where the grid stretches with k_perp dr > 1); part of the warnings of fromDeck
+std::vector<std::string> coneGridWarnings(const Config& c);
 
 }  // namespace gem

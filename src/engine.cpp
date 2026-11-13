@@ -14,6 +14,7 @@
 //      streaming list is rebuilt every step anyway).
 // ============================================================================
 #include "engine.hpp"
+#include "bloch.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -145,6 +146,31 @@ struct StiffV {
   const double *lca, *lcb, *lcc, *lfa, *lfb, *lfc;
 };
 
+// dielectric (FieldSolver::setDielectric): chi of the levels s^1 and s^0 on the centres and faces, the LU factors of
+// the pentadiagonal slice matrices (5 (2N+1) per class and mode, Banded5 layout, (b_0, e_0, b_1, ...) interleaved),
+// and the running polarization currents J^0, J^1 of the transverse components by slice parity n & 1:
+// r components [2][(M+1)(N+1)], phi components [2][(M+1) N]
+struct DielV {
+  int on;
+  const double *chiC1, *chiF1, *chiC0, *chiF0;
+  const cplx* band;
+  cplx *J0r, *J0p, *J1r, *J1p;
+};
+
+// bound electrons (BoundMedium, bound.hpp): the medium of the march on the device. Nodes j = i n_phi + k (centres
+// i < nc, angles k); the running states of both levels at slice n+1 (st0, st1, Ex0, Ex1, Jr0, Jr1: uploaded from the
+// host before the march, downloaded after it), node currents Jx, Hx, mode currents J0, J1 (slice), H (half-cell),
+// the saved J1, H of the last pass (commit correction), jrc (scratch); the ADK tables of the levels
+struct BoundV {
+  int on, nphi, nc, ion, sp;  // sp: linked ion species
+  BlochLines L;
+  const double *cs, *sn, *na0, *na1;
+  BlochNode *st0, *st1;
+  double *Ex0, *Ex1, *Jr0, *Jr1, *Jx, *Hx;
+  cplx *J0r, *J0p, *J1r, *J1p, *Hr, *Hp, *jrc, *sJ1r, *sJ1p, *sHr, *sHp;
+  AdkV adk[3];
+};
+
 struct Params {
   int M, Nz, N;
   double Delta;  // step of the current s^0 -> s^1
@@ -159,11 +185,18 @@ struct Params {
   int vay;         // beam list: Vay pusher (else Boris)
   double beamDzMax;  // numerics.beam_dz_max (sub-steps of the beam push)
   GridV g;
+  // metal wall (FieldSolver::setWall): last face inside, ghost centre, control volume of face K, wall present,
+  // slope of the step, w a of centre row K-1 per class and mode; particles are lost at r >= rWall (r_max without a wall)
+  int wK, wNeu;
+  double wR, wAf, wSlope, rWall;
+  const double* wA;
   int nIons;
   const IonV* ions;
   const AdkV* adk;
   double vz_min, vz_beam;
   unsigned long long seed;
+  DielV diel;
+  BoundV bound;
 };
 
 // ---------------------------------------------------------------- ADK rate
@@ -177,6 +210,49 @@ GEM_HD inline double adkRate(const AdkV& R, int k, double E) {
   const LevelV& L = R.lev[k];
   if (E < L.Emin) return 0.0;
   return adkRaw(L, E);
+}
+
+// ---------------------------------------------------------------- bound electrons (BoundMedium)
+// E_x at node (i, k) of slice n (BoundMedium::fieldAt)
+GEM_HD inline double boundField(const BoundV& B, const GridV& g, const FieldsV& F, int M, int n, int i, int k) {
+  const double w = (g.c[i] - g.rho[i]) / (g.rho[i + 1] - g.rho[i]);
+  const cplx e(B.cs[k], B.sn[k]);
+  double Er = 0.0, Ep = 0.0;
+  cplx em = e;
+  for (int m = 0; m <= M; ++m) {
+    const size_t f = F.f(m, n, 0), c = F.c(m, n, 0);
+    const cplx ep = 0.5 * (F.Rp[c + i] + F.Lp[c + i]);
+    const cplx e0 = (i > 0) ? 0.5 * (F.Rr[f + i] + F.Lr[f + i]) : (m == 1 ? cplx(0.0, -1.0) * ep : cplx());
+    const cplx e1 = 0.5 * (F.Rr[f + i + 1] + F.Lr[f + i + 1]);
+    const cplx er = (1.0 - w) * e0 + w * e1;
+    if (m == 0) { Er = er.re; Ep = ep.re; continue; }
+    Er += 2.0 * (er * em).re;
+    Ep += 2.0 * (ep * em).re;
+    em = em * e;
+  }
+  return Er * B.cs[k] - Ep * B.sn[k];
+}
+// ionization rates of the levels, mean of the half-cell ends (BoundMedium::rates)
+GEM_HD inline void boundRates(const BoundV& B, double E0, double E1, double& g0, double& g1, double& g2) {
+  const double a0 = fabs(E0), a1 = fabs(E1);
+  g0 = 0.5 * (adkRate(B.adk[0], 0, a0) + adkRate(B.adk[0], 0, a1));
+  g1 = 0.5 * (adkRate(B.adk[1], 0, a0) + adkRate(B.adk[1], 0, a1));
+  g2 = B.L.n > 1 ? 0.5 * (adkRate(B.adk[2], 0, a0) + adkRate(B.adk[2], 0, a1)) : 0.0;
+}
+// normalized populations at the node nearest to (x, y) (BoundMedium::populations)
+GEM_HD inline void boundPopulations(const BoundV& B, const GridV& g, double x, double y, double& p0, double& p1,
+                                    double& p2) {
+  p0 = 1.0; p1 = 0.0; p2 = 0.0;
+  const double r = sqrt(x * x + y * y);
+  const int i = GridV::upper(g.rho, g.N + 1, r) - 1;
+  if (i < 0 || i >= B.nc || B.na1[i] == 0.0) return;
+  double ph = atan2(y, x);
+  if (ph < 0) ph += 2.0 * PI;
+  const int k = int(llround(ph / (2.0 * PI) * B.nphi)) % B.nphi;
+  const BlochNode& q = B.st1[size_t(i) * B.nphi + k];
+  const double t = q.p0 + q.p1 + q.p2;
+  if (!(t > 0)) return;
+  p0 = q.p0 / t; p1 = q.p1 / t; p2 = q.p2 / t;
 }
 
 // ---------------------------------------------------------------- gather
@@ -342,8 +418,14 @@ GEM_HD inline void ionize(const Params& P, Particle& p, double E1, double E0, do
   double tleft = dt;
   const int Z0 = p.Zi;
   unsigned draw = 0;
+  const bool mixed = P.bound.ion && s == P.bound.sp;  // bound electrons (Simulation::ionize)
+  double pg = 1.0, pe1 = 0.0, pe2 = 0.0;
+  if (mixed && p.Zi == 0) boundPopulations(P.bound, P.g, p.x, p.y, pg, pe1, pe2);
   while (p.Zi < R.Zmax) {
-    const double w = 0.5 * (adkRate(R, p.Zi, E1) + adkRate(R, p.Zi, E0));
+    double w = 0.5 * (adkRate(R, p.Zi, E1) + adkRate(R, p.Zi, E0));
+    if (mixed && p.Zi == 0)
+      w = pg * w + pe1 * 0.5 * (adkRate(P.bound.adk[1], 0, E1) + adkRate(P.bound.adk[1], 0, E0)) +
+          pe2 * 0.5 * (adkRate(P.bound.adk[2], 0, E1) + adkRate(P.bound.adk[2], 0, E0));
     if (!(w > 0.0)) break;
     const double tw = -log(1.0 - uniform01(base + draw++)) / w;
     if (tw > tleft) break;
@@ -430,7 +512,7 @@ GEM_HD inline void pushStream(const Params& P, const FieldsV& F, const CurrV& C,
   p.ux = ux; p.uy = uy; p.uz = uz;
   p.zeta = zeta_end;
   deposit<Atomic>(P, C, kdep, n, 1.0, 0.5 * (xo + p.x), 0.5 * (yo + p.y), vx, vy, vz, p.q * dt / P.Delta, ion);
-  if (hypot(p.x, p.y) >= P.g.rho[P.g.N]) p.status = 2;
+  if (hypot(p.x, p.y) >= P.rWall) p.status = 2;  // r_max, or the wall
   if (ionizing && p.status == 0) ionize(P, p, norm3(f1), norm3(f0), dt, Z);
 }
 
@@ -449,7 +531,7 @@ GEM_HD inline void streamParticle(const Params& P, const FieldsV& F, const CurrV
 // (Simulation::pushBeam, one particle); F = fold, or (1 - a2) F + a2 F2 (numerics.beam_field = mean)
 GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle& p, int nsub, double dz,
                                     unsigned long long* lcnt, const FieldsV& F2, double a2) {
-  const double rmax = P.g.rho[P.g.N];
+  const double rmax = P.rWall;  // r_max, or the wall
   for (int sub = 0; sub < nsub && p.status == 0; ++sub) {
     double gm = gammaOf(p);
     const double vz = p.uz / gm;
@@ -480,7 +562,7 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
 // continue on the rank behind (zeta < lowZ; p.sub = the next sub-step), else p.sub = 0
 GEM_HD inline bool pushBeamCont(const Params& P, const FieldsV& F, Particle& p, int nsub, double dz, double lowZ,
                                 const FieldsV& F2, double a2) {
-  const double rmax = P.g.rho[P.g.N];
+  const double rmax = P.rWall;
   for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
     if (p.zeta < lowZ) { p.sub = sub; return true; }
     double gm = gammaOf(p);
@@ -559,7 +641,7 @@ GEM_HD inline void triSolveTeam(const Team& t, const TriV& T, const cplx* rhs, c
   t.barrier();
 }
 
-constexpr int SOLVE_SCRATCH = 20;  // arrays of N+1 per mode
+constexpr int SOLVE_SCRATCH = 34;  // arrays of N+1 per mode (20; 14 more with a dielectric)
 
 // numerics.theta_stiff (FieldSolver::lapRows, thetaApply, stiffSolve), run by one thread
 GEM_HD inline void lapRowsDev(const double* la, const double* lb, const double* lc, int i0, int n, const cplx* x,
@@ -724,21 +806,34 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
       s = s + 2.0 * (wl * bjr(nm, i) + wh * bjr(n, i)) -
           th0 * (wl * c0b.jr[c0b.f(m, nm, i)] + wh * c0b.jr[c0b.f(m, n, i)]) -
           th1 * (wl * c1b.jr[c1b.f(m, nm, i)] + wh * c1b.jr[c1b.f(m, n, i)]);
+    if (P.bound.on) {  // bound electrons: slice current of both levels (Simulation::march)
+      const size_t k = size_t(m) * (N + 1) + i;
+      s += 4.0 * ((1.0 - P.theta) * P.bound.J0r[k] + P.theta * P.bound.J1r[k]);
+    }
     return s;
   };
   auto Jp = [&](int i) {
     const cplx a = c0b.jp[c0b.c(m, nm, i)] + c0s.jp[c0s.c(m, nm, i)];
     const cplx pr = (n > 0) ? predP[m * N + i] : c1b.jp[c1b.c(m, 0, i)] + c1s.jp[c1s.c(m, 0, i)];
-    return th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
-           th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
+    cplx s = th0 * (wl * a + wh * c0b.jp[c0b.c(m, n, i)] + wh * c0s.jp[c0s.c(m, n, i)]) +
+             th1 * (wl * pr + wh * c1b.jp[c1b.c(m, n, i)] + wh * c1s.jp[c1s.c(m, n, i)]);
+    if (P.bound.on) {
+      const size_t k = size_t(m) * N + i;
+      s += 4.0 * ((1.0 - P.theta) * P.bound.J0p[k] + P.theta * P.bound.J1p[k]);
+    }
+    return s;
   };
   auto jr1 = [&](int i) {
     const cplx b = cons ? s0w * bjr(n - 1, i) + s1w * bjr(n, i) + s2w * bjr(n + 1, i) : c1b.jr[c1b.f(m, n, i)];
-    return b + c1s.jr[c1s.f(m, n, i)];
+    cplx s = b + c1s.jr[c1s.f(m, n, i)];
+    if (P.bound.on) s += P.bound.Hr[size_t(m) * (N + 1) + i];  // bound electrons: half-cell current
+    return s;
   };
   auto jp1 = [&](int i) {
     const cplx b = cons ? s0w * bjp(n - 1, i) + s1w * bjp(n, i) + s2w * bjp(n + 1, i) : c1b.jp[c1b.c(m, n, i)];
-    return b + c1s.jp[c1s.c(m, n, i)];
+    cplx s = b + c1s.jp[c1s.c(m, n, i)];
+    if (P.bound.on) s += P.bound.Hp[size_t(m) * N + i];
+    return s;
   };
   auto jz1 = [&](int i) {
     const cplx b = cons ? s0w * bjz(n - 1, i) + s1w * bjz(n, i) + s2w * bjz(n + 1, i) : c1b.jz[c1b.c(m, n, i)];
@@ -772,10 +867,10 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   };
 
   // discrete operators (FieldSolver::opG ... opCB), one entry each
-  auto opG = [&](const cplx* x, int i) -> cplx {
-    if (i == 0) return cplx();
-    const cplx xi = (i < N) ? x[i] : cplx();
-    return (xi - x[i - 1]) / (g.c[i] - g.c[i - 1]);
+  auto opG = [&](const cplx* x, int i) -> cplx {  // ghost at P.wR (c_N, or the wall: x[K] = E_z there)
+    if (i == 0 || i > P.wK) return cplx();
+    const cplx xi = (i < P.wK || P.wNeu) ? x[i] : cplx();
+    return (xi - x[i - 1]) / ((i < P.wK ? g.c[i] : P.wR) - g.c[i - 1]);
   };
   auto opg = [&](const cplx* x, int i) { return (x[i + 1] - x[i]) / (g.rho[i + 1] - g.rho[i]); };
   auto opMf = [&](const cplx* x, int i) -> cplx {
@@ -784,7 +879,8 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
   };
   auto opCE = [&](const cplx* Er, const cplx* Ep, int i) -> cplx {
     if (i == 0) return g.c[0] * Ep[0] / g.Af[0];
-    if (i == N) return cplx();
+    if (i == N || i > P.wK) return cplx();
+    if (i == P.wK) return (cplx() - g.c[i - 1] * Ep[i - 1]) / P.wAf - (im / g.rho[i]) * Er[i];  // E_phi = 0 at the wall
     return (g.c[i] * Ep[i] - g.c[i - 1] * Ep[i - 1]) / g.Af[i] - (im / g.rho[i]) * Er[i];
   };
   auto opCB = [&](const cplx* Bp, const cplx* Br, int i) -> cplx {
@@ -815,6 +911,103 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     Qp[i] = Lp1[i] - 0.25 * h * ((im / g.c[i]) * e1[i] + opg(b1, i)) - 0.5 * h * jp1(i);
   });
   t.barrier();
+  if (P.diel.on) {  // dielectric (FieldSolver::solveSliceDiel, the same operations in the same order)
+    const DielV& Dv = P.diel;
+    cplx *Pkr = scratch + 20 * L, *Qkr = scratch + 21 * L, *Pkp = scratch + 22 * L, *Qkp = scratch + 23 * L;
+    cplx *Knr = scratch + 24 * L, *Knp = scratch + 25 * L;
+    cplx *kRr = scratch + 26 * L, *kLr = scratch + 27 * L, *kRp = scratch + 28 * L, *kLp = scratch + 29 * L;
+    cplx *kEr = scratch + 30 * L, *kEp = scratch + 31 * L, *xs = scratch + 32 * L;  // xs: 2N+1 entries
+    const size_t npf = size_t(P.M + 1) * (N + 1), npc = size_t(P.M + 1) * N;
+    const size_t of = size_t(m) * (N + 1), oc = size_t(m) * N;
+    const int pn = n & 1, pa = (n + 1) & 1;
+    const cplx *J0r = Dv.J0r + pn * npf, *J0p = Dv.J0p + pn * npc;
+    const cplx *J1ra = Dv.J1r + pa * npf, *J1pa = Dv.J1p + pa * npc;
+    cplx *J1r = Dv.J1r + pn * npf, *J1p = Dv.J1p + pn * npc;
+    const double w0d = 1.0 - P.theta, tD = P.theta * D, al = 0.5 * tD - 0.125 * h, be = 0.5 * tD + 0.125 * h;
+    par::teamFor(t, N + 1, [&](int i) {
+      const double x = Dv.chiF1[i];
+      const cplx E1 = Er1[i];
+      const cplx Kn = -1.0 * J1ra[of + i] - (2.0 * x / h) * E1;
+      Knr[i] = Kn;
+      Pkr[i] = (i == 0) ? cplx() : Pr[i] - D * (w0d * J0r[of + i] + P.theta * Kn);
+      Qkr[i] = (i == 0) ? cplx() : Qr[i] + 0.5 * x * E1;
+      tf1[i] = cplx();  // b = 0 and e = the wall value only: the known parts
+      tc1[i] = cplx();
+    });
+    par::teamFor(t, N, [&](int i) {
+      const double x = Dv.chiC1[i];
+      const cplx E1 = Ep1[i];
+      const cplx Kn = -1.0 * J1pa[oc + i] - (2.0 * x / h) * E1;
+      Knp[i] = Kn;
+      Pkp[i] = Pp[i] - D * (w0d * J0p[oc + i] + P.theta * Kn);
+      Qkp[i] = Qp[i] + 0.5 * x * E1;
+    });
+    const bool slopedD = P.wNeu && P.wSlope != 0.0;
+    const cplx ewD = slopedD ? -P.wSlope * 0.5 * (Rr0[P.wK] + fo.Lr[fo.f(m, n, P.wK)]) : cplx();
+    t.barrier();
+    if (P.wNeu && t.leader()) tc1[P.wK] = ewD;
+    t.barrier();
+    // transverse fields of (e, b) and the known parts (FieldSolver::dielTransverse)
+    auto trans = [&](const cplx* ee, const cplx* bb, cplx* oRr, cplx* oLr, cplx* oRp, cplx* oLp, cplx* oEr,
+                     cplx* oEp) {
+      par::teamFor(t, N + 1, [&](int i) {
+        if (i == 0) { oRr[0] = cplx(); oLr[0] = cplx(); oEr[0] = cplx(); return; }
+        const double x = Dv.chiF1[i], mu = 1.0 / (1.0 + tD * x / h + 0.25 * x);
+        const cplx A = opG(ee, i), B = opMf(bb, i);
+        const cplx E = mu * (0.5 * (Pkr[i] + Qkr[i]) + al * A + be * B);
+        oEr[i] = E;
+        oRr[i] = Pkr[i] + tD * (A + B) - (2.0 * tD * x / h) * E;
+        oLr[i] = Qkr[i] - 0.25 * h * (A - B) - 0.5 * x * E;
+      });
+      par::teamFor(t, N, [&](int i) {
+        const double x = Dv.chiC1[i], mu = 1.0 / (1.0 + tD * x / h + 0.25 * x);
+        const cplx A = (im / g.c[i]) * ee[i], B = -1.0 * opg(bb, i);
+        const cplx E = mu * (0.5 * (Pkp[i] + Qkp[i]) + al * A + be * B);
+        oEp[i] = E;
+        oRp[i] = Pkp[i] + tD * (A + B) - (2.0 * tD * x / h) * E;
+        oLp[i] = Qkp[i] - 0.25 * h * (A - B) - 0.5 * x * E;
+      });
+      t.barrier();
+    };
+    trans(tc1, tf1, kRr, kLr, kRp, kLp, kEr, kEp);
+    par::teamFor(t, N + 1, [&](int i) { rf[i] = 0.5 * (kRr[i] - kLr[i]); });  // known B_phi
+    par::teamFor(t, N, [&](int i) { rc[i] = 0.5 * (kLp[i] - kRp[i]); });      // known B_r
+    t.barrier();
+    // right-hand sides, interleaved; decoupled rows 0 (FieldSolver::rowInB, rowInE)
+    par::teamFor(t, N + 1, [&](int i) {
+      const bool in = !(i > P.wK || (i == P.wK && !P.wNeu) || (m > 0 && i == 0));
+      xs[2 * i] = in ? 16.0 * b1[i] - 8.0 * h * (opCE(Er1, Ep1, i) + opCE(kEr, kEp, i)) : cplx();
+    });
+    par::teamFor(t, N, [&](int i) {
+      xs[2 * i + 1] = (i < P.wK) ? 16.0 * (1.0 + Dv.chiC1[i]) * e1[i] +
+                                       8.0 * h * (opCB(Bp1, Br1, i) + opCB(rf, rc, i)) - 16.0 * h * jz1(i)
+                                 : cplx();
+    });
+    t.barrier();
+    if (t.leader()) band5Dev(Dv.band + size_t(T) * 5 * (2 * N + 1), 2 * N + 1, xs);
+    t.barrier();
+    par::teamFor(t, N + 1, [&](int i) { b[i] = xs[2 * i]; });
+    par::teamFor(t, N, [&](int i) { e[i] = xs[2 * i + 1]; });
+    t.barrier();
+    if (P.wNeu && t.leader()) e[P.wK] = ewD;
+    t.barrier();
+    trans(e, b, Rr, Lr, Rp, Lp, kEr, kEp);
+    par::teamFor(t, N + 1, [&](int i) {
+      J1r[of + i] = (i == 0 || i > P.wK) ? cplx() : Knr[i] + (2.0 * Dv.chiF1[i] / h) * kEr[i];
+    });
+    par::teamFor(t, N, [&](int i) { J1p[oc + i] = (i >= P.wK) ? cplx() : Knp[i] + (2.0 * Dv.chiC1[i] / h) * kEp[i]; });
+    if (P.wNeu) {  // nothing inside the metal (FieldSolver::maskWall)
+      t.barrier();
+      par::teamFor(t, N + 1, [&](int i) {
+        if (i > P.wK) { Rr[i] = cplx(); Lr[i] = cplx(); b[i] = cplx(); }
+      });
+      par::teamFor(t, N, [&](int i) {
+        if (i >= P.wK) { Rp[i] = cplx(); Lp[i] = cplx(); }
+        if (i > P.wK) e[i] = cplx();
+      });
+    }
+    return;
+  }
   // B_z
   par::teamFor(t, N + 1, [&](int i) { tf1[i] = 0.5 * (Pr[i] + Qr[i]); });
   par::teamFor(t, N, [&](int i) { tc1[i] = 0.5 * (Pp[i] + Qp[i]); });
@@ -837,11 +1030,23 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     rc[i] = 16.0 * e1[i] + 8.0 * h * (opCB(Bp1, Br1, i) + opCB(tf1, tc1, i)) - 16.0 * h * jz1(i);
   });
   t.barrier();
+  // sloped wall (FieldSolver::solveSlice): E_z = -slope E_r at the wall, E_r of level s^0 at face K
+  const bool sloped = P.wNeu && P.wSlope != 0.0;
+  const cplx ew = sloped ? -P.wSlope * 0.5 * (Rr0[P.wK] + fo.Lr[fo.f(m, n, P.wK)]) : cplx();
+  if (sloped) {
+    if (t.leader()) rc[P.wK - 1] += P.wA[T] * ew;
+    t.barrier();
+  }
   if (stiff) {
     if (t.leader()) stiffSolve(false, rc, e);
     t.barrier();
   } else {
     triSolveTeam(t, Tc[T], rc, e, dp, pu, pv);
+  }
+  if (P.wNeu) {
+    t.barrier();
+    if (t.leader()) e[P.wK] = ew;
+    t.barrier();
   }
   // explicit transverse update (theta_stiff: R with Theta e, Theta b)
   const cplx *eR = e, *bR = b;
@@ -865,6 +1070,16 @@ GEM_HD inline void solveSliceTeam(const Team& t, const Params& P, int m, int n, 
     Rp[i] = Pp[i] + w1 * D * ((im / g.c[i]) * eR[i] - opg(bR, i));
     Lp[i] = Qp[i] - 0.25 * h * (ie + gg);
   });
+  if (P.wNeu) {  // nothing inside the metal (FieldSolver::maskWall)
+    t.barrier();
+    par::teamFor(t, N + 1, [&](int i) {
+      if (i > P.wK) { Rr[i] = cplx(); Lr[i] = cplx(); b[i] = cplx(); }
+    });
+    par::teamFor(t, N, [&](int i) {
+      if (i >= P.wK) { Rp[i] = cplx(); Lp[i] = cplx(); }
+      if (i > P.wK) e[i] = cplx();
+    });
+  }
 }
 
 // (1,2,1) filter of the beam current along zeta over the half-cells [k0, k1) (default: the stored range;
@@ -963,6 +1178,7 @@ struct EngineState {
   par::Array<dev::AdkV> adk;
   par::Array<dev::LevelV> levels;
   par::Array<double> triData, partData;
+  par::Array<double> wAd;  // FieldSolver::wA (metal wall)
   par::Array<dev::TriV> Tf, Tc;
   int triVersion = -1;  // FieldSolver::version() of the uploaded matrices
   par::Array<double> zz, zhs, zzc, zwlo, zwhi;  // longitudinal grid
@@ -1070,6 +1286,11 @@ struct EngineState {
       if (!pd.empty()) par::upload(partData.data(), pd.data(), pd.size());
     }
     triVersion = fs.version();
+    // metal wall of the level (FieldSolver::setWall)
+    wAd.assign(fs.wA.data(), fs.wA.size());
+    P.wK = fs.wK; P.wNeu = fs.wNeu ? 1 : 0;
+    P.wR = fs.wR; P.wAf = fs.wAf; P.wSlope = fs.wSlope;
+    P.wA = wAd.data();
     // numerics.theta_stiff: a, the pentadiagonal LU factors, the factors of S and the Laplacians (StiffV)
     P.stiff = dev::StiffV{0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
                           nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
@@ -1117,6 +1338,88 @@ struct EngineState {
   }
   par::Array<double> stiffA, stiffS, stiffL;
   par::Array<cplx> stiffBc, stiffBf;
+  // dielectric (FieldSolver::setDielectric): chi of both levels every step, the band matrices when they change,
+  // the running polarization currents (allocated once)
+  // bound electrons (BoundMedium): device copies of the medium and its scratch
+  par::Array<double> bCS, bSN, bNa0, bNa1, bEx0, bEx1, bJr0, bJr1, bJx, bHx;
+  par::Array<BlochNode> bSt0, bSt1;
+  par::Array<cplx> bModes;  // J0r, J1r, Hr, sJ1r, sHr (faces), J0p, J1p, Hp, sJ1p, sHp (centres), jrc
+  par::Array<dev::LevelV> bLev;
+  void uploadBound(const BoundMedium& b, int M, int N) {
+    if (!b.on) { P.bound.on = 0; return; }
+    const size_t nn = b.st0.size(), nf = size_t(M + 1) * (N + 1), nc = size_t(M + 1) * N;
+    if (bSt0.capacity() != nn) {  // first call: allocate, constant tables
+      bCS.assign(b.cs.data(), b.cs.size());
+      bSN.assign(b.sn.data(), b.sn.size());
+      bNa0.clear(size_t(N)); bNa1.clear(size_t(N));
+      bSt0.clear(nn); bSt1.clear(nn);
+      for (auto* a : {&bEx0, &bEx1, &bJr0, &bJr1, &bJx, &bHx}) a->clear(nn);
+      bModes.clear(5 * nf + 6 * nc);
+      std::vector<dev::LevelV> lv;
+      for (int k = 0; k < 3; ++k)
+        for (const auto& L : b.adkL[k].lev) lv.push_back({L.logpre, L.power, L.expo, L.Epeak, L.Emin});
+      if (!lv.empty()) bLev.assign(lv.data(), lv.size());
+    }
+    par::upload(bNa0.data(), b.na0.data(), size_t(N));
+    par::upload(bNa1.data(), b.na1.data(), size_t(N));
+    par::upload(bSt0.data(), b.st0.data(), nn);
+    par::upload(bSt1.data(), b.st1.data(), nn);
+    par::upload(bEx0.data(), b.Ex0.data(), nn);
+    par::upload(bEx1.data(), b.Ex1.data(), nn);
+    par::upload(bJr0.data(), b.Jr0.data(), nn);
+    par::upload(bJr1.data(), b.Jr1.data(), nn);
+    dev::BoundV& B = P.bound;
+    B.on = 1; B.nphi = b.nphi; B.nc = b.nc; B.ion = b.ion ? 1 : 0; B.sp = sim_bound_sp;
+    B.L = b.L;
+    B.cs = bCS.data(); B.sn = bSN.data(); B.na0 = bNa0.data(); B.na1 = bNa1.data();
+    B.st0 = bSt0.data(); B.st1 = bSt1.data();
+    B.Ex0 = bEx0.data(); B.Ex1 = bEx1.data(); B.Jr0 = bJr0.data(); B.Jr1 = bJr1.data();
+    B.Jx = bJx.data(); B.Hx = bHx.data();
+    cplx* q = bModes.data();
+    B.J0r = q; B.J1r = q + nf; B.Hr = q + 2 * nf; B.sJ1r = q + 3 * nf; B.sHr = q + 4 * nf;
+    cplx* c = q + 5 * nf;
+    B.J0p = c; B.J1p = c + nc; B.Hp = c + 2 * nc; B.sJ1p = c + 3 * nc; B.sHp = c + 4 * nc; B.jrc = c + 5 * nc;
+    for (int k = 0; k < 3; ++k) {
+      const AdkRates& R = b.adkL[k];
+      B.adk[k] = dev::AdkV{R.Z0, R.Zmax, R.Emin_all, bLev.capacity() > 0 ? bLev.data() + k : nullptr};
+    }
+  }
+  void downloadBound(BoundMedium& b) {
+    const size_t nn = b.st0.size();
+    par::download(b.st0.data(), bSt0.data(), nn);
+    par::download(b.st1.data(), bSt1.data(), nn);
+    par::download(b.Ex0.data(), bEx0.data(), nn);
+    par::download(b.Ex1.data(), bEx1.data(), nn);
+    par::download(b.Jr0.data(), bJr0.data(), nn);
+    par::download(b.Jr1.data(), bJr1.data(), nn);
+  }
+  int sim_bound_sp = -1;
+  par::Array<double> dielChi;
+  par::Array<cplx> dielBand, dielJ;
+  int dielVersion = -1;
+  void uploadDiel(const FieldSolver& fs, int M) {
+    if (!fs.dielectric()) { P.diel = dev::DielV{0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                                nullptr, nullptr}; return; }
+    const int N = fs.N;
+    std::vector<double> chi;
+    for (const auto* v : {&fs.dChiC1, &fs.dChiF1, &fs.dChiC0, &fs.dChiF0}) chi.insert(chi.end(), v->begin(), v->end());
+    if (dielChi.capacity() != chi.size()) dielChi.assign(chi.data(), chi.size());
+    else par::upload(dielChi.data(), chi.data(), chi.size());
+    if (fs.version() != dielVersion) {
+      std::vector<cplx> band;
+      for (const Banded5& B : fs.Bd)
+        for (const cd& a : B.A) band.push_back(cplx(a.real(), a.imag()));
+      if (dielBand.capacity() != band.size()) dielBand.assign(band.data(), band.size());
+      else par::upload(dielBand.data(), band.data(), band.size());
+      dielVersion = fs.version();
+    }
+    const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+    if (dielJ.capacity() != 4 * (npf + npc)) dielJ.clear(4 * (npf + npc));
+    const double* c = dielChi.data();
+    cplx* J = dielJ.data();
+    P.diel = dev::DielV{1, c, c + N, c + 2 * N + 1, c + 3 * N + 1, dielBand.data(),
+                        J, J + 2 * npf, J + 2 * npf + 2 * npc, J + 4 * npf + 2 * npc};
+  }
   dev::Params P{};
   // fields and currents: index 0/1 swap every step
   dev::FieldStore F[2];
@@ -1141,7 +1444,9 @@ struct EngineState {
   std::vector<char> preHave;
   size_t preW = 0;
   int preF = 0, preC = 0;  // first kept face / centre
+  par::Array<int> preIdx;  // slices of swapPreAbsorber
   par::Array<cplx> belowR, belowP;  // MPI block: prediction at slice a
+  par::Array<cplx> frontDR, frontDP;  // MPI block: the front rank's j^1 - j^0 (streaming) at half-cell b
   dev::CurrStore aux[3];            // MPI block: halo deposits H, the front rank's raw current Rw, scratch
   bool auxReady = false;
   par::Array<Particle> plist;       // MPI block: particles of pushBeams / depositBeams
@@ -1186,6 +1491,7 @@ struct Engine::MarchSpec {
   long streamCap, bornCap;
   const BlockMarch* bm;        // MPI block (null: the whole window)
   const cplx *belowR, *belowP;  // MPI block with a rank behind: prediction at slice nLo
+  const cplx *frontDR = nullptr, *frontDP = nullptr;  // MPI block with a rank in front: its j^1 - j^0 at nHi + 1
 };
 bool Engine::gpuBuild() {
 #if defined(GEM_BACKEND_CUDA)
@@ -1267,6 +1573,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   // parameters
   dev::Params& P = E.P;
   P.M = M; P.Nz = Nz; P.N = N; P.Delta = sim.Delta;
+  P.rWall = sim.rWall;
   P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   P.trapGamma = sim.cfg.numerics.trap_gamma;
   P.theta = sim.cfg.numerics.theta;
@@ -1385,8 +1692,11 @@ void Engine::step() {
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, E.P.M);
+  E.uploadDiel(sim.solver, E.P.M);
+  extendWall();
   const Params P = E.P;
   const int M = P.M, Nz = P.Nz, N = P.N;
   const double Delta = P.Delta;
@@ -1537,8 +1847,17 @@ void Engine::step() {
   par::zero(E.predP[1 - E.ip].data(), npc);
   prof.stop(Profile::LOAD);
 
-  // ---- 4. zeta march
+  // ---- 4. zeta march (bound electrons: densities and fresh atoms on the host, the medium on the device)
+  if (sim.bound.on) {
+    sim.boundBegin(sim.s0, s1);
+    E.sim_bound_sp = sim.cfg.bound.ionIndex;
+    E.uploadBound(sim.bound, M, N);
+  }
   march(MarchSpec{Nz - 1, 0, s1, streamCap, bornCap, nullptr, nullptr, nullptr});
+  if (sim.bound.on) {
+    E.downloadBound(sim.bound);
+    sim.bound.diagRear(sim.bound.st1);
+  }
   Particle* stream = E.stream.data();
   const int streamCapI = int(streamCap);
   // ---- 4b. beam_field = mean (Simulation::step): the beam is pushed again from s^0 in (F^0 + F^1)/2 and
@@ -1612,6 +1931,7 @@ void Engine::march(const MarchSpec& ms) {
   const int M = P.M, Nz = P.Nz, N = P.N;
   const double Delta = P.Delta, s1 = ms.s1;
   const int iters = sim.cfg.numerics.iterations;
+  const bool predZ = sim.cfg.numerics.predictor == 1;  // numerics.predictor = zeta
   const int iold = E.iold, inew = 1 - iold;
   const FieldsV fo = E.fview(iold), fn = E.fview(inew);
   const CurrV c0b = E.bview(iold), c0s = E.sview(iold);
@@ -1622,6 +1942,94 @@ void Engine::march(const MarchSpec& ms) {
   Profile& prof = E.prof;
   const long streamCap = ms.streamCap, bornCap = ms.bornCap;
   const size_t npf = size_t(M + 1) * (N + 1), npc = size_t(M + 1) * N;
+  // bound electrons (BoundMedium::level0, level1, project): kernels over the nodes and the modes
+  auto boundProject = [&](const double* x, cplx* fr, cplx* fp) {
+    const BoundV B = P.bound;
+    const int Nn = N;
+    par::forN(long(M + 1) * N, GEM_LAMBDA(long idx) {
+      const int m = int(idx / Nn), i = int(idx % Nn);
+      cplx a, b;
+      if (i < B.nc)
+        for (int k = 0; k < B.nphi; ++k) {
+          const double v = x[size_t(i) * B.nphi + k];
+          if (v == 0.0) continue;
+          const cplx e(B.cs[k], -B.sn[k]);
+          cplx em(1.0, 0.0);
+          for (int q = 0; q < m; ++q) em = em * e;
+          a += (v * B.cs[k]) * em;
+          b += (-v * B.sn[k]) * em;
+        }
+      const double sc = 1.0 / B.nphi;
+      B.jrc[idx] = a * sc;
+      fp[idx] = b * sc;
+    });
+    par::forN(long(M + 1) * (N + 1), GEM_LAMBDA(long idx) {
+      const int m = int(idx / (Nn + 1)), i = int(idx % (Nn + 1));
+      if (i == 0) { fr[idx] = cplx(); return; }
+      const cplx aa = B.jrc[size_t(m) * Nn + i - 1], bb = (i < Nn) ? B.jrc[size_t(m) * Nn + i] : cplx();
+      fr[idx] = 0.5 * (aa + bb);
+    });
+  };
+  auto boundLevel0 = [&](int n) {
+    const BoundV B = P.bound;
+    const GridV gg = P.g;
+    const double h = P.zv.len(n);
+    const int MM = M;
+    par::forN(long(B.nc) * B.nphi, GEM_LAMBDA(long j) {
+      const int i = int(j / B.nphi), k = int(j % B.nphi);
+      const double En = boundField(B, gg, fo, MM, n, i, k);
+      if (B.na0[i] == 0.0) { B.Jx[j] = 0.0; B.Ex0[j] = En; return; }
+      const double P1 = blochP(B.L, B.st0[j]);
+      double g0 = 0, g1 = 0, g2 = 0;
+      if (B.ion) boundRates(B, B.Ex0[j], En, g0, g1, g2);
+      blochStep(B.L, B.st0[j], B.Ex0[j], En, h, g0, g1, g2);
+      B.Jx[j] = 2.0 * B.na0[i] * (blochP(B.L, B.st0[j]) - P1) / h - B.Jr0[j];
+      B.Jr0[j] = B.Jx[j];
+      B.Ex0[j] = En;
+    });
+    boundProject(B.Jx, B.J0r, B.J0p);
+  };
+  auto boundLevel1 = [&](int n, bool commit) {
+    const BoundV B = P.bound;
+    const GridV gg = P.g;
+    const double h = P.zv.len(n);
+    const int MM = M;
+    par::forN(long(B.nc) * B.nphi, GEM_LAMBDA(long j) {
+      const int i = int(j / B.nphi), k = int(j % B.nphi);
+      const double En = boundField(B, gg, fn, MM, n, i, k);
+      if (B.na1[i] == 0.0) {
+        B.Jx[j] = 0.0; B.Hx[j] = 0.0;
+        if (commit) { B.Jr1[j] = 0.0; B.Ex1[j] = En; }
+        return;
+      }
+      BlochNode q = B.st1[j];
+      const double P1 = blochP(B.L, q);
+      double g0 = 0, g1 = 0, g2 = 0;
+      if (B.ion) boundRates(B, B.Ex1[j], En, g0, g1, g2);
+      blochStep(B.L, q, B.Ex1[j], En, h, g0, g1, g2);
+      B.Hx[j] = B.na1[i] * (blochP(B.L, q) - P1) / h;
+      B.Jx[j] = 2.0 * B.Hx[j] - B.Jr1[j];
+      if (commit) { B.st1[j] = q; B.Ex1[j] = En; B.Jr1[j] = B.Jx[j]; }
+    });
+    boundProject(B.Jx, B.J1r, B.J1p);
+    boundProject(B.Hx, B.Hr, B.Hp);
+  };
+  // dielectric: the running polarization currents are zero ahead of the window (or come from the front rank)
+  if (P.diel.on) {
+    par::zero(E.dielJ.data(), E.dielJ.capacity());
+    if (ms.bm && ms.bm->dielFront) {
+      const std::vector<cd>& v = *ms.bm->dielFront;
+      if (v.size() != 2 * (npf + npc)) throw std::runtime_error("dielectric: polarization message of the wrong size");
+      std::vector<cplx> h(v.size());
+      for (size_t i = 0; i < v.size(); ++i) h[i] = cplx(v[i].real(), v[i].imag());
+      const int p = (ms.nHi + 1) & 1;
+      cplx* J = E.dielJ.data();
+      par::upload(J + p * npf, h.data(), npf);                                   // J^0_r
+      par::upload(J + 2 * npf + p * npc, h.data() + npf, npc);                  // J^0_phi
+      par::upload(J + 2 * npf + 2 * npc + p * npf, h.data() + npf + npc, npf);  // J^1_r
+      par::upload(J + 4 * npf + 2 * npc + p * npc, h.data() + 2 * npf + npc, npc);
+    }
+  }
   // ---- 4. zeta march
   Particle *stream = E.stream.data(), *backup = E.backup.data(), *born = E.born.data();
   const bool blockMode = ms.bm != nullptr;
@@ -1644,6 +2052,29 @@ void Engine::march(const MarchSpec& ms) {
     cplx* predPc = E.predP[E.ip].data();
     const cplx* predRprev = E.pred[1 - E.ip].data();
     const cplx* predPprev = E.predP[1 - E.ip].data();
+    if (P.diel.on) {  // J^0 of slice n from the slices n, n+1 of s^0 (FieldSolver::dielLevel0)
+      const DielV Dv = P.diel;
+      const int pn = n & 1, pa = (n + 1) & 1;
+      const double h = P.zv.len(n);
+      par::forN(long(npf), GEM_LAMBDA(long idx) {
+        const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+        const double x = Dv.chiF0[i];
+        Dv.J0r[pn * npf + idx] =
+            (x == 0.0 || i == 0)
+                ? cplx()
+                : -1.0 * Dv.J0r[pa * npf + idx] - (x / h) * ((fo.Rr[fo.f(m, n + 1, i)] + fo.Lr[fo.f(m, n + 1, i)]) -
+                                                         (fo.Rr[fo.f(m, n, i)] + fo.Lr[fo.f(m, n, i)]));
+      });
+      par::forN(long(npc), GEM_LAMBDA(long idx) {
+        const int m = int(idx / N), i = int(idx % N);
+        const double x = Dv.chiC0[i];
+        Dv.J0p[pn * npc + idx] =
+            (x == 0.0) ? cplx()
+                       : -1.0 * Dv.J0p[pa * npc + idx] - (x / h) * ((fo.Rp[fo.c(m, n + 1, i)] + fo.Lp[fo.c(m, n + 1, i)]) -
+                                                                (fo.Rp[fo.c(m, n, i)] + fo.Lp[fo.c(m, n, i)]));
+      });
+    }
+    if (P.bound.on) boundLevel0(n);  // J^0 of the bound electrons at slice n
     for (int it = 0; it < iters; ++it) {
       // prepare: predicted j^1 at n-1, predictor fields, zero half-cell n, |E| bound
       par::teams(1, GEM_LAMBDA(const Team& t) {
@@ -1771,7 +2202,26 @@ void Engine::march(const MarchSpec& ms) {
           filterTeam(t, FV, t.league, n, c1s, fs + size_t(t.league) * (4 * size_t(N) + 1));
         });
       }
+      // numerics.predictor = zeta (Simulation::march): j^1 of half-cell n-1 = j^0 + the change extrapolated from n, n+1
+      // (half-cell n + 1 above an MPI block: the change sent by the front rank)
+      if (predZ && n > 0 && n + 1 < Nz && (n + 1 <= nHi || ms.frontDR)) {
+        const bool own = n + 1 <= nHi;
+        const cplx *dR = ms.frontDR, *dP = ms.frontDP;
+        par::forN(long(npf), GEM_LAMBDA(long idx) {
+          const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+          const cplx b = (n == nLo && belowR) ? belowR[idx] : c1b.jr[c1b.f(m, n - 1, i)];
+          const cplx d1 = own ? c1s.jr[c1s.f(m, n + 1, i)] - c0s.jr[c0s.f(m, n + 1, i)] : dR[idx];
+          predR[idx] = b + c0s.jr[c0s.f(m, n - 1, i)] + 2.0 * (c1s.jr[c1s.f(m, n, i)] - c0s.jr[c0s.f(m, n, i)]) - d1;
+        });
+        par::forN(long(npc), GEM_LAMBDA(long idx) {
+          const int m = int(idx / N), i = int(idx % N);
+          const cplx b = (n == nLo && belowP) ? belowP[idx] : c1b.jp[c1b.c(m, n - 1, i)];
+          const cplx d1 = own ? c1s.jp[c1s.c(m, n + 1, i)] - c0s.jp[c0s.c(m, n + 1, i)] : dP[idx];
+          predPc[idx] = b + c0s.jp[c0s.c(m, n - 1, i)] + 2.0 * (c1s.jp[c1s.c(m, n, i)] - c0s.jp[c0s.c(m, n, i)]) - d1;
+        });
+      }
       prof.stop(Profile::PUSH);
+      if (P.bound.on) boundLevel1(n, false);  // the medium current with the fields of this pass
       // field solve, one team per mode
       par::teams(M + 1, GEM_LAMBDA(const Team& t) {
         const int m = t.league;
@@ -1779,6 +2229,26 @@ void Engine::march(const MarchSpec& ms) {
                        scratch + size_t(m) * SOLVE_SCRATCH * (N + 1), fl);
       });
       prof.stop(Profile::SOLVE);
+    }
+    if (P.bound.on) {  // slice n is final: commit the atoms, correct R, L of slice n (Simulation::march)
+      const BoundV B = P.bound;
+      par::forN(long(npf), GEM_LAMBDA(long idx) { B.sJ1r[idx] = B.J1r[idx]; B.sHr[idx] = B.Hr[idx]; });
+      par::forN(long(npc), GEM_LAMBDA(long idx) { B.sJ1p[idx] = B.J1p[idx]; B.sHp[idx] = B.Hp[idx]; });
+      boundLevel1(n, true);
+      const double qR = Delta * P.theta, qL = 0.5 * P.zv.len(n);
+      const int K = P.wK;
+      par::forN(long(npf), GEM_LAMBDA(long idx) {
+        const int m = int(idx / (N + 1)), i = int(idx % (N + 1));
+        if (i == 0 || i > K) return;
+        fn.Rr[fn.f(m, n, i)] -= qR * (B.J1r[idx] - B.sJ1r[idx]);
+        fn.Lr[fn.f(m, n, i)] -= qL * (B.Hr[idx] - B.sHr[idx]);
+      });
+      par::forN(long(npc), GEM_LAMBDA(long idx) {
+        const int m = int(idx / N), i = int(idx % N);
+        if (i >= K) return;
+        fn.Rp[fn.c(m, n, i)] -= qR * (B.J1p[idx] - B.sJ1p[idx]);
+        fn.Lp[fn.c(m, n, i)] -= qL * (B.Hp[idx] - B.sHp[idx]);
+      });
     }
     // freed electrons join the streaming list; trapped particles -> beam list
     // (fast) or next step (slow)
@@ -1817,13 +2287,30 @@ void Engine::march(const MarchSpec& ms) {
         const double q = 0.5 * P.theta * Delta * P.zv.wLo(n + 1);
         par::teamFor(t, int(npf), [&](int idx) {
           const int m = idx / (N + 1), i = idx % (N + 1);
-          if (i == 0) return;
+          if (i == 0 || i > P.wK) return;  // inside the wall: faces <= K
           const cplx jt = c1b.jr[c1b.f(m, n, i)] + c1s.jr[c1s.f(m, n, i)];
+          if (P.diel.on) {  // R and L follow the local relation of the medium (FieldSolver::dielCorrection)
+            const double h1 = P.zv.len(n + 1), tD = P.theta * Delta, x = P.diel.chiF1[i];
+            const double mu = 1.0 / (1.0 + tD * x / h1 + 0.25 * x);
+            const cplx dP = -q * (jt - predRprev[idx]);
+            fn.Rr[fn.f(m, n + 1, i)] += (1.0 - tD * x * mu / h1) * dP;
+            fn.Lr[fn.f(m, n + 1, i)] += (-0.25 * x * mu) * dP;
+            return;
+          }
           fn.Rr[fn.f(m, n + 1, i)] -= q * (jt - predRprev[idx]);
         });
         par::teamFor(t, int(npc), [&](int idx) {
           const int m = idx / N, i = idx % N;
+          if (i >= P.wK) return;  // centres < K
           const cplx jt = c1b.jp[c1b.c(m, n, i)] + c1s.jp[c1s.c(m, n, i)];
+          if (P.diel.on) {
+            const double h1 = P.zv.len(n + 1), tD = P.theta * Delta, x = P.diel.chiC1[i];
+            const double mu = 1.0 / (1.0 + tD * x / h1 + 0.25 * x);
+            const cplx dP = -q * (jt - predPprev[idx]);
+            fn.Rp[fn.c(m, n + 1, i)] += (1.0 - tD * x * mu / h1) * dP;
+            fn.Lp[fn.c(m, n + 1, i)] += (-0.25 * x * mu) * dP;
+            return;
+          }
           fn.Rp[fn.c(m, n + 1, i)] -= q * (jt - predPprev[idx]);
         });
       }
@@ -1851,6 +2338,16 @@ void Engine::march(const MarchSpec& ms) {
 //  E.incF / incC hold the incident field of the level (sim.prepareIncident). keep: the values before the
 //  absorber of faces >= iF and centres >= iC go to E.preAbs (MPI block, beam_field = mean)
 // ----------------------------------------------------------------------------
+namespace dev {
+// terms of the flying focus at one level (FlyingFocusConfig::terms, Simulation::ffInc), passed by value to the kernel
+struct FFTab {
+  int nt = 0;
+  int m[16], conj[16];
+  size_t of[16], oc[16];                // offsets of the component in ffGf, ffGc
+  double w[16], rps[16], c[16], s[16];  // c + i s = e^{-i kappa_c s1}
+};
+}  // namespace dev
+
 void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   using namespace dev;
   EngineState& E = *st;
@@ -1860,12 +2357,19 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
   if (ra >= rm || n1 <= n0) return;
   const FieldsV fn = E.fview(1 - E.iold);
   const GridV g = P.g;
-  // flying focus: R relaxes to the incident field Re(G e^{-i kappa s1}) (m = 1), see Simulation::absorber
+  // flying focus: R relaxes to the incident field of the terms (Simulation::ffInc, absorber)
   const bool ff = sim.cfg.flying_focus.present;
   const cplx* Gf = ff ? E.ffGf.data() : nullptr;
   const cplx* Gc = ff ? E.ffGc.data() : nullptr;
-  const double kph = ff ? -sim.cfg.flying_focus.kappa() * s1 : 0.0;
-  const double cph = cos(kph), sph = sin(kph);
+  FFTab T;
+  if (ff) {
+    for (const auto& t : sim.ffTerms) {
+      const int k = T.nt++;
+      const double ph = -sim.cfg.flying_focus.comps[t.comp].kappa() * s1;
+      T.m[k] = t.m; T.conj[k] = t.conj; T.w[k] = t.w; T.rps[k] = t.rps; T.c[k] = cos(ph); T.s[k] = sin(ph);
+      T.of[k] = t.comp * sim.ffStrideF; T.oc[k] = t.comp * sim.ffStrideC;
+    }
+  }
   const bool hinc = sim.hasIncident;
   const int iaF = sim.iaF, iaC = sim.iaC, nLF = sim.nLF, nLC = sim.nLC;
   const cplx* iF = hinc ? E.incF.data() : nullptr;
@@ -1889,30 +2393,32 @@ void Engine::absorbSlices(int n0, int n1, double s1, bool keep) {
     cplx* pv = pre ? pre + size_t(nn - fn0) * pw + size_t(m) * pm : nullptr;
     if (pv && i >= kF) pv[i - kF] = fn.Rr[fn.f(m, nn, i)];
     if (pv && i < N && i >= kC) pv[size_t(N + 1 - kF) + i - kC] = fn.Rp[fn.c(m, nn, i)];
+    // incident field of the flying focus in mode m: R_r += w Y, R_phi += i rps w Y, Y = G e^{-i kappa s1} or conj
+    auto ffInc = [&](const cplx* G, bool face) {
+      cplx inc;
+      for (int k = 0; k < T.nt; ++k) {
+        if (T.m[k] != m) continue;
+        const cplx Gv = face ? G[T.of[k] + size_t(nn - ffN0) * (N + 1) + i] : G[T.oc[k] + size_t(nn - ffN0) * N + i];
+        const cplx U(Gv.re * T.c[k] - Gv.im * T.s[k], Gv.re * T.s[k] + Gv.im * T.c[k]);
+        const cplx Y = T.conj[k] ? cplx(U.re, -U.im) : U;
+        inc += face ? T.w[k] * Y : cplx(-T.rps[k] * T.w[k] * Y.im, T.rps[k] * T.w[k] * Y.re);
+      }
+      return inc;
+    };
     const double df = dmp(g.rho[i]);
     if (df < 1.0) {
-      double inc = 0.0;
-      if (ff && m == 1) { const cplx G = Gf[size_t(nn - ffN0) * (N + 1) + i]; inc = G.re * cph - G.im * sph; }
+      cplx c = ff ? ffInc(Gf, true) : cplx();
+      if (hinc && i >= iaF) c += iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
       const cplx R = fn.Rr[fn.f(m, nn, i)];
-      if (hinc && i >= iaF) {
-        const cplx c = cplx(inc, 0.0) + iF[(size_t(m) * nInc + nn - nLo) * nLF + i - iaF];
-        fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
-      } else {
-        fn.Rr[fn.f(m, nn, i)] = cplx(inc + df * (R.re - inc), df * R.im);
-      }
+      fn.Rr[fn.f(m, nn, i)] = cplx(c.re + df * (R.re - c.re), c.im + df * (R.im - c.im));
     }
     if (i < N) {
       const double dc = dmp(g.c[i]);
       if (dc < 1.0) {
-        double inc = 0.0;  // incident R_phi,1 = i inc
-        if (ff && m == 1) { const cplx G = Gc[size_t(nn - ffN0) * N + i]; inc = G.re * cph - G.im * sph; }
+        cplx c = ff ? ffInc(Gc, false) : cplx();
+        if (hinc && i >= iaC) c += iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
         const cplx R = fn.Rp[fn.c(m, nn, i)];
-        if (hinc && i >= iaC) {
-          const cplx c = cplx(0.0, inc) + iC[(size_t(m) * nInc + nn - nLo) * nLC + i - iaC];
-          fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
-        } else {
-          fn.Rp[fn.c(m, nn, i)] = cplx(dc * R.re, inc + dc * (R.im - inc));
-        }
+        fn.Rp[fn.c(m, nn, i)] = cplx(c.re + dc * (R.re - c.re), c.im + dc * (R.im - c.im));
       }
     }
   });
@@ -2117,6 +2623,7 @@ void Engine::pushBeams(std::vector<Particle>& ps, double lowZ, double wMean, std
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;  const Params P = E.P;
   const size_t n = ps.size();
   cont.assign(n, 0);
@@ -2176,6 +2683,59 @@ bool Engine::preAbsorber(int n, std::vector<cd>& out) {
   return true;
 }
 
+void Engine::putPreAbsorber(int n, const std::vector<cd>& v) {
+  EngineState& E = *st;
+  const size_t j = size_t(n - E.fn0);
+  if (n < E.fn0 || j >= E.preHave.size() || v.size() != E.preW) return;
+  par::upload(E.preAbs.data() + j * E.preW, reinterpret_cast<const cplx*>(v.data()), E.preW);
+  E.preHave[j] = 1;
+}
+
+void Engine::swapPreAbsorber() {
+  using namespace dev;
+  EngineState& E = *st;
+  std::vector<int> idx;
+  for (size_t j = 0; j < E.preHave.size(); ++j)
+    if (E.preHave[j]) idx.push_back(E.fn0 + int(j));
+  if (idx.empty()) return;
+  E.preIdx.assign(idx.data(), idx.size());
+  const int M = sim.M, N = sim.g.N, kF = E.preF, kC = E.preC, fn0 = E.fn0;
+  const size_t pw = E.preW, pm = size_t(N + 1 - kF) + size_t(N - kC);
+  const FieldsV fo = E.fview(E.iold);
+  cplx* pre = E.preAbs.data();
+  const int* id = E.preIdx.data();
+  par::forN(long(idx.size()) * (M + 1) * (N + 1), GEM_LAMBDA(long q) {
+    const int i = int(q % (N + 1));
+    const long t = q / (N + 1);
+    const int m = int(t % (M + 1)), nn = id[t / (M + 1)];
+    cplx* pv = pre + size_t(nn - fn0) * pw + size_t(m) * pm;
+    if (i >= kF) {
+      const cplx x = pv[i - kF];
+      pv[i - kF] = fo.Rr[fo.f(m, nn, i)];
+      fo.Rr[fo.f(m, nn, i)] = x;
+    }
+    if (i < N && i >= kC) {
+      const cplx x = pv[size_t(N + 1 - kF) + i - kC];
+      pv[size_t(N + 1 - kF) + i - kC] = fo.Rp[fo.c(m, nn, i)];
+      fo.Rp[fo.c(m, nn, i)] = x;
+    }
+  });
+}
+
+void Engine::dielJ(int n, std::vector<cd>& out) {
+  EngineState& E = *st;
+  const size_t npf = size_t(sim.M + 1) * (sim.g.N + 1), npc = size_t(sim.M + 1) * sim.g.N;
+  std::vector<cplx> h(2 * (npf + npc));
+  const int p = n & 1;
+  const cplx* J = E.dielJ.data();
+  par::download(h.data(), J + p * npf, npf);
+  par::download(h.data() + npf, J + 2 * npf + p * npc, npc);
+  par::download(h.data() + npf + npc, J + 2 * npf + 2 * npc + p * npf, npf);
+  par::download(h.data() + 2 * npf + npc, J + 4 * npf + 2 * npc + p * npc, npc);
+  out.resize(h.size());
+  for (size_t i = 0; i < h.size(); ++i) out[i] = cd(h[i].re, h[i].im);
+}
+
 void Engine::marchBlock(const BlockMarch& bm) {
   using namespace dev;
   EngineState& E = *st;
@@ -2184,9 +2744,12 @@ void Engine::marchBlock(const BlockMarch& bm) {
   E.P.Delta = sim.Delta;
   E.P.trapExtra = (sim.cfg.numerics.trap_advance - 1.0) * sim.Delta;
   E.P.trapGamma = sim.cfg.numerics.trap_gamma;
+  E.P.rWall = sim.rWall;
   E.P.theta = sim.cfg.numerics.theta;
   if (sim.solver.version() != E.triVersion) E.uploadMatrices(sim.solver, M);
+  E.uploadDiel(sim.solver, M);
   E.prof.start();
+  extendWall();
   E.Cs[1 - E.iold].zero();
   par::zero(E.freed.data(), E.freed.capacity());
   // streaming particles (received, fresh, waiting) and the room for freed electrons
@@ -2238,7 +2801,22 @@ void Engine::marchBlock(const BlockMarch& bm) {
     E.preAbs.reserve(size_t(E.fns) * E.preW);
     E.preHave.assign(size_t(E.fns), 0);
   }
-  march(MarchSpec{bm.b - 1, bm.a, bm.s1, streamCap, bornCap, &bm, belowR, belowP});
+  MarchSpec ms{bm.b - 1, bm.a, bm.s1, streamCap, bornCap, &bm, belowR, belowP};
+  if (bm.dFrontR && sim.cfg.numerics.predictor == 1) {
+    E.frontDR.assign(reinterpret_cast<const cplx*>(bm.dFrontR->data()), npf);
+    E.frontDP.assign(reinterpret_cast<const cplx*>(bm.dFrontP->data()), npc);
+    ms.frontDR = E.frontDR.data();
+    ms.frontDP = E.frontDP.data();
+  }
+  if (sim.bound.on) {  // the host set the densities and the atoms at slice b (PipelineRun::step)
+    E.sim_bound_sp = sim.cfg.bound.ionIndex;
+    E.uploadBound(sim.bound, M, N);
+  }
+  march(ms);
+  if (sim.bound.on) {  // the atoms at slice a for the rear rank, diagnostics of the rear of the window
+    E.downloadBound(sim.bound);
+    if (bm.a == 0) sim.bound.diagRear(sim.bound.st1);
+  }
   if (bm.absorbFirst) absorbSlices(bm.a, bm.a + 1, bm.s1, keep);
   // results for the host
   E.pullCounters();
@@ -2253,6 +2831,25 @@ void Engine::marchBlock(const BlockMarch& bm) {
   par::download(reinterpret_cast<cplx*>(sim.predPprev.data()), E.predP[1 - E.ip].data(), npc);
   if (!sim.freedCharge.empty()) par::download(sim.freedCharge.data(), E.freed.data(), sim.freedCharge.size());
 }
+// the wall moved outwards past faces: the field at the old wall continues into the opened annulus of level s^0
+// (Simulation::extendWall)
+void Engine::extendWall() {
+  if (sim.wallFrom < 0) return;
+  EngineState& E = *st;
+  const dev::FieldsV fo = E.fview(E.iold);
+  const int K0 = sim.wallFrom, K1 = sim.solver.wallK(), ns = fo.ns;
+  par::forN(long(sim.M + 1) * ns, GEM_LAMBDA(long col) {
+    const int m = int(col / ns), n = fo.n0 + int(col % ns);
+    for (int i = K0 + 1; i <= K1; ++i) {
+      fo.Rr[fo.f(m, n, i)] = fo.Rr[fo.f(m, n, K0)];
+      fo.Lr[fo.f(m, n, i)] = fo.Lr[fo.f(m, n, K0)];
+      fo.Bz[fo.f(m, n, i)] = fo.Bz[fo.f(m, n, K0)];
+      fo.Ez[fo.c(m, n, i)] = fo.Ez[fo.c(m, n, K0)];
+    }
+  });
+  par::fence();
+}
+
 // ----------------------------------------------------------------------------
 void Engine::downloadFull() {
   download();

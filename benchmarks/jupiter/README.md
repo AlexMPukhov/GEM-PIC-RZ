@@ -90,6 +90,71 @@ sh benchmarks/jupiter/collect.sh                 # the table, when the jobs are 
 
 That is at most about 100 GPU-hours, plus 4 node-hours for the CPU reference. The real times should be much shorter. The `done:` lines give them.
 
+## Results on JUPITER (Thomas Wilson, 2026-10-26; `results_2026-10-26/`)
+
+**Correctness.** All 35 ctests of the GPU build pass. The regression, FEL (mean-field push, beam across the blocks)
+and flying-focus decks on 1, 2 and 4 GPUs equal the serial code (0 failed comparisons). The planar undulator at
+λ_u/16 on 4 GPUs gives ε_nx = 0.0067 µm, as serially.
+
+**Strong scaling** (s per step; speed-up and efficiency against the pipelined step on 1 GH200; "pipeline" is the
+ideal N/(N + P − 1)):
+
+| GPUs | LWFA (`lwfa_heavy`, 200 steps) | speed-up | eff. | pipeline | FEL (400 steps) | speed-up | eff. | pipeline |
+|---|---|---|---|---|---|---|---|---|
+| 1 (engine, no pipeline) | 0.366 | 1.02 | | | 1.894 | 1.14 | | |
+| 1 | 0.371 | 1 | 100 % | 100 % | 2.151 | 1 | 100 % | 100 % |
+| 4 | 0.105 | 3.5 | 88 % | 99 % | 0.842 | 2.6 | 64 % | 99 % |
+| 16 | 0.035 | 10.6 | 66 % | 93 % | 0.284 | 7.6 | 47 % | 96 % |
+| 64 | 0.020 | 18.1 | 28 % | 76 % | 0.112 | 19.2 | 30 % | 86 % |
+| CPU node, 4 × 72 cores | 0.273 | 1.36 | | | 1.166 | 1.84 | | |
+
+Reading:
+- One GH200 node (4 GPUs) is 2.6× (LWFA) and 1.4× (FEL) faster than one CPU node.
+- **The GPU part scales ideally.** The `engine profile` of rank 0 (the march on the GPU) is 609 / 150 / 38 / 9.4 s
+  for FEL and 73 / 18.3 / 4.7 / 1.18 s for LWFA on 1 / 4 / 16 / 64 GPUs, i.e. exactly 1/P. All the losses are
+  outside the march: wall minus engine time is 251 / 187 / 75 / 35 s (FEL) and 1 / 2.7 / 2.3 / 2.9 s (LWFA).
+- **Why the host part hurts more than its share.** Rank r can start step k only after rank r+1 has finished it, and
+  rank r+1 can start step k+1 only after rank r has marched the first slices of step k (the ghosts). In the steady
+  state a step therefore takes the time of a whole step **plus** everything a rank does before its first slices:
+  receiving the messages, the mean-field second push, the per-step diagnostics, the beam push, the uploads of the
+  whole block. On one GPU this prefix counts once, with several GPUs twice. It is largest for the FEL deck (640 000
+  beam particles on the ranks that hold the beam, the per-step FEL diagnostics of 18 372 slices on the host).
+- Rank 0 receives the FEL slice tables of every rank every step (5 MB per rank, mostly zeros outside its block).
+- At 64 GPUs the LWFA window (1200 slices) leaves about 19 slices per rank: strong scaling ends there. A weak-scaling
+  series (window or step count growing with the GPU count) would be the fairer test of large runs.
+
+## Round 2 (2026-10-26, branch `device-resident`): what changed, what to run
+
+Changes against the code of the first series (results bit-identical in the emulation build, 1–4 ranks):
+- **Level s⁰ and its currents stay on the GPU** between the steps. The host uploads only the ghost slices it
+  receives from the rank behind; the mean-field push swaps the pre-absorber values of the absorber layer on the
+  GPU instead of uploading the whole block twice. Per step and rank this removes three whole-block uploads (fields
+  of s⁰, beam and plasma currents of s⁰), two more with the mean-field push.
+- **The per-step diagnostics run on a host thread** while the GPU marches the next step (they read the host copy of
+  the previous level, which the step does not change), and rank 0 writes the tables of step k after its step k+1.
+  Output and checkpoint steps stay synchronous. The diagnostics are no longer in the prefix described above.
+- **The FEL slice tables go to rank 0 as the non-zero range of each rank** (the slices of its block).
+- **`GEMPIC_PROFILE=1` prints a `pipeline profile`** on rank 0: wait (messages), beam push+current, upload, march,
+  download, messages/swap, diagnostics+output, finite check, mean phase; rank 0 and the maximum over the ranks.
+  The line after it gives the **time per step after the pipeline has filled** (rank 0), the number that matters
+  for long runs; `scaling.sbatch` stores it as column 9 of `scaling.txt`, `collect.sh` lists it.
+- **Weak scaling:** `submit_weak.sh` (`weak.sbatch`): the LWFA deck with 1200 slices per GPU (window × P, laser
+  at the same distance from the front), 200 steps, 1 / 4 / 16 / 64 GPUs, each ≤ 10 min. `collect.sh` prints the
+  table (efficiency = time per step after the fill on 1 GPU / on P GPUs).
+
+To run (after `git pull` and `sh benchmarks/jupiter/build.sh`):
+
+```
+sbatch --account=<project> benchmarks/jupiter/check.sbatch      # correctness first, as before
+NO_CPU=1 sh benchmarks/jupiter/submit_scaling.sh                # strong scaling again (without the CPU reference)
+sh benchmarks/jupiter/submit_weak.sh                             # weak scaling, 1 / 4 / 16 / 64 GPUs
+sh benchmarks/jupiter/collect.sh
+```
+
+Send back the check log, `collect.sh` output, `runs/scaling.txt`, `runs/weak.txt`, and from every
+`runs/scale_*/*.log` and `runs/weak_*/lwfa.log` the last lines (`engine profile`, `pipeline profile`, `pipeline: ...
+per step`): `tail -n 5 runs/*/*.log`.
+
 ## What to send back
 
 - `gempic-check.<job>.log`, and if a comparison failed, the directory `benchmarks/jupiter/runs/check.<job>`.
@@ -99,11 +164,10 @@ That is at most about 100 GPU-hours, plus 4 node-hours for the CPU reference. Th
 
 ## Known limits of this version
 
-- **Copies between CPU and GPU every step, for every rank:**
-  - level s⁰ and the currents of the block go up;
-  - level s¹ and the currents come down;
+- **Copies between CPU and GPU every step, for every rank** (since round 2 only downwards for the fields):
+  - level s¹ and the currents come down after the march (diagnostics, messages, output);
   - the beam list goes up and down for the push.
 
-  On GH200 (NVLink-C2C) this is cheap; on A100 (PCIe) it costs more. The profile shows it, and milestone 5e will reduce it.
+  The `pipeline profile` shows their cost (upload / download / beam push).
 - **MPI messages go through the host.** CUDA-aware MPI is not used yet.
 - **One GPU per rank.** The rank picks its GPU from `SLURM_LOCALID`, or uses the single GPU it sees with `--gpus-per-task=1`.

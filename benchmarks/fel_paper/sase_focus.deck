@@ -1,0 +1,48 @@
+# Helical SASE FEL to saturation with a focusing channel, FEL paper (Sec. "High-gain amplifiers", SASE).
+# Beam and undulator as examples/fel_sase.deck (gamma 1000, 4 kA, sigma_r 10 um, K = 1, period 1 cm,
+# lambda_r = 10 nm, rho = 9e-3, Ming Xie gain length 6.4 cm, 2 pi L_c = 0.55 um), but
+#  - shot noise of the real electrons: Fawley beamlets (shot_noise = fawley, beamlet = 4);
+#  - an 8 um flat top (14 x 2 pi L_c), 4 kA -> 106.74 pC; 180 periods;
+#  - a uniform focusing channel (plasma_lens: B_phi = -G r, both planes) against the transverse space charge.
+#    The rms envelope balance of a round cold beam, k_beta^2 = K_p / (4 sigma^2) with the perveance
+#    K_p = 2 I / (I_A gamma^3), gives G = 2.0 T/m at 10 um; a scan over 0.5 m (G = 1.6, 2.0, 2.4 T/m) keeps
+#    sigma_r within 1 % for G = 2.4 T/m, used here. The helical undulator has no natural focusing.
+# The wall at r_max = 1.5 mm < gamma L shields the space charge like a pipe.
+# Random loading (noise of the macroparticles, 541 times the shot noise) was run with
+#   gempic_rz sase_focus.deck bunch.shot_noise=random undulator.periods=150 grid.z_end=1.5m plasma_lens.length=1.5m \
+#             grid.window_length=15.4um bunch.zeta_center=8.5um
+# (it saturates at 1.15 m, before the end of the 150 periods).
+grid {
+  lambda0       = 10 nm
+  m_max         = 1
+  radial_grid   = table
+  r_points      = 0, 40, 400, 1500 um
+  dr_points     = 1, 1,  20,  50   um
+  r_max         = 1.5 mm
+  dzeta         = 0.625 nm          # 16 slices per lambda_r
+  window_length = 15.6 um           # space-charge gaps of >= 2.83 um at both ends after the slippage
+  dz            = 0.625 mm          # 16 steps per period
+  z_end         = 1.8 m
+  r_absorber    = 3 mm              # off
+}
+undulator { type = helical; period = 1 cm; K = 1; periods = 180; ramp_periods = 1 }
+plasma_lens { z_start = 0 m; length = 1.8 m; gradient = 2.4 T/m }
+bunch {
+  name             = b
+  charge           = 106.74 pC      # 4 kA over 8 um
+  gamma            = 1000
+  sigma_x          = 10 um
+  emittance_x      = 0 um
+  distribution_z   = flattop
+  length           = 8 um
+  zeta_center      = 8.7 um
+  macroparticles   = 1232000
+  shot_noise       = fawley
+  noise_wavelength = 10 nm
+  beamlet          = 4
+}
+output {
+  dir = out; format = hdf5; particles = false; fel_slice = 0.2 um; every = 160
+  checkpoint_every = 400; checkpoint_keep = 1
+}
+numerics { iterations = 1; beam_dz_max = 0.625 mm; beam_filter = 0; beam_pusher = vay; backend = openmp }

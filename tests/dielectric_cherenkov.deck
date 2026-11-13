@@ -1,0 +1,16 @@
+# Cherenkov radiation in an open dielectric (tests/dielectric.sh): a short 5 GeV electron bunch enters a uniform
+# eps = 2 medium at z = 20 um. The radiation of a v = c charge is stationary in the window and lies on the cone
+# zeta = zeta_b - r sqrt(eps - 1) (cos theta = 1/n, here 45 degrees). The medium fills a metal tube of 100 um radius;
+# the cone reflected at the wall returns far behind the direct one (tests/dielectric.py looks only ahead of it).
+grid {
+  lambda0 = 0.8 um;  m_max = 0
+  radial_grid = uniform;  dr = 0.5 um;  r_max = 102 um
+  dzeta = 0.25 um;  window_length = 150 um
+  dz = 10 um;  z_end = 220 um
+}
+wall { radius = 100 um }
+dielectric { epsilon = 2; z_start = 20 um }
+bunch { name = driver; charge = 10 pC; energy = 5 GeV; sigma_x = 2 um; sigma_z = 3 um; zeta_center = 140 um
+        macroparticles = 100000; azimuthal_copies = 8 }
+output { dir = cherenkov; every = 22; format = text; particles = false; map_stride = 1 }
+numerics { backend = serial }

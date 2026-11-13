@@ -45,6 +45,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <future>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -61,7 +62,7 @@
 namespace gem {
 
 namespace {
-enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103, TAG_BLOCK = 104 };
+enum { TAG_F = 101, TAG_R = 102, TAG_DIAG = 103, TAG_BLOCK = 104, TAG_SYNC = 106, TAG_GHOST = 107 };
 constexpr int MIN_SLICES = 4;  // per rank without beam filter (the R message needs 3 processed slices)
 // beam_field = mean: tag of a beam particle of s^0 in Particle::id (streaming ids stay below 2^63)
 constexpr unsigned long long TAG_BIT = 1ULL << 63;
@@ -86,6 +87,9 @@ class PipelineRun {
   // particles from the neighbours for the current step
   std::vector<Particle> halo, inContinue, inFinished, inTransfer;
   std::vector<cd> predRfront, predPfront;  // prediction of the front rank at slice b
+  std::vector<cd> dielFront;               // dielectric: the front rank's running polarization currents at slice b
+  std::vector<double> boundFront;          // bound electrons: the front rank's medium state at slice b (both levels)
+  std::vector<cd> dFrontR, dFrontP;  // numerics.predictor = zeta: the front rank's j^1 - j^0 (streaming) at half-cell b
   Currents H;                              // currents of the halo copies (half-cells below a)
   Currents Tr;                             // trapped deposits of the front rank into b-1, b-2
   Currents Rw;                             // raw beam current of the front rank, half-cells b ... b+pf-1
@@ -97,6 +101,25 @@ class PipelineRun {
   long baseRestreamed = 0, baseTrapped = 0;
   std::chrono::steady_clock::time_point t0;
   int stepsDone = 0;
+  // host-side profile of the pipelined step (GEMPIC_PROFILE=1): wall time per phase, printed by rank 0 (own and
+  // maximum over the ranks)
+  struct Prof {
+    enum { WAIT, BEAM, UP, MARCH, DOWN, MSG, DIAG, CHECK, MEAN, COUNT };
+    bool on = false;
+    double t[COUNT] = {};
+    std::chrono::steady_clock::time_point last;
+    void start() { if (on) last = std::chrono::steady_clock::now(); }
+    void stop(int k) {
+      if (!on) return;
+      const auto now = std::chrono::steady_clock::now();
+      t[k] += std::chrono::duration<double>(now - last).count();
+      last = now;
+    }
+  } prof;
+  // rank 0: end of its first and last step (the time per step after the pipeline has filled)
+  std::chrono::steady_clock::time_point tFirst, tLast;
+  int nTimed = 0;
+  void reportProfile();
 
   // ---- numerics.beam_field = mean (see the header): state kept from step k for its mean phase
   bool mean = false;
@@ -131,6 +154,10 @@ class PipelineRun {
   void meanPhase(Buffer* F);
   // numerics.backend = cuda (or GEMPIC_PIPELINE_ENGINE=1, testing): the march of the block on the device
   std::unique_ptr<Engine> eng;
+  // the device holds level s^0 and the currents of s^0 between the steps (after the first step): only what the
+  // host changes is uploaded (recvRear: the ghosts below the block), the mean phase swaps the pre-absorber values
+  // on the device
+  bool devSynced = false;
   void deviceMarch(int k, double s1, std::vector<Particle>& newForFront, std::vector<Particle>& transferDown);
   void deviceBeamCurrent(Engine::Curr C, const std::vector<Particle>& depB, const std::vector<Particle>& depH,
                          bool meanPhase);
@@ -156,13 +183,39 @@ class PipelineRun {
   }
 
   void partition();
+  // events at the end of a step that act on the whole beam (thin chicanes, S.applyChicanes, and bunch.z_start,
+  // S.loadBunches): the pipeline is drained
+  // (all ranks at level s^K, as at the end of the run), the event is applied by all ranks together on the gathered
+  // beam list (the bunch self-fields are built block-wise, as at the start), the ghosts are taken from their owners
+  // and the pipeline starts again as after a restart from a checkpoint of step K
+  bool eventIn(double za, double zb) const;
+  void drain(int K);
+  void syncEvent(int K, double za, double zb);
+  void exchangeGhosts();
   void step(Buffer& F);
   void filterRaw(Currents& C, bool belowIntoC);
   void filterBeam();
   void sendFront(int k, const std::vector<Particle>& newForFront);
   void recvRear();
-  void sendDiag(int k);
-  void reportStep(int k);
+  // diagnostics of a level: with the device march (eng) computed by a host thread while the next step runs (the
+  // host copy of level s^0 does not change during the step), then sent / reported after that step; output and
+  // checkpoint steps synchronously. The finite check of the block goes with it.
+  struct DiagJob {
+    bool on = false, ready = false, ok = true;
+    int step = 0, stepNo = 0;
+    double s0 = 0;
+    long long re = 0, tr = 0;
+    std::vector<Particle> beam;
+    std::vector<double> freed;
+    std::vector<std::vector<double>> exitStates;
+    std::future<std::pair<DiagSums, bool>> f;
+    DiagSums D;
+  } dj;
+  void dueDiag(int j);  // the diagnostics of level j (the current state)
+  void joinDiag();      // wait for a running computation (before level s^0 of the host changes)
+  void finishDiag();    // send / report a computed one
+  void sendDiag(int k, const DiagJob* job = nullptr);
+  void reportStep(int k, const DiagJob* job = nullptr);
   bool finiteOwn() const;
   void absorbSlice(Fields& F, int n, double s) const;
 
@@ -179,13 +232,20 @@ class PipelineRun {
     for (auto* v : {&F.Rp, &F.Lp, &F.Ez})
       for (int m = 0; m <= S.M; ++m) B.getRaw(&(*v)[F.c(m, n, 0)], sizeof(cd) * S.g.N);
   }
+  // the corrected R of a slice (dielectric: and L, which the correction changes as well)
   void putSliceR(Buffer& B, const Fields& F, int n) const {
     for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Rr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
     for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Rp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
+    if (!S.solver.dielectric()) return;
+    for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Lr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
+    for (int m = 0; m <= S.M; ++m) B.putRaw(&F.Lp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
   }
   void getSliceR(Buffer& B, Fields& F, int n) {
     for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Rr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
     for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Rp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
+    if (!S.solver.dielectric()) return;
+    for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Lr[F.f(m, n, 0)], sizeof(cd) * (S.g.N + 1));
+    for (int m = 0; m <= S.M; ++m) B.getRaw(&F.Lp[F.c(m, n, 0)], sizeof(cd) * S.g.N);
   }
   void putHalf(Buffer& B, const Currents& C, int k) const {
     const int N = S.g.N;
@@ -248,39 +308,59 @@ class PipelineRun {
     for (int m = 0; m <= S.M; ++m) B.getRaw(&C.jp[C.c(m, k0, 0)], sizeof(cd) * nc);
     for (int m = 0; m <= S.M; ++m) B.getRaw(&C.jz[C.c(m, k0, 0)], sizeof(cd) * nc);
   }
+  // the slice tables of the FEL diagnostics have the length of the window, but a rank fills only the slices of
+  // its block: sent as length, offset and the range between the first and the last non-zero entry
+  static void putSparse(Buffer& B, const std::vector<double>& v) {
+    size_t lo = 0, hi = v.size();
+    while (lo < hi && v[lo] == 0.0) ++lo;
+    while (hi > lo && v[hi - 1] == 0.0) --hi;
+    B.put<unsigned long long>(v.size());
+    B.put<unsigned long long>(lo);
+    B.put<unsigned long long>(hi - lo);
+    if (hi > lo) B.putRaw(&v[lo], sizeof(double) * (hi - lo));
+  }
+  static void addSparse(Buffer& B, std::vector<double>& v) {  // v += the sent vector (DiagSums::add)
+    const size_t n = size_t(B.get<unsigned long long>()), lo = size_t(B.get<unsigned long long>()),
+                 c = size_t(B.get<unsigned long long>());
+    if (v.size() < n) v.resize(n, 0.0);
+    std::vector<double> t(c);
+    if (c) B.getRaw(t.data(), sizeof(double) * c);
+    for (size_t j = 0; j < c; ++j) v[lo + j] += t[j];
+  }
   static void putDiag(Buffer& B, const DiagSums& D) {
     B.put(D.maxEx); B.put(D.minEz); B.put(D.maxEz); B.put(D.nimax);
     B.put<unsigned long long>(D.moments.size());
     for (const auto& kv : D.moments) { B.put(kv.first); B.put(kv.second); }
     B.putVec(D.freed);
     B.put(D.Wrad); B.put(D.W0); B.put(D.Pmax); B.put(D.zPmax);
-    B.putVec(D.pslices);
-    B.putVec(D.rslices);
-    B.putVec(D.hslices);
-    B.putVec(D.hbunch);
+    putSparse(B, D.pslices);
+    putSparse(B, D.rslices);
+    putSparse(B, D.hslices);
+    putSparse(B, D.hbunch);
     B.put<unsigned long long>(D.slices.size());
-    for (const auto& kv : D.slices) { B.put(kv.first); B.putVec(kv.second); }
+    for (const auto& kv : D.slices) { B.put(kv.first); putSparse(B, kv.second); }
   }
-  static DiagSums getDiag(Buffer& B) {
-    DiagSums D;
-    D.maxEx = B.get<double>(); D.minEz = B.get<double>(); D.maxEz = B.get<double>(); D.nimax = B.get<double>();
+  // D += the sums of another rank (DiagSums::add)
+  static void addDiag(Buffer& B, DiagSums& D) {
+    DiagSums o;
+    o.maxEx = B.get<double>(); o.minEz = B.get<double>(); o.maxEz = B.get<double>(); o.nimax = B.get<double>();
     const size_t n = size_t(B.get<unsigned long long>());
     for (size_t i = 0; i < n; ++i) {
       const int sp = B.get<int>();
-      D.moments[sp] = B.get<Moments>();
+      o.moments[sp] = B.get<Moments>();
     }
-    D.freed = B.getVec<double>();
-    D.Wrad = B.get<double>(); D.W0 = B.get<double>(); D.Pmax = B.get<double>(); D.zPmax = B.get<double>();
-    D.pslices = B.getVec<double>();
-    D.rslices = B.getVec<double>();
-    D.hslices = B.getVec<double>();
-    D.hbunch = B.getVec<double>();
+    o.freed = B.getVec<double>();
+    o.Wrad = B.get<double>(); o.W0 = B.get<double>(); o.Pmax = B.get<double>(); o.zPmax = B.get<double>();
+    D.add(o);
+    addSparse(B, D.pslices);
+    addSparse(B, D.rslices);
+    addSparse(B, D.hslices);
+    addSparse(B, D.hbunch);
     const size_t ns = size_t(B.get<unsigned long long>());
     for (size_t i = 0; i < ns; ++i) {
       const int sp = B.get<int>();
-      D.slices[sp] = B.getVec<double>();
+      addSparse(B, D.slices[sp]);
     }
-    return D;
   }
 };
 
@@ -298,9 +378,6 @@ StorageBlock pipelineBlock(const Config& cfg, int P, int r) {
     throw std::runtime_error("MPI: numerics.beam_smooth_length is not available with more than one rank yet");
   if (cfg.numerics.beam_consistent)
     throw std::runtime_error("MPI pipeline: numerics.beam_consistent is not available in the pipelined step yet");
-  for (const auto& B : cfg.bunches)
-    if (B.z_start > 0)
-      throw std::runtime_error("MPI pipeline: bunch.z_start > 0 (bunch '" + B.name + "') is not available yet");
   for (int q = 0; q < P; ++q) {
     const int lq = int((long long)Nz * q / P), hq = int((long long)Nz * (q + 1) / P);
     if (hq - lq < minSlices && P > 1)
@@ -390,14 +467,14 @@ void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
     for (int i = 0; i <= S.g.N; ++i) {
       const double d = damp(S.g.rho[i]);
       if (d == 1.0) continue;
-      const cd inc = ((ff && m == 1) ? cd(S.ffInc(true, n, i, s)) : cd(0.0)) + S.incidentF(m, n, i);
+      const cd inc = (ff ? S.ffInc(m, true, n, i, s) : cd(0.0)) + S.incidentF(m, n, i);
       cd& R = F.Rr[F.f(m, n, i)];
       R = inc + d * (R - inc);
     }
     for (int i = 0; i < S.g.N; ++i) {
       const double d = damp(S.g.c[i]);
       if (d == 1.0) continue;
-      const cd inc = ((ff && m == 1) ? cd(0.0, 1.0) * S.ffInc(false, n, i, s) : cd(0.0)) + S.incidentC(m, n, i);
+      const cd inc = (ff ? S.ffInc(m, false, n, i, s) : cd(0.0)) + S.incidentC(m, n, i);
       cd& R = F.Rp[F.c(m, n, i)];
       R = inc + d * (R - inc);
     }
@@ -474,7 +551,7 @@ void PipelineRun::beamPushSetup() {
 
 bool PipelineRun::pushBeamParticle(Particle& p, const Fields& F0, const Fields* F1, bool count) {
   const auto& num = S.cfg.numerics;
-  const double rmax = S.g.rho[S.g.N];
+  const double rmax = S.rWall;  // r_max, or the wall
   for (int sub = p.sub; sub < nsub && p.status == 0; ++sub) {
     if (p.zeta < lowZ) { p.sub = sub; return true; }
     double gm = gammaOf(p);
@@ -522,7 +599,9 @@ Buffer PipelineRun::recvFront(int k) {
 // ----------------------------------------------------------------------------
 void PipelineRun::step(Buffer& F) {
   const int N = S.g.N, M = S.M, Nz = S.Nz;
+  prof.start();
   S.beginStep();
+  S.extendWall(S.fold);  // metal wall moved outwards: the opened annulus (the device march does it on the device)
   const double Delta = S.Delta;
   const ZetaView& zv = S.zv;
   const double s1 = S.s0 + Delta;
@@ -551,8 +630,12 @@ void PipelineRun::step(Buffer& F) {
   if (r < P - 1) {
     Buffer& B = F;
     getSlice(B, S.fnew, b);
+    if (S.solver.dielectric()) dielFront = B.getVec<cd>();  // running J^0, J^1 at slice b
+    if (S.bound.on) boundFront = B.getVec<double>();          // bound electrons: atoms of both levels at slice b
     predRfront = B.getVec<cd>();
     predPfront = B.getVec<cd>();
+    dFrontR = B.getVec<cd>();
+    dFrontP = B.getVec<cd>();
     getHalf(B, S.c1b, b - 1, true);  // raw beam deposits of the front rank (filtered below)
     getHalf(B, S.c1b, b - 2, true);
     getHalf(B, Tr, b - 1, false);     // its trapped deposits (added after the filter)
@@ -571,7 +654,9 @@ void PipelineRun::step(Buffer& F) {
 
   // ---- beam push (fields of s^0; slices a-2 ... b are available)
   beamPushSetup();
-  if (eng) eng->putFields(0, sa, sb + 1);  // level s^0 on the device: the own block and the ghosts
+  prof.stop(Prof::MSG);
+  if (eng && !devSynced) eng->putFields(0, sa, sb + 1);  // level s^0 on the device: the block and the ghosts
+  prof.stop(Prof::UP);
   // returns true if the push must continue on the rank behind (zeta < lowZ)
   auto push = [&](Particle& p, bool count) { return pushBeamParticle(p, S.fold, nullptr, count); };
   std::vector<Particle> newBeam, handCont, handFin, transferDown;
@@ -699,8 +784,26 @@ void PipelineRun::step(Buffer& F) {
   // ---- zeta march over the own slices (numerics.backend = cuda: on the device, deviceMarch)
   std::vector<Particle> newForFront;
   int done = 0;
+  prof.stop(Prof::BEAM);
+  const bool diel = S.solver.dielectric();
+  if (diel && !eng) {  // running polarization currents: zero ahead of the window, else those of the front rank
+    if (r < P - 1) S.solver.dielSet(dielFront);
+    else S.solver.dielBegin();
+  }
+  if (S.bound.on) {  // bound electrons: atom densities of the levels; the atoms at slice b from the front rank
+    S.boundBegin(S.s0, s1);
+    if (r < P - 1) S.bound.setState(boundFront);
+  }
   if (eng) deviceMarch(k, s1, newForFront, transferDown);
   else for (int n = b - 1; n >= a; --n) {
+    if (diel)  // J^0 of slice n (Simulation::march)
+      for (int m = 0; m <= M; ++m) {
+        const Fields& fo = S.fold;
+        S.solver.dielLevel0(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Lr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)],
+                            &fo.Lp[fo.c(m, n, 0)], &fo.Rr[fo.f(m, n + 1, 0)], &fo.Lr[fo.f(m, n + 1, 0)],
+                            &fo.Rp[fo.c(m, n + 1, 0)], &fo.Lp[fo.c(m, n + 1, 0)]);
+      }
+    if (S.bound.on) S.bound.level0(n, zv.len(n), S.fold);  // J^0 of the bound electrons (Simulation::march)
     for (int m = 0; m <= M; ++m) {
       for (int i = 0; i <= N; ++i) {
         const cd c1 = (n == a && r > 0) ? predBelowR[m * (N + 1) + i]
@@ -735,6 +838,25 @@ void PipelineRun::step(Buffer& F) {
         }
       }
       S.smoothStream(S.c1s, n);
+      // numerics.predictor = zeta (Simulation::march); half-cell b: the change sent by the front rank
+      if (num.predictor == 1 && n > 0 && n + 1 < S.Nz) {
+        const bool own = n + 1 <= b - 1;
+        for (int m = 0; m <= M; ++m) {
+          for (int i = 0; i <= N; ++i) {
+            const int idx = m * (N + 1) + i;
+            const cd c1 = (n == a && r > 0) ? predBelowR[idx] : S.c1b.jr[S.c1b.f(m, n - 1, i)];
+            const cd d1 = own ? S.c1s.jr[S.c1s.f(m, n + 1, i)] - S.c0s.jr[S.c0s.f(m, n + 1, i)] : dFrontR[idx];
+            S.predR[idx] = c1 + S.c0s.jr[S.c0s.f(m, n - 1, i)] + 2.0 * (S.c1s.jr[S.c1s.f(m, n, i)] - S.c0s.jr[S.c0s.f(m, n, i)]) - d1;
+          }
+          for (int i = 0; i < N; ++i) {
+            const int idx = m * N + i;
+            const cd c1 = (n == a && r > 0) ? predBelowP[idx] : S.c1b.jp[S.c1b.c(m, n - 1, i)];
+            const cd d1 = own ? S.c1s.jp[S.c1s.c(m, n + 1, i)] - S.c0s.jp[S.c0s.c(m, n + 1, i)] : dFrontP[idx];
+            S.predP[idx] = c1 + S.c0s.jp[S.c0s.c(m, n - 1, i)] + 2.0 * (S.c1s.jp[S.c1s.c(m, n, i)] - S.c0s.jp[S.c0s.c(m, n, i)]) - d1;
+          }
+        }
+      }
+      if (S.bound.on) S.bound.level1(n, zv.len(n), S.fnew, false);  // medium current with the fields of this pass
       for (int m = 0; m <= M; ++m) {
         const int nm = (n > 0) ? n - 1 : 0;  // last slice: half-cell -1 := half-cell 0 (Simulation::step)
         const double wl = zv.wLo(n), wh = zv.wHi(n);
@@ -756,14 +878,45 @@ void PipelineRun::step(Buffer& F) {
           S.jp1[i] = S.c1b.jp[S.c1b.c(m, n, i)] + S.c1s.jp[S.c1s.c(m, n, i)];
           S.jz1[i] = S.c1b.jz[S.c1b.c(m, n, i)] + S.c1s.jz[S.c1s.c(m, n, i)];
         }
+        if (S.bound.on) {  // (Simulation::march)
+          const double th = S.cfg.numerics.theta;
+          for (int i = 0; i <= N; ++i) {
+            const size_t k = size_t(m) * (N + 1) + i;
+            S.Jr[i] += 4.0 * ((1.0 - th) * S.bound.J0r[k] + th * S.bound.J1r[k]);
+            S.jr1[i] += S.bound.Hr[k];
+          }
+          for (int i = 0; i < N; ++i) {
+            const size_t k = size_t(m) * N + i;
+            S.Jp[i] += 4.0 * ((1.0 - th) * S.bound.J0p[k] + th * S.bound.J1p[k]);
+            S.jp1[i] += S.bound.Hp[k];
+          }
+        }
         Fields& fo = S.fold;
         Fields& fn = S.fnew;
-        S.solver.solveSlice(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)], &fo.Ez[fo.c(m, n, 0)],
+        S.solver.solveSlice(m, n, &fo.Rr[fo.f(m, n, 0)], &fo.Lr[fo.f(m, n, 0)], &fo.Rp[fo.c(m, n, 0)], &fo.Ez[fo.c(m, n, 0)],
                             &fo.Bz[fo.f(m, n, 0)], &fn.Rr[fn.f(m, n + 1, 0)], &fn.Lr[fn.f(m, n + 1, 0)],
                             &fn.Rp[fn.c(m, n + 1, 0)], &fn.Lp[fn.c(m, n + 1, 0)], &fn.Ez[fn.c(m, n + 1, 0)],
                             &fn.Bz[fn.f(m, n + 1, 0)], S.jr1.data(), S.jp1.data(), S.jz1.data(), S.Jr.data(),
                             S.Jp.data(), &fn.Rr[fn.f(m, n, 0)], &fn.Lr[fn.f(m, n, 0)], &fn.Rp[fn.c(m, n, 0)],
                             &fn.Lp[fn.c(m, n, 0)], &fn.Ez[fn.c(m, n, 0)], &fn.Bz[fn.f(m, n, 0)]);
+      }
+    }
+    if (S.bound.on) {  // slice n is final: commit the atoms, correct R, L of slice n (Simulation::march)
+      const std::vector<cd> j1r = S.bound.J1r, j1p = S.bound.J1p, hr = S.bound.Hr, hp = S.bound.Hp;
+      S.bound.level1(n, zv.len(n), S.fnew, true);
+      const double qR = Delta * S.cfg.numerics.theta, qL = 0.5 * zv.len(n);
+      const int K = S.solver.wallK();
+      for (int m = 0; m <= M; ++m) {
+        for (int i = 1; i <= K; ++i) {
+          const size_t kk = size_t(m) * (N + 1) + i;
+          S.fnew.Rr[S.fnew.f(m, n, i)] -= qR * (S.bound.J1r[kk] - j1r[kk]);
+          S.fnew.Lr[S.fnew.f(m, n, i)] -= qL * (S.bound.Hr[kk] - hr[kk]);
+        }
+        for (int i = 0; i < K; ++i) {
+          const size_t kk = size_t(m) * N + i;
+          S.fnew.Rp[S.fnew.c(m, n, i)] -= qR * (S.bound.J1p[kk] - j1p[kk]);
+          S.fnew.Lp[S.fnew.c(m, n, i)] -= qL * (S.bound.Hp[kk] - hp[kk]);
+        }
       }
     }
     for (const auto& e : S.born) S.freedCharge[ionizedIndex(e.sp)] += e.w;
@@ -794,23 +947,42 @@ void PipelineRun::step(Buffer& F) {
                    S.stream.end());
     if (n + 1 <= Nz - 1) {
       const double q = 0.5 * S.cfg.numerics.theta * Delta * zv.wLo(n + 1);
+      const int K = S.solver.wallK();  // inside the wall: faces <= K, centres < K
       for (int m = 0; m <= M; ++m) {
-        for (int i = 1; i <= N; ++i) {
+        for (int i = 1; i <= K; ++i) {
           cd jt = S.c1b.jr[S.c1b.f(m, n, i)] + S.c1s.jr[S.c1s.f(m, n, i)];
+          if (diel) {  // (Simulation::march)
+            double fR, fL;
+            S.solver.dielCorrection(S.solver.classOf(n + 1), true, i, fR, fL);
+            const cd dP = -q * (jt - S.predRprev[m * (N + 1) + i]);
+            S.fnew.Rr[S.fnew.f(m, n + 1, i)] += fR * dP;
+            S.fnew.Lr[S.fnew.f(m, n + 1, i)] += fL * dP;
+            continue;
+          }
           S.fnew.Rr[S.fnew.f(m, n + 1, i)] -= q * (jt - S.predRprev[m * (N + 1) + i]);
         }
-        for (int i = 0; i < N; ++i) {
+        for (int i = 0; i < K; ++i) {
           cd jt = S.c1b.jp[S.c1b.c(m, n, i)] + S.c1s.jp[S.c1s.c(m, n, i)];
+          if (diel) {
+            double fR, fL;
+            S.solver.dielCorrection(S.solver.classOf(n + 1), false, i, fR, fL);
+            const cd dP = -q * (jt - S.predPprev[m * N + i]);
+            S.fnew.Rp[S.fnew.c(m, n + 1, i)] += fR * dP;
+            S.fnew.Lp[S.fnew.c(m, n + 1, i)] += fL * dP;
+            continue;
+          }
           S.fnew.Rp[S.fnew.c(m, n + 1, i)] -= q * (jt - S.predPprev[m * N + i]);
         }
       }
       absorb(n + 1, s1);  // slice n+1 is final
     }
+    if (diel) S.solver.dielNext();
     S.predRprev.swap(S.predR);
     S.predPprev.swap(S.predP);
     if (++done == pf + 3 && r < P - 1) sendFront(k, newForFront);
   }
   if (r == 0 && !eng) absorb(0, s1);
+  if (!eng) prof.stop(Prof::MARCH);
   for (auto& v : S.exitStates) std::fill(v.begin(), v.end(), 0.0);
   if (r == 0)
     for (const auto& p : S.stream)
@@ -837,8 +1009,42 @@ void PipelineRun::step(Buffer& F) {
       if (meanReady) B.putRaw(meanOut.data.data(), meanOut.data.size());
     }
     putSlice(B, S.fnew, a);
+    if (S.solver.dielectric()) {  // running J^0, J^1 at slice a for the march of the rear rank
+      std::vector<cd> J;
+      if (eng) eng->dielJ(a, J);
+      else S.solver.dielGet(J);
+      B.putVec(J);
+    }
+    if (S.bound.on) {  // the atoms of both levels at slice a for the march of the rear rank
+      std::vector<double> st;
+      S.bound.getState(st);
+      B.putVec(st);
+    }
     B.putVec(S.predRprev);  // = prediction made at slice a
     B.putVec(S.predPprev);
+    {  // numerics.predictor = zeta: j^1 - j^0 of the streaming current at half-cell a (the rear rank's slice a - 1)
+      std::vector<cd> d1r, d1p, d0r, d0p;
+      if (eng) {
+        eng->getHalfJ(Engine::C1S, a, d1r, d1p);
+        eng->getHalfJ(Engine::C0S, a, d0r, d0p);
+      } else {
+        d1r.resize(S.predR.size()); d1p.resize(S.predP.size()); d0r = d1r; d0p = d1p;
+        for (int m = 0; m <= M; ++m) {
+          for (int i = 0; i <= N; ++i) {
+            d1r[m * (N + 1) + i] = S.c1s.jr[S.c1s.f(m, a, i)];
+            d0r[m * (N + 1) + i] = S.c0s.jr[S.c0s.f(m, a, i)];
+          }
+          for (int i = 0; i < N; ++i) {
+            d1p[m * N + i] = S.c1s.jp[S.c1s.c(m, a, i)];
+            d0p[m * N + i] = S.c0s.jp[S.c0s.c(m, a, i)];
+          }
+        }
+      }
+      for (size_t i = 0; i < d1r.size(); ++i) d1r[i] -= d0r[i];
+      for (size_t i = 0; i < d1p.size(); ++i) d1p[i] -= d0p[i];
+      B.putVec(d1r);
+      B.putVec(d1p);
+    }
     putHalf(B, Snap, a - 1);  // raw beam deposits below the block
     putHalf(B, Snap, a - 2);
     putHalf(B, S.c1b, a - 1);  // deposits of the particles trapped here (c1b below a was reset after the filter)
@@ -850,12 +1056,14 @@ void PipelineRun::step(Buffer& F) {
     B.putVec(transferDown);
     comm::send(r - 1, TAG_F, std::move(B));
   }
+  joinDiag();  // the diagnostics of level s^0, computed meanwhile
   std::swap(S.fold, S.fnew);
   std::swap(S.c0b, S.c1b);
   std::swap(S.c0s, S.c1s);
-  if (eng) eng->swapLevels();
+  if (eng) { eng->swapLevels(); devSynced = true; }
   S.s0 = s1;
   ++S.step_no;
+  prof.stop(Prof::MSG);
 }
 
 // numerics.backend = cuda: the beam current of s^1 on the device (filterBeam): the deposits of the own beam
@@ -899,8 +1107,11 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   const int N = S.g.N;
   // (level s^0 and the beam current c1b are on the device since the beam push)
   eng->putFields(1, b, b + 1);
-  eng->putCurrents(Engine::C0B, sa, sb);
-  eng->putCurrents(Engine::C0S, sa, sb);
+  if (!devSynced) {
+    eng->putCurrents(Engine::C0B, sa, sb);
+    eng->putCurrents(Engine::C0S, sa, sb);
+  }
+  prof.stop(Prof::UP);
   size_t routed = 0;
   auto route = [&]() {  // trapped particles (fast ones, already deposited into c1b on the device)
     for (const Particle& t : eng->trapped(routed)) {
@@ -922,7 +1133,11 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   bm.b = b;
   bm.s1 = s1;
   if (r > 0) { bm.predBelowR = &predBelowR; bm.predBelowP = &predBelowP; }
-  if (r < P - 1) { bm.predFrontR = &predRfront; bm.predFrontP = &predPfront; }
+  if (r < P - 1) {
+    bm.predFrontR = &predRfront; bm.predFrontP = &predPfront;
+    bm.dFrontR = &dFrontR; bm.dFrontP = &dFrontP;
+    if (S.solver.dielectric()) bm.dielFront = &dielFront;
+  }
   bm.absorbFirst = r == 0;
   bm.iF = mean ? iF : N + 1;
   bm.iC = mean ? iC : N;
@@ -939,10 +1154,12 @@ void PipelineRun::deviceMarch(int k, double s1, std::vector<Particle>& newForFro
   }
   eng->marchBlock(bm);
   route();
+  prof.stop(Prof::MARCH);
   eng->getFields(1, a, b + 1);
   eng->getCurrents(Engine::C1B, sa, sb);
   eng->getCurrents(Engine::C1S, sa, sb);
   if (mean) fetchPreAbs(a, b + 1);
+  prof.stop(Prof::DOWN);
 }
 
 // Filter of the beam current (Simulation::filterBeamCurrent) on the own
@@ -1038,13 +1255,13 @@ void PipelineRun::filterRaw(Currents& C, bool belowIntoC) {
 // ----------------------------------------------------------------------------
 void PipelineRun::meanPhase(Buffer* F) {
   using u64 = unsigned long long;
-  swapPreAbs();  // F^1 before the absorber, as Simulation::step pushes before absorber()
+  // F^1 before the absorber, as Simulation::step pushes before absorber(). numerics.backend = cuda: the pushes,
+  // deposits and the filter on the device, where level 0 is F^1 and level 1 F^0; the swap is done there
+  if (eng) eng->swapPreAbsorber();
+  else swapPreAbs();
   beamPushSetup();
   const Fields& F0 = S.fnew;
   const Fields& F1 = S.fold;
-  // numerics.backend = cuda: the pushes, deposits and the filter on the device; F^1 (before the absorber) to
-  // the device level 0 (F^0 is there as level 1; level 0 is uploaded again, after the absorber, in step())
-  if (eng) eng->putFields(0, sa, sb + 1);
   std::vector<Particle> depH;
   auto toH = [&](const Particle& p) { if (eng) depH.push_back(p); else S.depositBeamParticle(H, p); };
   if (r > 0)
@@ -1204,7 +1421,8 @@ void PipelineRun::meanPhase(Buffer* F) {
       getHalf(rearT, S.c0b, a, true);
     }
   }
-  swapPreAbs();  // back to F^1 after the absorber
+  if (eng) eng->swapPreAbsorber();  // back to F^1 after the absorber
+  else swapPreAbs();
   // ---- for the rank behind (with the F message of the next step)
   meanOut = Buffer();
   if (r > 0) {
@@ -1268,18 +1486,26 @@ void PipelineRun::recvRear() {
     putHalf(rearT, Tq, a);
     for (const auto& o : B.getVec<Particle>()) fpKnow[o.id] = o;  // outcomes of the particles continued there
   }
+  if (eng && devSynced) {  // the device keeps level s^0: the values changed above
+    eng->putFields(0, a - pf - 2, a + 1);
+    eng->putCurrents(Engine::C0B, a - 1, a + 1);
+    eng->putCurrents(Engine::C0S, a - 1, a);
+    if (mean)
+      for (int n = std::max(0, a - pf - 2); n <= a; ++n)
+        if (preHave[size_t(n - sa)]) eng->putPreAbsorber(n, preAbs[size_t(n - sa)]);
+  }
 }
 
 // ----------------------------------------------------------------------------
 // diagnostics: partial sums (and data of output / checkpoint steps) to rank 0
 // ----------------------------------------------------------------------------
-void PipelineRun::sendDiag(int k) {
-  const bool files = filesAt(k), ck = checkpointAt(k), fields = files || ck || lasyAt(k);
+void PipelineRun::sendDiag(int k, const DiagJob* job) {
+  const bool files = !job && filesAt(k), ck = !job && checkpointAt(k), fields = files || ck || (!job && lasyAt(k));
   Buffer B;
   B.put<int>(k);
-  putDiag(B, S.diagSums(a, b));
-  B.put(myRestreamed);
-  B.put(myTrapped);
+  putDiag(B, job ? job->D : S.diagSums(a, b));
+  B.put(job ? job->re : myRestreamed);
+  B.put(job ? job->tr : myTrapped);
   if (files || ck) B.putVec(S.beam);
   if (ck) {
     B.putVec(S.pendingNext);
@@ -1307,10 +1533,11 @@ void PipelineRun::sendDiag(int k) {
 // rank 0: console line and tables from the partial sums; the output files are written block by block: the block
 // of rank q (fields of its slices, currents of its half-cells) with the first slice / half-cell of rank q+1
 // appended, so that rank 0 never holds more than two blocks
-void PipelineRun::reportStep(int k) {
-  DiagSums D = S.diagSums(a, b);
-  long long re = myRestreamed, tr = myTrapped;
-  const bool files = filesAt(k), ck = checkpointAt(k), lasy = lasyAt(k), fields = files || ck || lasy;
+void PipelineRun::reportStep(int k, const DiagJob* job) {
+  DiagSums D = job ? job->D : S.diagSums(a, b);
+  long long re = job ? job->re : myRestreamed, tr = job ? job->tr : myTrapped;
+  const bool files = !job && filesAt(k), ck = !job && checkpointAt(k), lasy = !job && lasyAt(k),
+             fields = files || ck || lasy;
   std::vector<Particle> gbeam, gpend;
   if (files || ck) gbeam = S.beam;
   if (ck) gpend = S.pendingNext;
@@ -1318,7 +1545,7 @@ void PipelineRun::reportStep(int k) {
   for (int q = 1; q < P; ++q) {
     Buffer B = comm::recv(q, TAG_DIAG);
     if (B.get<int>() != k) throw std::runtime_error("MPI pipeline: step mismatch (diagnostics)");
-    D.add(getDiag(B));
+    addDiag(B, D);
     re += B.get<long long>();
     tr += B.get<long long>();
     if (files || ck) {
@@ -1411,21 +1638,255 @@ void PipelineRun::reportStep(int k) {
   std::fflush(stdout);
 }
 
+void PipelineRun::dueDiag(int j) {
+  finishDiag();
+  if (!eng || filesAt(j) || checkpointAt(j) || lasyAt(j) || j == firstOut) {
+    if (r > 0) sendDiag(j);
+    else reportStep(j);
+    if (eng && !finiteOwn()) {
+      std::fprintf(stderr, "non-finite field at step %d on rank %d\n", j, r);
+      comm::abort(2);
+    }
+    return;
+  }
+  dj.on = true;
+  dj.ready = false;
+  dj.step = j;
+  dj.stepNo = S.step_no;
+  dj.s0 = S.s0;
+  dj.re = myRestreamed;
+  dj.tr = myTrapped;
+  dj.beam = S.beam;
+  dj.freed = S.freedCharge;
+  if (r == 0) dj.exitStates = S.exitStates;
+  dj.f = std::async(std::launch::async, [this]() {
+    DiagSums D = S.diagSums(a, b, dj.beam, dj.freed);
+    const bool ok = finiteOwn();
+    return std::make_pair(std::move(D), ok);
+  });
+}
+
+void PipelineRun::joinDiag() {
+  if (!dj.on || dj.ready) return;
+  auto res = dj.f.get();
+  dj.D = std::move(res.first);
+  dj.ok = res.second;
+  dj.ready = true;
+}
+
+void PipelineRun::finishDiag() {
+  if (!dj.on) return;
+  joinDiag();
+  if (!dj.ok) {
+    std::fprintf(stderr, "non-finite field at step %d on rank %d\n", dj.step, r);
+    comm::abort(2);
+  }
+  if (r > 0) sendDiag(dj.step, &dj);
+  else {  // the console line and the tables of level j: step number, z and the exit states of then
+    std::swap(S.step_no, dj.stepNo);
+    std::swap(S.s0, dj.s0);
+    S.exitStates.swap(dj.exitStates);
+    reportStep(dj.step, &dj);
+    std::swap(S.step_no, dj.stepNo);
+    std::swap(S.s0, dj.s0);
+    S.exitStates.swap(dj.exitStates);
+  }
+  dj.on = false;
+  dj.ready = false;
+  dj.beam.clear();
+}
+
+// GEMPIC_PROFILE=1: rank 0 prints the phases of its own steps and the maximum of every phase over the ranks
+void PipelineRun::reportProfile() {
+  if (!prof.on) return;
+  enum { TAG_PROF = 105 };
+  if (r > 0) {
+    Buffer B;
+    for (double x : prof.t) B.put(x);
+    comm::send(0, TAG_PROF, std::move(B));
+    comm::waitAll();
+    return;
+  }
+  double mx[Prof::COUNT];
+  std::copy(prof.t, prof.t + Prof::COUNT, mx);
+  for (int q = 1; q < P; ++q) {
+    Buffer B = comm::recv(q, TAG_PROF);
+    for (int i = 0; i < Prof::COUNT; ++i) mx[i] = std::max(mx[i], B.get<double>());
+  }
+  static const char* names[Prof::COUNT] = {"wait (messages)", "beam push+current", "upload", "march",
+                                           "download", "messages/swap", "diagnostics+output", "finite check",
+                                           "mean phase"};
+  for (int pass = 0; pass < 2; ++pass) {
+    const double* v = pass == 0 ? prof.t : mx;
+    double tot = 0;
+    for (int i = 0; i < Prof::COUNT; ++i) tot += v[i];
+    std::printf("pipeline profile (s, %s):", pass == 0 ? "rank 0" : "max over ranks");
+    for (int i = 0; i < Prof::COUNT; ++i) std::printf("  %s %.3f", names[i], v[i]);
+    std::printf("  total %.3f\n", tot);
+  }
+  if (nTimed > 1)
+    std::printf("pipeline: %.4f s per step after the pipeline filled (rank 0, steps 2 ... %d of the run)\n",
+                std::chrono::duration<double>(tLast - tFirst).count() / (nTimed - 1), nTimed);
+  std::fflush(stdout);
+}
+
+// ----------------------------------------------------------------------------
+// synchronization points (chicanes, bunch.z_start): see the class declaration
+// ----------------------------------------------------------------------------
+bool PipelineRun::eventIn(double za, double zb) const {
+  for (const auto& C : S.cfg.chicanes)
+    if (za < C.z && C.z <= zb) return true;  // as Simulation::applyChicanes
+  for (const auto& B : S.cfg.bunches) {
+    const double zs = B.z_start, eps = 1e-9 * std::max(1.0, zs);  // as Simulation::loadBunches
+    if (zs > 0 && za < zs - eps && zs - eps <= zb) return true;
+  }
+  return false;
+}
+
+// the end of the pipeline after step K, as at the end of the run: the R message of step K (ghosts of level s^K)
+// and, with beam_field = mean, the second push of step K from the front rank to the rear
+void PipelineRun::drain(int K) {
+  finishDiag();
+  if (r > 0) recvRear();
+  if (mean) {
+    Buffer F;
+    if (r < P - 1) F = recvFront(K + 1);
+    meanPhase(r < P - 1 ? &F : nullptr);
+    if (r > 0) {
+      Buffer B;
+      B.put<int>(K + 1);
+      B.put<int>(lastStep);
+      B.put<int>(wallStop ? 1 : 0);
+      B.put<int>(1);
+      B.putRaw(meanOut.data.data(), meanOut.data.size());
+      comm::send(r - 1, TAG_F, std::move(B));
+    }
+  }
+}
+
+// the stored slices / half-cells of every rank taken from the rank that owns them (fields of the slices [sa, sb],
+// currents of s^0 of the half-cells [sa, sb)): the state a restart reads from a checkpoint
+void PipelineRun::exchangeGhosts() {
+  const int Nz = S.Nz;
+  auto ownF = [&](int q, int& n0, int& n1) { n0 = lo[q]; n1 = (q == P - 1) ? Nz + 1 : lo[q + 1]; };
+  auto stored = [&](int q, int& n0, int& n1, bool fields) {
+    const StorageBlock B = pipelineBlock(S.cfg, P, q);
+    n0 = std::max(0, B.sa);
+    n1 = fields ? std::min(Nz + 1, B.sb + 1) : std::min(Nz, B.sb);
+  };
+  // the ranges of the slices (fa, fb) and half-cells (ca, cb) that rank `owner` sends to rank `dest`
+  auto ranges = [&](int owner, int dest, int& fa, int& fb, int& ca, int& cb) {
+    int f0, f1, s0, s1;
+    ownF(owner, f0, f1);
+    stored(dest, s0, s1, true);
+    fa = std::max(f0, s0); fb = std::min(f1, s1);
+    stored(dest, s0, s1, false);
+    ca = std::max(lo[owner], s0); cb = std::min(lo[owner + 1], s1);
+  };
+  for (int q = 0; q < P; ++q) {
+    if (q == r) continue;
+    int fa, fb, ca, cb;
+    ranges(r, q, fa, fb, ca, cb);
+    if (fa >= fb && ca >= cb) continue;
+    Buffer B;
+    if (fa < fb) putRange(B, S.fold, fa, fb);
+    if (ca < cb) {
+      putJ(B, S.c0b, ca, cb); putDens(B, S.c0b, ca, cb);
+      putJ(B, S.c0s, ca, cb); putDens(B, S.c0s, ca, cb);
+    }
+    comm::send(q, TAG_GHOST, std::move(B));
+  }
+  for (int q = 0; q < P; ++q) {
+    if (q == r) continue;
+    int fa, fb, ca, cb;
+    ranges(q, r, fa, fb, ca, cb);
+    if (fa >= fb && ca >= cb) continue;
+    Buffer B = comm::recv(q, TAG_GHOST);
+    if (fa < fb) getRange(B, S.fold, fa, fb);
+    if (ca < cb) {
+      getJ(B, S.c0b, ca, cb); getDens(B, S.c0b, ca, cb);
+      getJ(B, S.c0s, ca, cb); getDens(B, S.c0s, ca, cb);
+    }
+  }
+  comm::waitAll();
+}
+
+// the event of step K (za < z <= zb) on the drained pipeline; then the output of step K and a new start
+void PipelineRun::syncEvent(int K, double za, double zb) {
+  // the whole beam list and the random generator of the front rank (it loads the plasma: its state is that of a
+  // run on one rank) on every rank
+  std::vector<Particle> all;
+  std::string rs;
+  if (r == P - 1) {
+    std::ostringstream os;
+    os << S.rng;
+    rs = os.str();
+  }
+  if (r > 0) {
+    Buffer B;
+    B.putVec(S.beam);
+    B.putVec(std::vector<char>(rs.begin(), rs.end()));
+    comm::send(0, TAG_SYNC, std::move(B));
+    Buffer A = comm::recv(0, TAG_SYNC);
+    all = A.getVec<Particle>();
+    const std::vector<char> g = A.getVec<char>();
+    rs.assign(g.begin(), g.end());
+  } else {
+    all = S.beam;
+    for (int q = 1; q < P; ++q) {
+      Buffer B = comm::recv(q, TAG_SYNC);
+      const std::vector<Particle> pb = B.getVec<Particle>();
+      all.insert(all.end(), pb.begin(), pb.end());
+      const std::vector<char> g = B.getVec<char>();
+      if (q == P - 1) rs.assign(g.begin(), g.end());
+    }
+    for (int q = 1; q < P; ++q) {
+      Buffer A;
+      A.putVec(all);
+      A.putVec(std::vector<char>(rs.begin(), rs.end()));
+      comm::send(q, TAG_SYNC, std::move(A));
+    }
+  }
+  comm::waitAll();
+  if (P > 1) {
+    std::istringstream is(rs);
+    is >> S.rng;
+  }
+  S.beam.swap(all);
+  // collective (the self-fields are solved across the ranks); the order of Simulation::step
+  if (!S.cfg.chicanes.empty()) S.applyChicanes(za, zb);
+  S.loadBunches(za, zb);
+  exchangeGhosts();
+  // the output of step K with the own particles, then a new start of the pipeline (as from a checkpoint of step K)
+  all.clear();
+  for (const auto& p : S.beam)
+    if (beamOwner(p) == r) all.push_back(p);
+  S.beam.swap(all);
+  if (r > 0) sendDiag(K);
+  else reportStep(K);
+  S.beam.swap(all);
+  comm::waitAll();
+  const int last = lastStep;
+  halo.clear();
+  myRestreamed = myTrapped = 0;
+  devSynced = false;
+  meanReady = frontMean = false;
+  meanOut = Buffer();
+  eng.reset();
+  partition();
+  lastStep = last;
+}
+
 // ----------------------------------------------------------------------------
 int PipelineRun::run() {
   P = comm::size();
 #if defined(_OPENMP)
   if (S.cfg.numerics.backend == NumericsConfig::Backend::OpenMP) threads = std::max(1, omp_get_max_threads());
 #endif
-  if (!S.cfg.chicanes.empty()) {
-    if (comm::rank() == 0)
-      std::fprintf(stderr, "error: chicane blocks are not supported in MPI runs yet (the chicane moves the beam "
-                           "across the domains of the ranks); run on one rank with numerics.backend = openmp\n");
-    return 1;
-  }
   r = comm::rank();
   S.externalOutput = true;  // rank 0 streams the output block by block (reportStep)
   t0 = std::chrono::steady_clock::now();
+  if (const char* e = std::getenv("GEMPIC_PROFILE")) prof.on = (e[0] == '1');
   try {
     partition();
     if (!rc.restarted) {  // initial state: collected from the blocks like every output step
@@ -1439,27 +1900,50 @@ int PipelineRun::run() {
       if (rc.restarted) std::printf("continuing at step %d\n", S.step_no);
       std::fflush(stdout);
     }
-    const int k0 = S.step_no;
+    int k0 = S.step_no;
+    bool drained = false;  // the last step ended with a synchronization point (output done there)
     for (int k = k0 + 1; k <= lastStep; ++k) {
+      prof.start();
       if (k > k0 + 1 && r > 0) {
         recvRear();
-        if (!mean) sendDiag(k - 1);
+        prof.stop(Prof::WAIT);
+        if (!mean) dueDiag(k - 1);
+        prof.stop(Prof::DIAG);
       }
       Buffer F;
       if (r < P - 1) F = recvFront(k);
+      prof.stop(Prof::WAIT);
       if (k > k0 + 1 && mean) {  // the second push of step k-1, then its output
         meanPhase(r < P - 1 ? &F : nullptr);
-        if (r > 0) sendDiag(k - 1);
-        else reportStep(k - 1);
+        prof.stop(Prof::MEAN);
+        dueDiag(k - 1);
+        prof.stop(Prof::DIAG);
       }
+      const double za = S.s0;
       step(F);
-      if (!finiteOwn()) {
+      if (r == 0) {
+        (nTimed == 0 ? tFirst : tLast) = std::chrono::steady_clock::now();
+        ++nTimed;
+      }
+      if (!eng && !finiteOwn()) {
         std::fprintf(stderr, "non-finite field at step %d on rank %d\n", S.step_no, r);
         comm::abort(2);
       }
-      if (r == 0 && !mean) reportStep(k);
+      prof.stop(Prof::CHECK);
+      if (eventIn(za, S.s0)) {  // synchronization point: the output of step k follows the event
+        drain(k);
+        syncEvent(k, za, S.s0);
+        k0 = k;
+        drained = (k == lastStep);
+        prof.stop(Prof::DIAG);
+        continue;
+      }
+      finishDiag();
+      if (r == 0 && !mean) dueDiag(k);
+      prof.stop(Prof::DIAG);
     }
-    if (lastStep > k0) {
+    finishDiag();
+    if (lastStep > k0 && !drained) {
       if (r > 0) recvRear();
       if (mean) {  // the second push of the last step: one more exchange from the front to the rear
         Buffer F;
@@ -1479,6 +1963,7 @@ int PipelineRun::run() {
       else if (mean) reportStep(lastStep);
     }
     comm::waitAll();
+    reportProfile();
     if (meanGuessed > 0)
       std::printf("rank %d, beam_field = mean: %lld second pushes ended where the first push of the particle was "
                   "not known (it had continued two ranks behind); taken as survived\n", r, meanGuessed);

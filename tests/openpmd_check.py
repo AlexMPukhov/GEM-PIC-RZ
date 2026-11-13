@@ -69,6 +69,33 @@ zlab = w["position/z"][...] * w["position/z"].attrs["unitSI"] + w["positionOffse
 zn = g["particles/beam/zeta"][...] * L + s
 need(abs(np.mean(zlab) - np.mean(zn)) < 1e-12, "lab z of the particles")
 
+# position (z = const) snapshot, docs/openpmd_zplane.md: attributes and the crossing time of the particles
+ia = it.attrs
+need(ia["snapshotType"].decode() == "position", "snapshotType = position")
+need(ia["snapshotAxis"].decode() == "z", "snapshotAxis = z")
+need(abs(ia["snapshotPosition"] * ia["snapshotPositionUnitSI"] - s) <= 1e-12 * max(s, 1e-30), "snapshotPosition = s")
+vax = ia["snapshotAxisVelocity"] * ia["snapshotPositionUnitSI"] / ia["timeUnitSI"]
+need(abs(vax / 299792458.0 - 1) < 1e-9, "snapshotAxisVelocity = c")
+t = w["time"][...] * w["time"].attrs["unitSI"]
+# t = time + (snapshotPosition - x) / v for the axis label x = z (the same mapping as the meshes)
+t_ref = ia["time"] * ia["timeUnitSI"] + (s - zlab) / vax
+terr = np.max(np.abs(t - t_ref)) / (s / 299792458.0)
+t_nat = (s - g["particles/beam/zeta"][...] * L) / 299792458.0
+print(f"  particle time at the plane: max |t - (time + (s - z)/c)| = {terr:.1e} of s/c, "
+      f"mean t = {np.mean(t):.6e} s (data file: {np.mean(t_nat):.6e} s)")
+need(terr < 1e-9, "particle time = mapping of the axis label")
+need(abs(np.mean(t) - np.mean(t_nat)) < 1e-9 * s / 3e8, "particle time = (s - zeta)/c of the data file")
+# every species in every file, also the empty ones
+spn = g["particles/beam/species"][...]
+ions = [x for x in g["particles/beam"].attrs["ion_names"].decode().split(",") if x]
+for name, code in [("witness", 0), ("trapped", -1)] + [("inj_" + x, -30 - k) for k, x in enumerate(ions)]:
+    need(name in it["particles"], f"species {name} present")
+    if name in it["particles"]:
+        n = it[f"particles/{name}/position/x"].shape[0]
+        need(n == np.count_nonzero(spn == code), f"species {name}: {n} particles")
+        print(f"  species {name}: {n} macroparticles")
+need("native_E_z" in it["meshes"], "native records with openpmd_grid = both")
+
 # native records (rectilinear meshes) through the generic reader: exact native data
 if len(sys.argv) > 4:
     sys.path.insert(0, sys.argv[4])

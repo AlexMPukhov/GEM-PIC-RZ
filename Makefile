@@ -9,7 +9,7 @@ ifeq ($(notdir $(CXX)),nvcc)
 endif
 CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra
 BUILD    := build-make
-CORE     := units deck config mapping atomic_data ionization grid solver smoothing simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import laser_file
+CORE     := units deck config mapping atomic_data ionization grid solver dielectric smoothing simulation diagnostics output_hdf5 engine comm pipeline eigen expr beam_import laser_file bound
 OBJ      := $(CORE:%=$(BUILD)/%.o)
 # MPI (domain decomposition along zeta): enabled if mpicxx is found (make MPI=0 disables it)
 MPI ?= $(shell command -v mpicxx > /dev/null 2>&1 && echo 1)
@@ -72,6 +72,7 @@ test: all
 	sh tests/physics.sh $(BUILD)/gempic_rz $(BUILD)/check_physics numerics.backend=serial
 	sh tests/regression.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns numerics.backend=$(PAR)
 	sh tests/physics.sh $(BUILD)/gempic_rz $(BUILD)/check_physics numerics.backend=$(PAR)
+	sh tests/output_volume.sh $(BUILD)/gempic_rz $(PAR)
 ifeq ($(HDF5),1)
 	sh tests/hdf5.sh $(BUILD)/gempic_rz $(BUILD)/h5_extract $(BUILD)/compare_columns
 	sh tests/restart.sh $(BUILD)/gempic_rz $(BUILD)/compare_columns serial

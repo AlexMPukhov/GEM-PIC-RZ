@@ -23,6 +23,9 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
 
 #include "config.hpp"
 #include "deck.hpp"
@@ -227,6 +230,18 @@ int main(int argc, char** argv) {
   // only rank 0 writes to the console (errors go to stderr on every rank)
   if (gem::comm::rank() != 0 && !std::freopen("/dev/null", "w", stdout)) return 1;
   const int rc = run(argc, argv);
+#if defined(__unix__) || defined(__APPLE__)
+  // peak resident memory of this process (rank 0 with MPI): a run whose memory grew shows it here
+  struct rusage ru;
+  if (rc == 0 && getrusage(RUSAGE_SELF, &ru) == 0) {
+#if defined(__APPLE__)
+    const double gb = double(ru.ru_maxrss) * 1e-9;  // bytes
+#else
+    const double gb = double(ru.ru_maxrss) * 1024e-9;  // kB
+#endif
+    std::printf("peak memory: %.4g GB resident%s\n", gb, gem::comm::size() > 1 ? " (rank 0)" : "");
+  }
+#endif
   gem::comm::finalize();
   return rc;
 }

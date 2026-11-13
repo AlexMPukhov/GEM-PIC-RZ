@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/gempic-rz-logo-dark.svg">
+    <img src="docs/logo/gempic-rz-logo-light.svg" alt="GEM-PIC-RZ: Galilean electromagnetic PIC in RZ" width="600">
+  </picture>
+</p>
+
 # GEM-PIC-RZ
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23600178.svg)](https://doi.org/10.5281/zenodo.23600178)
@@ -132,7 +139,9 @@ numerics { ... }    algorithm parameters               (optional)
 | `examples/pwfa_driver_witness.deck` | beam-driven wake with drive and witness bunches, flat-top witness, m = 0 only |
 | `examples/two_pulses_channel.deck` | two laser pulses (focused drive pulse, circularly polarized 2nd harmonic), parabolic channel, trapezoidal profile |
 | `examples/ion_collapse.deck` | mobile hydrogen ions collapsing inside a dense electron bunch (Rosenzweig et al. 2005) |
+| `examples/chain_lwfa_fel/` | chained run: down-ramp injection (FBPIC) → acceleration → plasma lens, chicane and helical undulator (GEM-PIC-RZ), openPMD hand-off between the stages (README there) |
 | `examples/ionization_injection.deck` | ionization injection: N⁵⁺ dopant field-ionized to N⁶⁺/N⁷⁺ by an a0 = 2 pulse (ADK, NIST energies) |
+| `examples/dwa_proton_microbuncher/` | dielectric wakefield structure (quartz-lined copper tube, Petrenko & Sheinman, RuPAC 2016): 600 MeV, 5 nC drive beam in a tapered FODO channel (BBU), proton microbuncher, chicane and proton "klystron"; deck generator `make_deck.py` (README there) |
 
 ## Source layout
 
@@ -154,6 +163,8 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/zgrid.hpp` | longitudinal grid of the window: slices, half-cells, location of particles, interpolation weights of the R equation |
 | `src/fields.hpp` | mode fields and currents |
 | `src/solver.*` | tridiagonal field update per slice and mode (matrices per distinct half-cell length and step); pentadiagonal with the per-mode implicitness `numerics.theta_stiff` |
+| `src/dielectric.cpp` | the slice equations with a dielectric ε(r): polarization current, coupled pentadiagonal (B_z, E_z) system per mode |
+| `src/bloch.hpp`, `src/bound.*` | bound electrons: Maxwell–Bloch step of a V-type atom per node, the medium on (centres × angles), its current to the modes |
 | `src/smoothing.*` | radial smoothing of the plasma sources (`plasma.smooth_length`): vector and scalar filters (1 − a²∇²)⁻¹ that commute with the discrete divergence |
 | `src/particles.hpp` | particle record, Boris pusher |
 | `src/simulation.*` | laser and bunch initialization, plasma loading, pushers, deposition, time step (serial reference) |
@@ -165,6 +176,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `src/output_hdf5.cpp` | HDF5 output (`data_NNNNN.h5`), openPMD output, LASY envelope files, checkpoints (`checkpoint_NNNNN.h5`) and restart |
 | `src/main.cpp` | command-line driver |
 | `tests/test_deck.cpp` | about 230 checks (the number depends on the build options): parser, units, configuration, backends, output format, free-hand mapping and ζ/z grids, ion and ionization blocks, error messages, deposition shape, NIST table, ADK = Landau rate; all example decks must be valid |
+| `tests/test_adk.cpp` | ctest `adk`: `AdkRates` with orbital quantum numbers against the analytic standard ADK (Rb 5s, 5p₁/₂, 5p₃/₂ at 0.003–0.02 E_a, 1.5e-14), hydrogen against the Landau rate, the ion-species prefactor unchanged |
 | `tests/regression.*` | runs `tests/regression.deck` (laser, plasma, mobile H ions, witness) and compares with `tests/reference/`, for every backend |
 | `tests/physics.*`, `tests/check_physics.cpp` | bunch self-field in vacuum against Gauss's law (stretched and free-hand radial grid, free-hand ζ grid); a γ = 100 bunch keeps its energy in its own field; ion collapse against a test-ion model; field ionization of H and N⁵⁺→N⁷⁺ against the ADK rate equations |
 | `tools/h5_extract.cpp` | reads the HDF5 files and the native records of the openPMD files: tables of axis, map, beam, field line-outs (also an example reader) |
@@ -174,12 +186,20 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/flexgrid.sh`, `tests/flexgrid.deck` | free-hand ζ and z grids: constant-step tables = uniform grid; parallel backend = serial; restart, also with a new z grid |
 | `tests/undulator.sh`, `tests/undulator.deck` | undulator radiation: energy, spectrum and slippage against the far-field radiation integral (`tools/undulator_radint.py`) |
 | `tests/smoothing.sh` | `plasma.smooth_length`: a → 0 gives the reference, the axis density spike is capped, the fields ahead of the bubble back hardly change, parallel backend = serial |
+| `tests/flying_focus_beat.sh` | flying focus of two luminal Bessel components (J0 + J1 e^{±iφ}; circular polarization with both helicities in m ≤ 1, linear with m = 2) against the analytic field: E_x in the plane y = 0 and the intensity maximum that turns around the axis (`check_physics ffbeat`) |
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
+| `tests/long_wake.sh`, `tests/long_wake.deck` | long linear plasma wake (`numerics.predictor`): k_p amplitude of the on-axis E_z against the linear theory, no growth from step to step; the old prediction (`level`) must grow, per backend |
+| `tests/quad_edges.sh` | element edges inside the sub-steps of the beam push: a FODO of six quadrupoles with the edges off the 5 mm sub-steps and a hard-edge solenoid against the linear optics of `tests/transport_expect.awk` (README "Corrections", item 10) |
+| `tests/proton.sh` | proton bunches (400 GeV): energy in `bunches.txt`, quadrupole and plasma lens with the gradients scaled by Bρ against the linear optics of `tests/transport_expect.awk` (planes swapped by the positive charge) |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
+| `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
+| `tests/chain.sh`, `tests/chain_fel.deck` | chained runs: openPMD hand-off (moments of the selected beam against python on the stage-1 file), thin chicane on the particle data (shift R56 δ − delay), FEL power growth in the reduced undulator stage; ctest `mpi_chain`: stage 2 on 2 MPI ranks = 1 rank |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
 | `tests/solver_source.cpp` | field solver driven by a prescribed source (no particles): smooth m = 2 currents at 2k (j_z; transverse current of an offset beam at K = −k_u) against a 4× finer radial grid; the deposition weights of `Simulation::deposit` against the exact azimuthal projection (differences only in the first cells near the axis, second order in dr); no spurious radial structure at 1.0 < \|k_r\| < 1.6 µm⁻¹. Also a tool: `solver_source <dr_um> <z\|a\|b> <K/k_u> <steps> <out.txt>` writes one profile |
+| `tests/cone_grid.sh` | `--check` warning for undulator harmonic cones the radial grid turns back: θ and k_⊥ for h = 1–3 of `benchmarks/harmonics/fel.deck` against the cone formula (10⁻³), the stretching (40 µm) and cutoff (51.5 µm) radii of the h = 2 cone, the cutoff beyond 100 µm with dr = 1 µm to 100 µm, no warning on a uniform 0.5 µm grid |
+| `tests/mpi_events.sh` | MPI synchronization points: `bunch.z_start` and a thin chicane on 1–4 ranks (also mean-field push, restarts, device march) = serial |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
@@ -244,6 +264,12 @@ a pipeline: rank q computes step k while rank q+1 already computes step k+1.
   on every beam particle pairs its two pushes across ranks, so that the rule of the serial code holds (a particle
   the second push would lose keeps its first-push state). The output of step k follows its second push; the last
   step takes one extra exchange.
+- **Synchronization points** (thin `chicane`, `bunch.z_start`): an event at the end of a step that acts on the whole beam stops
+  the pipeline there. All ranks finish the step (with its second push for `beam_field = mean`), as at the end of a
+  run; the beam lists and the random generator of the front rank are gathered on every rank, the event is applied
+  as in the serial code (the bunch self-field is solved across the ranks, as at the start), every rank takes its
+  ghost slices from their owners, the output of the step is written, and the pipeline starts again as after a
+  restart from a checkpoint of that step. One such stop costs about one pipeline fill (P − 1 steps).
 
 **Speed.** The ionization-injection example (20 steps) runs 1.90× faster on 2 ranks / 2 cores than serially: 51.2 s vs 97.2 s, as predicted by 2 × 20/21. The results are identical.
 
@@ -272,11 +298,19 @@ code 3).
   `beam_field = mean` and beam filter 2: wake, trapping, absorber). The 4 kA beam in a planar undulator at λ_u/16
   (`tests/planar_step.sh` settings, 5 cm, the beam spans the 3 blocks): ε_nx = 0.0067 µm on 3 ranks as serially
   (`level`: 0.118 µm); `fel.txt` and `bunches.txt` agree to all printed digits.
+- **Synchronization points (`tests/mpi_events.sh`, ctest `mpi_events`):** the witness of the regression deck
+  loaded with `bunch.z_start` at step 2 into the wake: the pipelined step on one rank equals the serial run to all
+  digits; 2, 3, 4 ranks, `beam_field = mean`, checkpoints before and after the loading (3 → 2 ranks) and the device
+  march (GPU emulation, 3 ranks) agree with the serial run to all printed digits. A thin chicane (R56 = 100 µm,
+  delay 10 µm) moves the chirped bunch of `tests/transport.sh` 10 µm back, across the block boundaries of 2–4 ranks:
+  `bunches.txt` of every step and the axis fields before, at and after the chicane agree with the serial run to all
+  printed digits, also with `beam_field = mean`, across checkpoints before and after the chicane (3 → 2 ranks) and on
+  the device (GPU emulation, 3 ranks).
 - **Hard case:** the ionization-injection example at a0 = 2.5 on 3 ranks (13 steps: trapping, re-streaming of 1936 particles, field ionization). `bunches.txt` and `ionization.txt` are identical to the serial run, and the axis fields agree to rounding.
 
 **Current limits:**
 
-- **Backend:** `numerics.backend = serial` runs the serial step on every rank; `numerics.backend = openmp` adds OpenMP threads on every rank (hybrid MPI + threads, `OMP_NUM_THREADS` threads per rank). `numerics.backend = cuda` runs the ζ-march of every block on a GPU (one GPU per rank, chosen by the node-local rank of the launcher, or the one GPU a task sees with `srun --gpus-per-task=1`): the beam push (`Engine::pushBeams`, also of the halo copies), the beam deposits and the filter across the block edges, then the streaming plasma, the field solves and the R corrections of the own slices as kernels (`Engine::marchBlock`), staged through the host for the messages. The mean-field second push (`numerics.beam_field = mean`) runs on the device as well: the pushes in (F⁰ + F¹)/2 (F¹ of the absorber layer before the absorber, as serially), the deposits and the filter. The host keeps the beam list and its bookkeeping (which particle stays, goes to the rank behind or returns to streaming, which push of a particle counts). Tested in the GPU emulation build (`GEMPIC_PIPELINE_ENGINE=1 gempic_rz_gpuemu ... numerics.backend=openmp`: the GPU code paths on CPU threads): 1–4 ranks, a restart from 3 to 2 ranks, the mean-field push, free-hand grids, field ionization, the flying focus and the FEL beam across 3 blocks agree with the serial run to all printed digits (`tests/mpi.sh`). On a real GPU (RTX 5090) one rank with the pipelined step (`GEMPIC_PIPELINE=1`) equals the serial run to all printed digits on the regression, FEL and flying-focus decks (`benchmarks/gpu/check_1gpu.sh`); several GPUs (MPI) have not run yet.
+- **Backend:** `numerics.backend = serial` runs the serial step on every rank; `numerics.backend = openmp` adds OpenMP threads on every rank (hybrid MPI + threads, `OMP_NUM_THREADS` threads per rank). `numerics.backend = cuda` runs the ζ-march of every block on a GPU (one GPU per rank, chosen by the node-local rank of the launcher, or the one GPU a task sees with `srun --gpus-per-task=1`): the beam push (`Engine::pushBeams`, also of the halo copies), the beam deposits and the filter across the block edges, then the streaming plasma, the field solves and the R corrections of the own slices as kernels (`Engine::marchBlock`), staged through the host for the messages. Level s⁰ and its currents stay on the device between the steps; the host uploads only the ghost slices from the rank behind, and the per-step diagnostics of the previous level are computed by a host thread while the device marches the next step (output and checkpoint steps synchronously). The mean-field second push (`numerics.beam_field = mean`) runs on the device as well: the pushes in (F⁰ + F¹)/2 (F¹ of the absorber layer before the absorber, as serially), the deposits and the filter. The host keeps the beam list and its bookkeeping (which particle stays, goes to the rank behind or returns to streaming, which push of a particle counts). Tested in the GPU emulation build (`GEMPIC_PIPELINE_ENGINE=1 gempic_rz_gpuemu ... numerics.backend=openmp`: the GPU code paths on CPU threads): 1–4 ranks, a restart from 3 to 2 ranks, the mean-field push, free-hand grids, field ionization, the flying focus and the FEL beam across 3 blocks agree with the serial run to all printed digits (`tests/mpi.sh`). On a real GPU (RTX 5090) one rank with the pipelined step (`GEMPIC_PIPELINE=1`) equals the serial run to all printed digits on the regression, FEL and flying-focus decks (`benchmarks/gpu/check_1gpu.sh`); on JUPITER (GH200) 1–4 GPUs equal the serial run (`benchmarks/jupiter/README.md`, with the strong-scaling series).
 - **Memory:** every rank builds and stores the fields and currents only of its own block of slices and ghost slices
   (2 × beam-filter passes + 6 on each side); the particles are distributed as well. Nothing is built for the whole
   window on any rank at the start: lasers (also from LASY files), the flying focus and the bunch self-fields are
@@ -329,7 +363,8 @@ The kernels are written once, as lambdas, behind a thin portability layer (`src/
 **Performance notes:**
 
 - **Where the time goes:** the march is sequential in ζ, so the GPU gains from the particles within a slice. A slice with a few thousand particles, as in the examples, is launch-latency bound (about 10 kernel launches per slice).
-- **Profiling:** `GEMPIC_PROFILE=1` prints the time per phase.
+- **Profiling:** `GEMPIC_PROFILE=1` prints the time per phase; in MPI runs also the host side of the pipelined step and the time per step after the pipeline has filled (`docs/gpu.md`).
+- **Several GPUs (MPI):** level s⁰ and its currents stay on the GPU between the steps (only the ghost slices from the rank behind are uploaded), and the per-step diagnostics run on a host thread during the next march.
 - **OpenMP:** it scales with the threads (1.8× on 2 cores for the regression deck). Each thread deposits into a private copy of the current half-cell, so no atomics are needed there.
 
 ## HDF5 output
@@ -357,12 +392,19 @@ layout is listed in `docs/input_deck.md`.
 `output { format = openpmd }` (combinable: `format = text, openpmd`) writes files that follow the openPMD standard
 1.1.0, `<dir>/openpmd/openpmd_<step>.h5`, readable with openPMD-viewer, openPMD-api, VisualPIC or ParaView. The fields
 are written in `thetaMode` on a uniform r–ζ grid (`openpmd_dr`, `openpmd_dzeta`; interpolated as in the particle
-gather), the lab position is z = ζ + s and the time s/c, and each bunch is a particle species with SI units. The
-files pass the openPMD validator without errors or warnings; details in
-[`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
+gather), and each bunch, the trapped electrons and the electrons from ionization of every ion block are particle
+species with SI units, written in every file (empty ones as zero-length records, so openpmd-viewer sees the same
+species in all iterations). The files pass the openPMD validator without errors or warnings, and openpmd-viewer
+reads every iteration (ctest `openpmd_viewer`); details in [`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
 
-openPMD 1.1 has no non-uniform grids. Besides the interpolated fields the files therefore hold the exact data
-on the code's own nodes (`output.openpmd_grid = both`, the default; or `native`): records `native_*` whose
+**z = const snapshots.** An output step of GEM-PIC-RZ is the plane z = s: slice ζ of the window crossed it at
+t = (s − ζ)/c. The files say so with the iteration attributes `snapshotType = "position"`, `snapshotAxis`,
+`snapshotPosition` and `snapshotAxisVelocity`, and every particle carries its crossing time in the record `time`
+(as in the openPMD BeamPhysics extension). For existing readers the longitudinal axis keeps the label z = ζ + s
+and `time` = s/c. This is our proposal for openPMD 2.0, [`docs/openpmd_zplane.md`](docs/openpmd_zplane.md).
+
+openPMD 1.1 has no non-uniform grids. On request the files also hold the exact data on the code's own nodes
+(`output.openpmd_grid = both` or `native`; default `uniform`, because openpmd-viewer fails on them): records `native_*` whose
 node positions are data sets referenced by the mesh attribute `gridCoordinates`. This is the form we propose for
 openPMD 2.0 ([`docs/openpmd_rectilinear.md`](docs/openpmd_rectilinear.md)); QUARZ writes an interim variant.
 `h5_extract` and `tools/openpmd_rectilinear.py` read both.
@@ -384,6 +426,31 @@ restart checks them. See
 
 - **Tests:** `restart_serial` and `restart_openmp` (`restart_cuda` in a GPU build) compare an interrupted and restarted run with the uninterrupted one. They cover a restart from a checkpoint file and a stop at the wall-time limit followed by `--restart latest`.
 - **Hard case:** the ionization-injection example at a0 = 2.5 was also restarted at step 10, after which 4256 more particles are re-streamed. All tables, 6915 beam particles and the HDF5 files at step 14 are identical to the uninterrupted run.
+
+## Memory and output volume
+
+The memory of a run does not grow with the number of steps. It is set by the window and the particles: about
+0.25 MB per ζ-slice for 153 radial cells and m ≤ 1, plus about 0.1 kB per macroparticle. The output files can be
+much larger than that, and they grow with every output step:
+
+- **Volume report:** the first output step measures how many bytes it wrote. The console then shows the projection for
+  the whole run and the free space of `output.dir`:
+  `output volume: 0.404 GB per output step in 'run_mb', 106 more output steps: 42.8 GB until z_end (free there: …)`.
+  A warning follows if the projection exceeds the free space, or if `output.dir` is on tmpfs (in RAM).
+- **Peak memory:** the last console line gives the peak resident memory of the process (`peak memory: 2.4 GB
+  resident`; with MPI that of rank 0).
+- **Files that fill the memory:** on tmpfs, `/dev/shm`, or in a container whose memory limit counts the file cache, the
+  output files take RAM. Example: the DWA microbuncher deck (`examples/dwa_proton_microbuncher`, 1 m lining, 30 mm
+  window, 7500 slices) with `every = 5`, `particles = true` and `format = text, openpmd` writes 0.40 GB per output
+  step, 41 GB by z = 1.02 m. On a 46 GB virtual machine this filled the memory, while the 16 MPI ranks together needed
+  a constant 4.4 GB.
+- **Fewer bytes:** a larger `every`; `particles = false` except at a few steps; one format only; `hdf5_precision =
+  single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` instead of the default `uniform` (smaller on
+  stretched grids, but openpmd-viewer cannot read it). `bunches.txt` has the beam moments of every step anyway.
+- **Test:** `output_volume` (serial and parallel backend) compares the reported volume with the bytes of the files
+  written (within 1 %, it agrees to 0.4 %). It checks that the peak memory after 160 steps equals that after 20
+  (within 5 % + 20 MB; measured: the same to 1 MB after 20, 80 and 320 steps, serial and OpenMP) and that an output
+  directory on `/dev/shm` is reported.
 
 ## Free-hand grids (r, ζ, z)
 
@@ -457,6 +524,16 @@ spontaneous and coherent emission, and the FEL interaction, are contained in the
 resolves the radiation (λ_r/20 or finer). The steps along z resolve the wiggling (λ_u/16 or finer); the summary
 warns otherwise. With undulators the beam is pushed in the mean of the fields of the two levels of a step
 (`numerics.beam_field = mean`, "Corrections", item 9); this keeps intense beams in planar undulators stable at λ_u/16.
+
+**Radial grid and harmonic cones.** At the frequency hω₁ the harmonic n = h + 1 is emitted off axis, on the cone
+θ² = (1/h)(1 + K²/2)/γ² (helical: 1 + K²), with the transverse wavenumber k_⊥ = h k_r θ (k_⊥² = 2h k_r k_u). The
+discrete radial operator carries only k_⊥ ≤ 2/dr: a coarser cell throws the wave back, and where the grid stretches
+with k_⊥ dr > 1 the numerical dispersion turns grazing waves back (numerical total internal reflection). The turned
+cone then collects near the beam. Example: in `benchmarks/harmonics/fel.deck` the 2nd harmonic (h = 2) has
+k_⊥ = 1.22 µm⁻¹ (a 5.1 µm radial structure near the beam); the grid (dr = 1 µm to 40 µm, then stretching) turns it
+back at 40–52 µm. `--check` warns for every harmonic up to
+`output.fel_harmonics` whose cone the grid turns back before the cone leaves the run (θ times the undulator length plus
+3σ, at most r_absorber). Keep k_⊥ dr ≲ 1 wherever the cone propagates; stretch only behind the absorber.
 
 **Test: coherent spontaneous emission** (`examples/undulator_emission.deck`). The setup:
 - planar undulator, 50 periods of 14.22 mm, K = 0.5;
@@ -593,13 +670,90 @@ one pass damps kh = 0.2 (31 cells per wavelength) by 1%, and kh = π/2 by 50%.
 Such a bunch is under-resolved anyway. `beam_filter = 0` reproduces the
 earlier versions except in the rearmost slice.
 
+## Long plasma wakes: prediction of the plasma current (`numerics.predictor`)
+
+**Problem.** The R update of slice n (Eq. of the method paper, `Discretization`) needs j¹ of the two
+half-cells next to the slice, but the half-cell behind it, n − ½, is pushed only after slice n has been
+solved. Up to version 1.0 its current was predicted by that of the old level, j⁰, and R(n) was corrected
+afterwards; the fields E_z, B_z, L of slice n and the particles pushed with them kept the error
+(Δ/4)(j¹ − j⁰). In a long plasma wake this error drives the plasma at its resonance, and the response adds up
+along ζ: a plasma wave at k ≈ 0.9 k_p grew from the noise by a factor per step that rises with the length of
+the window (×2 for 20 c/ω_p, ×10 for 60, ×35 for 200, at Δ = 200 c/ω_p; AWAKE self-modulation at 7e14 cm⁻³).
+A smaller Δ did not help: within Δh ≤ 4/ω_p² it grew per distance even faster, and at Δ = 2 c/ω_p the mode at
+k_ζ = ω_p/2 took over. The same error is the origin of the "fast
+spurious modes" behind the bubble that the next section treats by smoothing, and it made the wake after the
+first step 28 % too low (5.2 … 5.4 × 10⁻⁶ E0 for Δ = 20 … 200 c/ω_p instead of 7.35 × 10⁻⁶ from the linear theory,
+uniform plasma, n_b/n0 = 10⁻⁵, k_p σ_r = k_p σ_z = 1).
+
+**Remedy** (`numerics.predictor = zeta`, the default): j¹ of half-cell n − ½ is predicted by j⁰ there plus
+the change j¹ − j⁰ extrapolated linearly along ζ from the half-cells n + ½ (this pass) and n + 3/2 (final),
+so the error is (h ∂_ζ)²(j¹ − j⁰) instead of j¹ − j⁰. A steady wake is predicted exactly, as before. The
+R correction after the half-cell is final is unchanged. In the MPI pipeline the front rank sends j¹ − j⁰ of
+its last half-cell with the prediction it already sends; serial, OpenMP, GPU emulation and MPI (2–4 ranks,
+host and engine march) give identical results.
+
+**Passes per slice.** The prediction now depends on half-cell n + ½ of the current pass with the weight 2, so
+the passes must converge: windows of many plasma periods need `numerics.iterations = 4` (a warning above 30
+periods). Uniform plasma, weak driver, window 1000 c/ω_p (160 periods), h = 1/64 c/ω_p, max |E_z| on the axis
+(linear theory 7.35 × 10⁻⁶ E0, noise included):
+
+| Δ [c/ω_p] | 2 passes | 3 passes | 4 passes | 6 passes |
+|---|---|---|---|---|
+| 200 (16 steps) | grows ×8 per step, 2 E0 at step 9 | rises to 2.8 × 10⁻⁴, back to 8.5 × 10⁻⁶ | 8.1 … 8.3 × 10⁻⁶, flat | 8.0 … 8.3 × 10⁻⁶ |
+| 50 (40 steps) | grows ×1.8 per step | 8.2 … 8.4 × 10⁻⁶ | 8.2 … 8.3 × 10⁻⁶ | 8.1 … 8.3 × 10⁻⁶ |
+| 20 (60–80 steps) | grows ×1.4 per 5 steps | 8.2 … 8.3 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ |
+
+With up to ~20 periods (laser wakefield windows) 2 passes are enough.
+
+**One pass is not enough with plasma.** `numerics.iterations = 1` uses the predicted currents without
+correction, and the laser then gains energy from step to step. Flying-focus LWFA in neutral He (LASY
+axiparabola-type pulse, 5 × 10¹⁷ cm⁻³ after full ionization, Δ = 5 µm, h = 0.04 µm, 10 mm; reported by a user
+against FBPIC), laser field energy at z = 0 → 10 mm:
+
+| passes | smoothing a | He | energy [J] |
+|---|---|---|---|
+| 1 | 0 | neutral, ADK | 0.854 → 1.006 (+18 %) |
+| 2 | 0 | neutral, ADK | 0.854 → 0.841 |
+| 2 | 0.25 µm | neutral, ADK | 0.854 → 0.841 |
+| 2 | 0.25 µm | pre-ionized | 0.854 → 0.845 |
+| FBPIC | | neutral, ADK | 0.855 → 0.842 |
+
+In vacuum 1 and 2 passes keep the energy constant (0.8541 J over 2 mm), so the growth is the uncorrected
+coupling to the plasma, not the field solve. The code warns about `iterations = 1` with plasma.
+
+**Checks.**
+- `tests/long_wake.sh` (window 60 c/ω_p, Δ = 100 c/ω_p, 8 steps): the k_p amplitude of E_z on the axis is
+  3.661 × 10⁻⁷ m c ω0/e against 3.677 × 10⁻⁷ from the linear theory (Keinigs & Jones), flat from step 6 to 8;
+  with `predictor = level` it is 14 000 times larger.
+- LWFA against FBPIC (`benchmarks/lwfa_fbpic`, cold plasma, no smoothing; rms of E_z − E_z(FBPIC) at 100 µm behind
+  the bubble, 2 … 12.5 µm / in the first periods, 14 … 38 µm, in m c ω0/e):
+
+  | Δ | `level` | `zeta` |
+  |---|---|---|
+  | 2.5 µm | 0.0018 / 0.0004 | 0.0005 / 0.0005 |
+  | 1.25 µm | 0.0098 / 0.0005 | 0.0022 / 0.0005 |
+  | 5 µm | 0.0531 / 0.0048 (spikes ±0.5) | 0.0008 / 0.0004 |
+  | 5 µm, smoothing a = 2 k0⁻¹ | 0.0079 / 0.0009 | 0.0008 / 0.0005 |
+
+  The rest at Δ = 1.25 µm is the noise of electrons switching levels (`trap_advance`, next section).
+- Dense plasma (0.01 n_c, `benchmarks/laser_evolution`), cold, without smoothing, at 100 / 300 µm: laser energy
+  W/W0 0.962 / 0.726 (FBPIC 0.967 / 0.731), peak |E_x| 0.797 / 0.373 (FBPIC 0.780 / 0.331); with `level` the
+  peak |E_x| was 1.884 / 0.913. The same with 4 passes and with Δ = 1 µm.
+- `tests/regression.deck` (laser wake, 2 plasma periods, a density ramp): the laser changes by < 0.2 %, the wake
+  ahead of the bubble back by 1 … 2 %; behind it the axis caustic changes (density spike 124 → 50 n0). The
+  reference in `tests/reference` was regenerated.
+
+`numerics.predictor = level` restores the old prediction.
+
 ## Bubble closure: regularization (`plasma.smooth_length`)
 
 **Problem.** Behind the first bubble of a laser wake the on-axis E_z can show oscillations on the scale of the
 laser wavelength that FBPIC does not have (`benchmarks/lwfa_fbpic`, ζ < 13 µm at 100 µm). They come from the back
 of the bubble, where the electrons that close it converge on the axis: for a cold plasma and a perfectly
 axisymmetric driver this is a caustic, with a density that grows without bound as the cells are refined (124 n0
-on the axis in `tests/regression.deck`). Two numerical effects of the scheme act there.
+on the axis in `tests/regression.deck`). Two numerical effects of the scheme act there. (The numbers in this
+section are for the old current prediction, `numerics.predictor = level`. The fast spurious modes came mostly from
+its error; with the default `zeta` the cold plasma matches FBPIC without smoothing, see "Long plasma wakes".)
 - **Fast spurious modes.** The reduced field equations have a resonance at k_ζ = ω_p/2 where ω → ∞ (the
   dispersion relation ω = 2k_ζω_p²/(4k_ζ² − ω_p²)). The trapezoid in s maps such modes onto undamped
   modes that change sign from step to step. With the local ω_p of the density spike they fall on resolved
@@ -696,6 +850,292 @@ breathing instability is gone completely; m = 1 needed the charge-conserving flu
 longitudinal space charge of the sharp-edged flat-top (±10 % in γ per mm at head and tail, physical) mismatches head
 and tail to the lens; the shell model, which has no E_z, does not describe that. Both switches are off by default;
 `beam_consistent` is not yet available in the MPI pipeline.
+
+## Metal walls: waveguides and beam pipes of variable radius
+
+The block `wall { … }` puts a perfectly conducting lateral wall at r = r_w(z) (constant, a table or a function of z;
+`docs/input_deck.md`). It models hollow metal waveguides, metal capillaries and beam pipes, also tapered ones.
+
+**Why it fits the method.** With s = z (GT2) a level is the plane z = s: at every step the whole window lies at one
+z, so the wall has one radius for all slices. The wall changes only the radial boundary of the field solver from
+step to step; it is not staircased or tilted in ζ.
+
+**Discretization.** The faces 0…K and centres 0…K−1 lie inside, ρ_K ≤ r_w < ρ_{K+1}; the fields outside are zero.
+- E_z (centres) has its ghost value at r_w itself (the last cell ends at the wall), so the wall can lie anywhere in a
+  cell; the radial Laplacians then have the eigenvalues of the tube: k a = 3.8315 / 7.0129 (TM₁ₙ, exact 3.8317 /
+  7.0156) and 1.8411 / 5.3302 (TE₁ₙ, exact 1.8412 / 5.3314) at a = 60 cells.
+- B_z (faces) has zero flux through r_w (E_φ = 0): the control volume of face K is [c_{K−1}, r_w].
+- **Sloped wall:** on r = r_w(z) the tangential field is E_z + r_w′ E_r, so E_z = −r_w′ E_r at the wall (E_r of face
+  K at level s⁰ in the same slice, r_w′ the slope of the step). This carries the radial Poynting flux
+  S_r = r_w′ S_z that pushes the field away from a narrowing wall. With E_z = 0 the wall swallowed the field of the
+  annulus it cut off at every step: in the test below a third of the energy, the peak 20 % low.
+- **Widening wall:** the field at the old wall (E_r, B_φ, B_z of face K, E_z at the wall) continues into the opened
+  annulus; E_φ there starts at 0. Zeros there made a jump of the normal field that radiated high TM modes (E_z five
+  times too large).
+- Particles are lost at r ≥ r_w(s¹); no plasma is loaded inside the metal. The radial absorber is off.
+
+**Test (`tests/wall.sh`, ctest `wall_serial`, `wall_openmp`, `wall_gpu_emulation`).** A Gaussian laser (λ = 0.8 µm,
+w0 = 5 µm, a0 = 0.01, vacuum) in a 12 µm tube is a mixture of TE₁ₙ and TM₁ₙ modes, which beat (TE₁₁ collects 3 rad,
+TM₁₁ 13 rad over 2 mm; the field changes by 17–32 % rms). The reference `tests/wall.py` decomposes the code's own
+initial field into the modes of the tube, for every Fourier component κ in ζ, and evolves them with the dispersion
+relation of the scheme (paper, Eq. disp); in a taper every mode keeps its normalized amplitude (adiabatic local
+modes). dr = 0.2 µm, dζ = λ/16, dz = 5 µm, 2 mm:
+
+| case | E_x: rms diff / max | E_z: rms diff / max |
+|---|---|---|
+| straight, a = 12 µm (also 11.95, 12.1, 12.17 µm: inside a cell) | 0.8 % | 1.2 % |
+| same, dz = 1 µm | 0.35 % | 0.7 % |
+| narrowing, 12 → 9 µm | 1.0 % (peak 5.4514 vs 5.4486 × 10⁻³) | 2.7 % |
+| narrowing, 12 → 9 µm, dz = 1 µm | 0.5 % | 1.5 % |
+| narrowing, 12 → 7 µm | 1.8 % | 4.8 % |
+| widening, 9 → 12 µm (w0 = 3.5 µm) | 1.4 % | 3.7 % |
+| *no wall (a 12 µm reference)* | *22 %* | *24 %* |
+| *wall at 12.5 µm (a 12 µm reference)* | *23 %* | *27 %* |
+| *narrowing with E_z = 0 on the sloped wall* | *4.7 % (peak 20 % low)* | *6 %* |
+
+Against the continuum relation ω = 2κk⊥²/(4κ² − k⊥²) the straight tube agrees to 6.6 % at dζ = λ/16 and 2.4 % at
+λ/32: that difference is the ζ discretization of the scheme, the same without a wall. A plasma in the tube has the
+deck's density inside and none in the metal. All backends, the pipelined step and MPI on 3 ranks (also the device
+march) agree with the serial run to all printed digits (`tests/mpi.sh`), and so does a real GPU (RTX 5090, ctest
+`wall_cuda`: the same numbers as above); without a wall block the results are
+bit-identical to the code before.
+
+**Limits.** Backward waves are outside the model (∂_s L is dropped): reflections at steps, irises and corrugations
+(disk-loaded structures, Bragg reflection) are missing, so the radius must change slowly on the scale of the guided
+radiation (|r_w′| ≪ 1, adiabatic tapers). The guided modes must be paraxial, k⊥ = j/r_w ≪ k. Not combined yet: a
+varying radius with `numerics.theta_stiff`; the wall with a `flying_focus` block or `laser.inject = boundary` (they
+need the absorber). Dielectric linings: section "Dielectric media".
+
+## Dielectric media: dielectric-lined tubes, Cherenkov radiation, lasers in media
+
+The block `dielectric { … }` puts a medium of constant permittivity ε(r, z) into the field equations (layers or a
+function of r and z; `docs/input_deck.md`). With a `wall` as the metal jacket it models a dielectric wakefield
+accelerator (DWA); an open medium gives Cherenkov radiation; a laser in a gas or glass slips back by its group delay.
+
+**Why it fits the method.** With s = z a level is the plane z = s, so ε is constant along ζ on a level: one radial
+profile per step, like the wall radius. The field of a bunch at v ≈ c in a structure is synchronous (phase velocity
+c): it is stationary in the window, the march in ζ is causal for it (group velocities < c), and for such fields the
+reduced GEM system is exact (∂_s L, which the system drops, vanishes).
+
+**Equations.** The medium enters only as the polarization current J = ∂_t P = −∂_ζ(χE), χ = ε − 1:
+∂_s R = … − J_⊥ (the R update), ∂_ζ L = ½(… + J_⊥), and ε ∂_ζ E_z = −(curl B)_z + j_z. B_z is unchanged (Faraday).
+
+**Discretization.**
+- J is integrated over every half-cell with the trapezoidal rule, like L and E_z:
+  (J_n + J_{n+1})/2 = −χ(E_{n+1} − E_n)/h_n. In the L and E_z equations this is exactly the half-cell current
+  −χ(E_{n+1} − E_n)/h; in the R update J_n enters with the s-trapezoid, −Δ[(1 − θ)J⁰_n + θJ¹_n].
+- J_n is linear in E_n = (R_n + L_n)/2, so R and L of a node follow from a local 2×2 relation; the half-cell equations
+  for B_z and E_z stay linear in (E_z, B_z) of the slice. In vacuum the identities CE(Ge, (im/c)e) = 0,
+  CB((im/ρ)b, gb) = 0 decouple them; where χ changes with r, E_z and B_z of the modes m ≥ 1 couple (the physical
+  TE–TM mixing of hybrid modes). With (b₀, e₀, b₁, e₁, …) interleaved, the system of every mode is pentadiagonal; its
+  matrix is built by probing the same operator that gives the right-hand side (5 columns at a time, checked against
+  a random vector), so matrix and right-hand side agree by construction, also at the wall (`src/dielectric.cpp`).
+- J of the transverse components is a running value along ζ (zero ahead of the window): J¹ from the slices of the
+  march, J⁰ recomputed from the stored slices of s⁰. There is no extra state: checkpoints and restarts are unchanged.
+- **Stability:** a von Neumann analysis of the slab analogue (χ = 10⁻⁴ … 9, all h, Δ, k⊥, θ = k_ζh) gives |G| = 1, a
+  neutral scheme like the vacuum one. A one-sided ζ-derivative of χE in the R update (slices n, n+1, n+2) is unstable
+  (amplified at the half-cell resonance of the L/E_z march), and a centred one would need slice n−1 (a predictor).
+- Interfaces: cell average of ε for E_z, E_φ (tangential), harmonic mean for E_r (normal; D_r is continuous).
+
+**Tests (`tests/dielectric.sh`, `tests/dielectric.py`; ctest `dielectric_serial`, `dielectric_openmp`,
+`dielectric_gpu_emulation`).**
+1. ε = 1 through the dielectric solver reproduces the vacuum solver (laser in a metal tube, map identical).
+2. **Dielectric wakefield accelerator** (`tests/dielectric_dwa.deck`): vacuum channel a = 50 µm, ε = 3.8 (quartz)
+   up to the copper wall at b = 75 µm, a 100 pC, 10 µm, 5 GeV bunch offset by 10 µm, entering the structure at
+   z = 0.1 mm; dr = dζ = 0.5 µm, dz = 20 µm, 1 mm of structure. The reference is the modal theory of the synchronous
+   modes: TM₀ₙ (E_z uniform in the channel, J₀/Y₀ in the lining, matched E_z, B_φ), the loss factor
+   κ = E₀²/(4u(1 − β_g)) from the stored energy u and the power P (β_g = P/uc), and the on-axis wake
+   E_z = Q Σ 2κ_n e^{−k_n²σ²/2} cos k_n(ζ − ζ_b). For the offset (m = 1) the hybrid modes HEM₁ₙ follow from the
+   6×6 matching of E_z, B_z, E_φ, B_φ:
+
+   | mode | k theory [1/mm] | code | amplitude theory | code |
+   |---|---|---|---|---|
+   | TM₀₁ | 32.908 | 33.066 (0.5 %) | 1.2497e-4 | 1.2533e-4 (0.3 %) |
+   | TM₀₂ | 94.103 | 94.493 (0.4 %) | 5.446e-5 | 5.354e-5 (1.7 %) |
+   | TM₀₃ | 162.53 | 163.98 (0.9 %) | 1.161e-5 | 1.159e-5 (0.2 %) |
+   | HEM₁₁ (on-axis E_x) | 28.742 | 28.919 (0.6 %) | | |
+   | HEM₁₂ | 48.058 | 48.206 (0.3 %) | | |
+
+   The wavenumber error is that of the radial grid (TM₀₁, a = 50.125 µm inside a cell: 3.5, 2.0, 1.2 × 10⁻³ at
+   dr = 0.5, 0.25, 0.125 µm; the fit of 2–3 periods adds ~10⁻³).
+   **Energy flow.** The wake behind the bunch fills from the entrance at the group velocity: it ends 1506 µm behind
+   the bunch after 1 mm, against s(1/β_g − 1) = 1502 µm with the β_g = 0.3997 of the GEM system (0.3 %). Maxwell's
+   β_g is 0.3251 (P/u and the derivative of the exact dispersion relation agree), i.e. 2076 µm: the reduced system
+   drops ∂_s L, and in a dense dielectric L = (1 − ε)E_r is not small. The steady wake (wavenumbers, amplitudes) is
+   exact; filling transients and the end of the wake are those of the GEM system (TM₀₂: 0.545 vs 0.503, TM₀₃: 0.607 vs
+   0.576). Alexander's decision (2026-11-05): keep the GEM model and document this.
+3. **Cherenkov cone** (`tests/dielectric_cherenkov.deck`): a 3 µm bunch in an open ε = 2 medium: the |E_z| front lies
+   on ζ = ζ_b − r tan θ, tan θ = √(ε − 1) (cos θ = 1/n): slope 1.0081 against 1 (0.8 %).
+4. **Laser in a medium** (`tests/dielectric_laser.deck`, ε = 1.1, a wide pulse): it slips back by (n_g − 1) z with
+   n_g − 1 = 0.048811, against the scheme's dispersion 0.048803 (closed form for k⊥ → 0: ω(κ) = (2/Δ)
+   arctan((Δu/h) tan(κh/2)), u = 2χ/(4 + χ)), the GEM continuum 0.048780 and Maxwell's 0.048809.
+
+All backends agree with the serial run (OpenMP and the device engine in the GPU emulation to rounding); the
+pipelined step on one rank and MPI on 2 and 3 ranks are bit-identical to it (the running J crosses the blocks in the
+F message, the corrected L of slice b in the R message; `tests/mpi.sh`). Without a `dielectric` block the code paths
+are unchanged.
+
+Example: `examples/dwa_proton_microbuncher/` (a 1 mm quartz-lined tube with an external FODO channel, drive beam,
+proton microbuncher and klystron; its thin lining fills the wake within 4 % of Maxwell's group velocity).
+
+**Corrugated metal pipes** (a THz source; `tests/corrugated.*`, ctest `corrugated`).
+
+The corrugation itself is outside the model:
+- its fields vary along z on the scale of the period p ≪ λ (near-wall Floquet harmonics, standing fields in the
+  slots), so ∂_s L is large there;
+- in a slot (k_z = 0) the reduced system has k⊥² = 4k²/3 instead of k²;
+- strongly evanescent harmonics cannot be represented at all.
+
+Small corrugations can instead be replaced by an equivalent thin dielectric layer, for which GEM is exact
+(synchronous wake):
+- **Equivalent layer.** Take a bore radius a and corrugations of depth h, period p and gap g, with h, p ≪ a
+  (K. Bane, G. Stupakov, PRST-AB 6, 024401 (2003)). A slot is a short-circuited parallel-plate line, so the wall
+  has the surface impedance Z_s = −iZ₀k h g/p. A dielectric layer of thickness h has Z_s = −iZ₀k h (ε − 1)/ε.
+  The two are equal for
+
+  `wall { radius = a + h }`  and  `dielectric { epsilon = p/(p − g); r_in = a; r_out = a + h }`.
+- **Leading order in h/a:** k₀ = √(2p/(a h g)), 1 − β_g = 4hg/(ap), κ = Z₀c/(2πa²).
+- **The modal theory of the layer converges to these values as h/a → 0** (a = 1 mm, p = 230 µm, g = 115 µm,
+  ε = 2):
+
+  | h | k₀ layer / formula [1/mm] | 1 − β_g layer / formula | κ layer / formula [kV/pC/m] |
+  |---|---|---|---|
+  | 240 µm | 3.727 / 4.082 | 0.305 / 0.480 | 13.2 / 18.0 |
+  | 60 µm | 7.968 / 8.165 | 0.107 / 0.120 | 16.6 / 18.0 |
+  | 15 µm | 16.23 / 16.33 | 0.029 / 0.030 | 17.6 / 18.0 |
+
+- **Code run** (h = 60 µm: λ = 789 µm, 380 GHz; 1 nC, σ_z = 50 µm, 39 mm of structure; 80 steps, 26 s serial).
+  The on-axis wake behind the bunch has wavenumber 7.9586/mm against 7.9680 for the layer (−1.2·10⁻³) and
+  amplitude 30.70 MV/m against 30.68 MV/m (+8·10⁻⁴).
+- The leading-order formulas give 8.165/mm and 33.1 MV/m. That difference is the h/a correction of the
+  equivalence, not a numerical error.
+
+Limits:
+- The layer describes the synchronous mode, i.e. the wake behind a bunch with σ_z ≳ p.
+- It does not describe the higher slot resonances, Smith–Purcell emission (p > λ/2), or the reflection at the
+  ends of the structure.
+- Open structures without a jacket (rings) would need an anisotropic ε: the metal annuli short E_r and E_φ.
+
+**Limits.** Backward waves are outside the model: reflections at the ends of the medium, at steps and at the jacket
+in −z are missing; gratings and dielectric laser accelerators are out of scope. The energy flow of non-synchronous
+fields follows the reduced system (above). A laser in a dense medium has the index (4 + 3χ)/(4 + χ), and the step
+must resolve its dephasing, k (n − 1) Δz ≲ 1 (no gain over full PIC for lasers in glass; none needed in vapours).
+The medium has no dispersion (for a resonant medium: section "Bound electrons"). Not combined yet:
+`numerics.theta_stiff`, `numerics.beam_consistent`; the medium must stay inside `grid.r_absorber` or a wall.
+
+## Bound electrons: a resonant medium (Maxwell–Bloch), e.g. Rb vapour at 800 nm
+
+The block `bound_electrons { … }` adds the bound electrons of a neutral gas as a resonant medium
+(`docs/input_deck.md`). Motivation: the ionization of Rb vapour by an 800 nm pulse (AWAKE). The laser lies between
+the D1 (795 nm) and D2 (780 nm) lines, and at ionizing intensities the Rabi frequency of these transitions exceeds
+the detuning by an order of magnitude (10¹² W/cm²: Ω ≈ 9·10¹⁴ s⁻¹ vs Δ = 1.5·10¹³ s⁻¹ for D1). The transitions
+saturate, and a linear (Lorentz) model does not apply: the medium is a V-type atom with its density matrix.
+
+**Model.**
+- Every cell centre carries, on `n_phi` angles, the 3×3 density matrix ρ of a V-type atom: ground 0, excited 1, 2.
+- H = [[0, −a₁E, −a₂E], [−a₁E, ω₁, 0], [−a₂E, 0, ω₂]], with E the field along the laser polarization (x; scalar
+  dipole).
+- a_j = d_j/(e a₀ α) is the Rabi frequency per unit field. The effective dipoles come from the oscillator
+  strengths: d_j² = f_jℏe²/(2mω_j), i.e. D1 1.73 e a₀, D2 2.44 e a₀. The weak-field limit is then exactly the Lorentz
+  susceptibility χ = n_a Σ f_j/(ω_j² − ω²).
+- The carrier is resolved (no rotating-wave approximation).
+- Polarization P = n_a Σ_j cP_j Re ρ_0j. The medium current J = ∂_t P enters the field equations like the
+  polarization current of a dielectric (section "Dielectric media"):
+  - the half-cell current n_a(P_n − P_{n+1})/h_n goes into the L update;
+  - the slice current from the trapezoidal rule of the half-cell currents goes into the R update (s-trapezoid of
+    both levels).
+- Level s¹ is advanced with the fields of the current pass and committed with the final fields of the slice.
+  Level s⁰ is recomputed from the stored slices. There is no state between steps: with s = z every level is a
+  fresh plane of atoms.
+
+**Ionization (`ion = <ion block>`, depopulation).**
+- The atoms are the neutral atoms of an ionizable ion species.
+- Every level ionizes with its own ADK rate: ground 4.177 eV; excited I_p − ℏω_j ≈ 2.6 eV, beyond barrier
+  suppression already at 10¹¹–10¹² W/cm². The rate is the standard ADK (l* = n* − 1, factor 2l + 1, m = 0; ground s,
+  excited p; `AdkRates::setup` with the orbital quantum numbers, ctest `adk`), the same form as VLPL's field ionization
+  (Alexander, 2026-11-09). Before, the bound electrons used the l* = 0 prefactor of the ion species without 2l + 1: the
+  standard rates are 0.418 (5s), 0.719 (5p₁/₂) and 0.708 (5p₃/₂) of those.
+- In ρ the level k decays as e^{−w_k t} and the coherence kl as e^{−(w_k+w_l)t/2}. The trace is the neutral
+  fraction; the oscillators are depopulated, and the removal of their dipoles is part of J.
+- The macro-atoms of the species ionize 0 → 1 with Σ_k p_k w_k (populations at their position). So the grid's neutral
+  fraction is the expectation of the particle ionization, and both use the same ADK tables.
+
+**Discretization.**
+- One step per half-cell: Strang splitting of the losses (exact exponentials) around a unitary Cayley step
+  ρ → UρU⁺, U = (1 + iK)⁻¹(1 − iK), K = (h/2)H(Ē), with Ē the midpoint field. It is unconditionally stable, second
+  order, and keeps the trace without losses.
+- The transition frequencies are pre-warped (ω → (2/h) tan(ωh/2)), which makes the free precession exact. Without
+  this the resonance of the scheme would sit 0.3 % low at ωh = 0.2, which near a line changes χ by factors.
+- The coupling is scaled by tan x/(x cos x), x = ω_j h/2. This removes the second-order loss of a resonant drive by
+  the midpoint average and the Cayley map: Rabi flopping error 0.023 → 0.004 at h = λ/32.
+- m = 1 on the axis: E_r,₁(0) = −iE_φ,₁(0) (regularity). Before this the first cell saw half of E_r, and the phase of
+  the laser on the axis was 20 % short.
+- The slice current from the local ∂_t P of the discrete state would be a small difference of two large terms. It
+  failed (27 % of the static χ), so the trapezoidal rule is used, as for the dielectric.
+
+**Tests (`tests/bound.sh`, `tests/bound.py`; ctest `bound_serial`, `bound_openmp`):**
+
+1. **Rabi flopping** (`tests/bound_rabi.deck`): a thin resonant line (no effect on the pulse), Gaussian pulses of area
+   π/2, π, 3π/2, 2π. The excited population after the pulse is compared with the two-level Schrödinger equation
+   without the rotating-wave approximation, integrated (RK4) in the code's own field at the atoms:
+
+   | area | code | reference | difference |
+   |---|---|---|---|
+   | π/2 | 0.4982 | 0.4992 | 1.0·10⁻³ |
+   | π | 0.99998 | 0.99999 | 1.1·10⁻⁵ |
+   | 3π/2 | 0.5054 | 0.5024 | 3.1·10⁻³ |
+   | 2π | 5.3·10⁻⁵ | 1.0·10⁻⁵ | 4.3·10⁻⁵ |
+
+   The node alone converges as h²: 3π/2 at h = λ/32, λ/64, λ/128, λ/256 gives 0.5038, 0.5009, 0.5002, 0.5001 against
+   0.5.
+2. **Weak field in Rb vapour** (`tests/bound_linear.deck`: D1 + D2, 4·10¹⁷ cm⁻³, an 840 nm pulse, 50 µm). The spectral
+   phase of the on-axis field is compared with (n(ω) − 1)ωz of the Lorentz susceptibility of the two lines, after
+   dividing by a vacuum run (diffraction). Over χ = 1.3–4.1·10⁻³ the rms difference is 0.24 % of the phase; the
+   amplitude is unchanged to 1 %.
+3. **Static limit** (`tests/bound_static.deck`): a line at 10 ω0 (χ = 0.01, ω_j h = 0.24) against the dielectric
+   ε = 1.01. The group delays differ by the dispersion of the line, 1.096·10⁻⁴ against the Lorentz 1.010·10⁻⁴; the
+   bound and dielectric n_g − 1 agree to 0.17 % after it.
+4. **Ionization** (`tests/bound_ionize.deck`: a thin Rb vapour as a neutral ion species, 33 fs). The neutral
+   fraction on the axis is compared with the V-type atom with ADK losses per level, integrated in the code's field:
+
+   | a0 | ionized | grid | reference | particles vs grid (ionized fraction, area mean) |
+   |---|---|---|---|---|
+   | 4·10⁻⁴ | 32 % | 0.6806 | 0.6774 | 0.0054 vs 0.0056 |
+   | 10⁻³ | 96 % | 0.0351 | 0.0412 | 0.2174 vs 0.2195 |
+
+   (dζ = λ/64; at 10⁻³ the residual 3 % neutrals converge with dζ: grid − reference 9.5, 5.8, 2.4·10⁻³ at λ/32, λ/64,
+   λ/128.)
+
+   At a0 = 4·10⁻⁴ ground-state ADK alone leaves the atoms neutral; the 32 % come almost only from the resonantly
+   excited 5P. Rb then ionizes completely at a0 = 5·10⁻⁴ instead of ~10⁻³ (ground-state ADK alone at 10⁻³: ~31 %). The
+   resonant excitation moves the ionization front of the vapour. A scan of the neutral fraction on the axis (same deck,
+   dζ = λ/64, standard ADK):
+
+   | a0 | 3·10⁻⁴ | 4·10⁻⁴ | 5·10⁻⁴ | 6·10⁻⁴ | 7·10⁻⁴ | 8·10⁻⁴ | 10⁻³ | 1.2·10⁻³ | 1.5·10⁻³ |
+   |---|---|---|---|---|---|---|---|---|---|
+   | neutral | 0.997 | 0.681 | 0.0019 | 0.0022 | 0.011 | 0.025 | 0.035 | 0.0023 | 0 |
+
+   Above 5·10⁻⁴ the residual neutral fraction grows again up to 10⁻³ before ground-state ADK takes over: the
+   stronger drive presumably shifts and saturates the D lines (less time-averaged 5P population), so the excited-state channel
+   weakens. (With the earlier l* = 0 rates the table above read 42 % at 4·10⁻⁴ and 97 % at 10⁻³.)
+
+**Backends.** The medium runs on all backends.
+- Engine (OpenMP, CUDA): node kernels per slice in the device march: field at the nodes, Bloch step, projection to
+  the modes, commit with the R/L correction. The current enters the slice solve and the macro-atoms ionize with the
+  populations on the device. The host sets the atom densities of the step and the atoms entering the block; the
+  state is uploaded before every march and downloaded after it.
+- MPI: the atoms of both levels at the block edge travel in the F message.
+- Agreement with serial (ionizing Rb deck, `tests/mpi.sh`, ctest `bound_gpu_emulation`):
+  - OpenMP and the GPU emulation agree to 1e-9 (maps identical);
+  - the pipelined step on one rank and 2 or 3 ranks are bit-identical, on the host and in the device march.
+
+**Limits.**
+- Scalar dipole along x: circular polarization and the orientation of other field components are not modelled.
+- No hyperfine, Zeeman or Doppler structure; T1 and T2 are optional constants.
+- ADK for the excited 5P: the standard form with l = 1, m = 0 and the 5P binding energy (beyond barrier suppression
+  the rate is capped at the maximum of the ADK expression, as for all levels). The ion species (block `ion`) keep the
+  l* = 0 prefactor for now (open: whether they should get the standard form too).
+- The physics questions of the Rb case (the choice of the V-type atom, ADK per level) were decided by Alexander.
 
 ## Corrections of earlier versions
 
@@ -794,13 +1234,24 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
    predictor–corrector with a second solve of s¹ (10.413 µm) and as the converged λ_u/64 run. Stable at λ_u/8.
    Extrapolating the field from s⁻¹ and s⁰ instead made it worse. Without undulators nothing changes
    (`auto` = `level`), bit for bit. Test: `tests/planar_step.sh`.
+10. **Edges of transport elements inside a sub-step** (found with a FODO channel whose quadrupole lengths are
+    not multiples of the sub-step). The push kicked the momentum with the field at one point of
+    each sub-step, so a quadrupole or plasma lens acted over a whole number of sub-steps: an edge inside a sub-step
+    changed its effective length by up to one sub-step, and a hard-edge solenoid (`ramp = 0`) gave no edge focusing
+    at all. Now the field is averaged over the interval of the kick, [z − Δz/2, z + Δz/2]: an element contributes
+    with the fraction it covers, a solenoid with the mean of B_z and of dB_z/dz (the exact integrated edge kick).
+    Test (`tests/quad_edges.sh`, ctest `quad_edges`): six touching 4.37 cm quadrupoles (±100 T/m, γ = 1000) with the
+    edges off the 5 mm sub-steps; the rms size ratio of a cold beam is x 0.63188, y 1.30038 against 0.63188 and
+    1.30029 from the linear optics (before: x 0.72429, y 1.19758, 15 % and 8 % off); a hard-edge 5 T solenoid gives
+    r 0.96046 against 0.95846 (before: 1.00000, no focusing). The single quadrupole of `tests/transport.sh`, edges
+    on the grid, is now exact too (x 0.38374, y 1.64531; before 0.38409, 1.64493). Also on a GPU (RTX 5090).
 
 ## What is new compared with the prototype
 
 - **Input deck:** the deck, with physical units, validation and overrides, replaces the `key=value` command-line parameters.
 - **Several laser pulses:** each pulse has its own wavelength, focal position (initialized with wavefront curvature and Gouy phase), polarization (linear at any angle, or circular) and CEP.
 - **Plasma profiles:** a piecewise-linear longitudinal profile, and a uniform, parabolic-channel or tabulated radial profile.
-- **Several bunches:** electrons or positrons (the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
+- **Several bunches:** electrons, positrons or protons (the charge-to-mass ratio is stored per particle), Gaussian or flat-top shape, offsets, and a waist position.
 - **Ions:** mobile ion species and field ionization (see above).
 - **Free-hand grids** along r, ζ and z, and **undulators** acting on the particles (see above).
 - **Lasers from and to LASY files:** import (exact propagation, boundary injection) and export of envelope files.
@@ -843,6 +1294,7 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
 - **Laser focusing in vacuum:** a pulse started 0.2 mm before focus (w0 = 5 µm, zR = 98 µm) follows a0/√(1+((z−z_f)/zR)²) to within 3% over 0.4 mm. At focus it reaches 0.098 instead of 0.100.
 - **Bunch initialization:** the initial rms sizes, emittances, energy spread and flat-top length agree with the deck.
 - **Function profiles:** a deck with the plasma ramp, the Gaussian laser and a flat-top bunch written as functions (`tests/functions.sh`) reproduces the built-in profiles to rounding. In a tapered undulator, K = 0.5 → 0.8, the slippage is 8.83 µm against 8.78 µm from ∫(1 + K²/2)/(2γ²)dz.
+- **Flying focus of several components (beats):** a J0 core (40 mrad) plus 0.2 J1 e^{iφ} (100 mrad), circularly polarized, fed through the absorber layer in vacuum, against an independent quadrature of the analytic field (`tests/flying_focus_beat.sh`): after 40/80/120 µm the rms difference of E_x is 0.06/0.10/0.15 % of a0, that of the J1 part 3/5/8 % of its rms (numerical dispersion of the 100 mrad cone, ~1.5 % in κ), and the intensity maximum, which turns around the axis on a circle of 1.15 µm with the beat period 190.7 µm, is within 0.04 µm of the reference. Both helicities (J1 part in mode 0, m_max = 1) and linear polarization (modes 0 and 2) agree; the same on a real GPU (RTX 5090). The field fed at level s is, after the step, the incident field of s − Δz/2 (a half-step lag of the feeding, also for a single component): the comparison is made there; without the shift the J1 part differs by κ₁Δz/2 in phase (10 % at Δz = 5 µm). For a beat the lag only turns the pattern by the constant angle (κ₁ − κ₀)Δz/2.
 - **Sign checks:** in the PWFA example the electron witness is accelerated and focused. The same bunch as positrons is decelerated and defocused.
 
 ## Known limitations
@@ -855,3 +1307,13 @@ and tail to the lens; the shell model, which has no E_z, does not describe that.
   dependent; `benchmarks/downramp_fbpic`). Attributed to the GT2 frame of the particles; GT1 should describe it but
   produces stripes in the fields where plasma particles reach the next slow-time level inside the window. No solution
   yet; to be discussed before work starts.
+
+## Logo
+
+`docs/logo/`: light and dark versions of the logo (SVG with the lettering converted to outlines, and PNG at
+twice the size), in the style of the [QUARZ](https://github.com/AlexMPukhov/QUARZ) logo. The G ring holds a
+laser pulse on the axis, the bubble sheaths of its wake and a witness bunch; the amber sparks mark that it was
+made with Claude. `gempic-rz-mark-{light,dark}`: the G alone on a transparent background;
+`gempic-rz-avatar-{light,dark}`: a square 512 x 512 avatar (thicker lines for small sizes). File list and colours:
+[`docs/logo/README.md`](docs/logo/README.md); `make_logo.py` regenerates the SVGs (fonts: Space Grotesk and
+IBM Plex Mono, OFL).

@@ -82,6 +82,12 @@ class Engine {
     // the front rank's prediction at slice b (the R correction of slice b), when a rank is in front
     const std::vector<std::complex<double>>* predFrontR = nullptr;
     const std::vector<std::complex<double>>* predFrontP = nullptr;
+    // numerics.predictor = zeta: the front rank's change j^1 - j^0 of the streaming current at half-cell b
+    const std::vector<std::complex<double>>* dFrontR = nullptr;
+    const std::vector<std::complex<double>>* dFrontP = nullptr;
+    // dielectric: the running polarization currents at slice b from the front rank (FieldSolver::dielGet layout);
+    // none: zero ahead of the window
+    const std::vector<std::complex<double>>* dielFront = nullptr;
     bool absorbFirst = false;  // absorb slice a after the march (rank 0: slice 0)
     int iF = 0, iC = 0;        // pre-absorber values of faces >= iF, centres >= iC are kept (beam_field = mean)
     int callAfter = -1;        // after this many slices: call after() (the R message to the front rank)
@@ -92,14 +98,21 @@ class Engine {
   // beam current is deposited into c1b), slower ones in sim.pendingNext; sim.predRprev / predPprev: the
   // prediction made at slice a; sim.freedCharge
   void marchBlock(const BlockMarch& bm);
+  // dielectric: the running polarization currents at slice n after the march (FieldSolver::dielGet layout)
+  void dielJ(int n, std::vector<std::complex<double>>& out);
   std::vector<Particle> trapped(size_t from = 0);  // particles trapped so far in this march (index >= from)
   // values of the absorber layer before the radial absorber, per absorbed slice (layout of PipelineRun::preAbs)
   bool preAbsorber(int n, std::vector<std::complex<double>>& out);
+  // the pre-absorber values of slice n received from the rank behind (a ghost slice of this block)
+  void putPreAbsorber(int n, const std::vector<std::complex<double>>& v);
+  // level 0 <-> the pre-absorber values of all slices that have them (PipelineRun::swapPreAbs on the device)
+  void swapPreAbsorber();
 
   // internal (public only because nvcc does not allow device lambdas in private member functions)
   struct MarchSpec;
   void march(const MarchSpec& ms);  // the zeta march over slices ms.nHi ... ms.nLo (engine.cpp)
   void absorbSlices(int n0, int n1, double s1, bool keep);  // radial absorber of fnew on [n0, n1)
+  void extendWall();  // the field at the old wall into the annulus opened this step (Simulation::extendWall)
 
  private:
   Simulation& sim;
