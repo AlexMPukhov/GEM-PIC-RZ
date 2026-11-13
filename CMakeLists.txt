@@ -140,6 +140,10 @@ add_executable(test_adk tests/test_adk.cpp)
 target_link_libraries(test_adk gemcore)
 add_test(NAME adk COMMAND test_adk)
 
+add_executable(solver_source tests/solver_source.cpp)
+target_link_libraries(solver_source gemcore)
+add_test(NAME solver_source COMMAND solver_source)
+
 add_executable(compare_columns tools/compare_columns.cpp)
 add_executable(check_physics tests/check_physics.cpp)
 target_link_libraries(check_physics gemcore)
