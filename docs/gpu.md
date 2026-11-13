@@ -86,6 +86,13 @@ Several GPUs (MPI, one rank per GPU): `mpirun -np 4 build-gpu/gempic_rz run.deck
 takes the GPU of its node-local rank (Open MPI, Slurm, MPICH, MVAPICH variables), or the single GPU it sees with
 `srun --gpus-per-task=1`. Each rank pushes its beam (also the mean-field second push) and marches its block of
 slices on its GPU; the beam bookkeeping and the exchanges go through the host (see the MPI section of the README).
+Between the steps the GPU keeps level s⁰ and its currents: the host uploads only the ghost slices it receives from
+the rank behind, and the mean-field push swaps the pre-absorber values of the layer on the GPU. Level s¹ comes back
+to the host after the march (diagnostics, messages, output). A host thread computes the per-step diagnostics of the
+previous level while the GPU marches the next one; only output and checkpoint steps wait for them.
+With `GEMPIC_PROFILE=1`, rank 0 also prints a `pipeline profile` line (host side of the pipelined step: waiting for
+messages, beam push and current, uploads, march, downloads, messages, diagnostics, mean phase; its own and the
+maximum over the ranks) and the time per step after the pipeline has filled.
 
 Then a timing run:
 

@@ -24,7 +24,8 @@ run() {  # <label> <ranks> <deck> <overrides...>
   done=$(grep '^done' $label.log | head -1)
   # "done: <steps> steps in <seconds> s, ..."
   steps=$(echo "$done" | awk '{print $2}'); sec=$(echo "$done" | awk '{print $5}')
-  echo "$NGPU $label $np ${steps:-NA} ${sec:-NA} $(( $(date +%s) - t0 )) rc=$rc $(cat gpu.txt | tr ' ' '_')" \
+  per=$(grep 'per step after the pipeline filled' $label.log | awk '{print $2}')  # (GEMPIC_PROFILE=1, rank 0)
+  echo "$NGPU $label $np ${steps:-NA} ${sec:-NA} $(( $(date +%s) - t0 )) rc=$rc $(cat gpu.txt | tr ' ' '_') ${per:-NA}" \
     | tee -a "$RUNS/scaling.txt"
 }
 L=$SRC/benchmarks/gpu/lwfa_heavy.deck

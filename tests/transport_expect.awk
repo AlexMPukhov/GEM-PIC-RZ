@@ -1,6 +1,11 @@
 # expected size ratio x(zend)/x(0) of a cold beam for tests/transport.sh (RK4 of x'' = -K(z) x)
 # x'' = -K(z) x from z = 0 to zend for x(0) = 1, x'(0) = 0; K(z) given by kind
+#   kind = list: elements "z0 z1 k; z0 z1 k; ..." (k signed, e.g. a FODO channel), sign = -1 for the other plane
 function K(z) {
+  if (kind == "list") {
+    s = 0; for (e = 1; e <= ne; e++) if (z >= ez0[e] && z < ez1[e]) s += ek[e];
+    return (sign == "" ? 1 : sign) * s
+  }
   if (kind == "quad_x") return (z >= z0 && z < z1) ? k : 0;
   if (kind == "quad_y") return (z >= z0 && z < z1) ? -k : 0;
   if (kind == "sol") {  # Larmor frame: (B/(2 B rho))^2 with linear fringes
@@ -9,6 +14,10 @@ function K(z) {
   }
 }
 BEGIN {
+  if (kind == "list") {
+    ne = split(elems, el, ";")
+    for (e = 1; e <= ne; e++) { split(el[e], q, " "); ez0[e] = q[1]; ez1[e] = q[2]; ek[e] = q[3] }
+  }
   x = 1; v = 0; n = 200000; h = zend / n
   for (i = 0; i < n; i++) {
     z = i * h

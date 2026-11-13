@@ -23,6 +23,9 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 | `undulator`| 0 … N   | static undulator fields acting on the particles  |
 | `quadrupole`, `plasma_lens`, `solenoid` | 0 … N | transport elements: static fields acting on the particles |
 | `chicane`  | 0 … N   | thin magnetic chicane (R56, delay) applied to the beam |
+| `wall`     | 0 or 1  | perfectly conducting lateral wall r = r_w(z): waveguides, beam pipes |
+| `dielectric` | 0 … N | a medium of constant permittivity ε(r, z): dielectric-lined tubes, Cherenkov radiation, lasers in media |
+| `bound_electrons` | 0 or 1 | resonant medium of bound electrons (Maxwell–Bloch, e.g. Rb D1/D2), with ionization per level |
 | `output`   | 0 or 1  | diagnostics                                      |
 | `numerics` | 0 or 1  | algorithm parameters                             |
 
@@ -288,7 +291,20 @@ so that the driver neither dephases nor depletes. It is fed in from the side.
   k_⊥² = 2ωκ − κ² − ω_p², and the pattern moves at exactly c:
   E_x = Re[e^{−iκs} Σ_ω a(ω) J0(k_⊥(ω) r) e^{iω(ζ−ζc)+i·cep}].
 - **Spectrum and polarization:** a(ω) is Gaussian, so on the axis E_x = a0 exp(−(ζ−ζc)²/L²) cos(…). The
-  polarization is linear along x (mode m = 1).
+  polarization is linear along x (mode m = 1) by default, or circular (`polarization = circular`, `helicity` as
+  in the `laser` block; a0 is then the amplitude of each of E_x, E_y).
+- **Several components (beats):** `beat_cone_angle`, `beat_order`, `beat_amplitude`, `beat_phase` add components
+  U_c = A_c e^{iψ_c} e^{−iκ_c s} Σ_ω a(ω) J_|l_c|(k_⊥,c(ω) r) e^{iω(ζ−ζc)+i·cep}, κ_c = ω0(1 − cos θ_c), of Bessel order
+  l_c (azimuthal phase e^{i l_c φ}), with the same spectrum, each moving at c. The physical field is
+  E_x = Re Σ_c U_c e^{i l_c φ} (linear) or E_x + i h E_y = Σ_c U_c e^{i l_c φ} (circular, helicity h); the main
+  component has `order` (default 0), `cone_angle` and amplitude 1. Two components beat with the period
+  2π/|κ_1 − κ_0| ≈ 4π/(k(θ_1² − θ_0²)) in z. A J0 core with a weak J1 e^{iφ} component (amplitude A ≪ 1) has its
+  intensity maximum displaced by x_b ≈ A θ_1/(k θ_0²) from the axis, turning around the axis with that period: the
+  driver of a helical bubble (a bubble whose axis winds helically in the lab).
+- **Azimuthal modes:** with circular polarization and helicity h a component of order l lives in the single mode
+  m = |l − h|; linear polarization puts it into m = |l − 1| and |l + 1|. So a J0 core plus J1 e^{ihφ} needs only
+  m_max = 1 (core in m = 1, J1 part in m = 0); the summary lists the modes of every component, and modes above
+  `m_max` are left out (warning).
 - **Boundary condition (total field / scattered field):** in the radial absorber layer
   r_absorber < r < r_max, R relaxes to the incident field, R ← R_inc + d(r)(R − R_inc). The layer therefore feeds
   the converging wave and absorbs only what the plasma adds.
@@ -302,16 +318,27 @@ so that the driver neither dephases nor depletes. It is fed in from the side.
 | `tau_fwhm` *or* `length_1e` | time / length | — | on-axis intensity FWHM, or 1/e half length of the field |
 | `zeta_center` | length | — | centre of the on-axis envelope |
 | `cep` | angle | 0 | carrier-envelope phase |
-| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ |
+| `background_density` | density | 0 | uniform plasma in which the incident wave propagates (the plasma in the layer must be this one); needs ω_p < ω sin θ for every component |
+| `order` | integer | 0 | Bessel order l of the main component (J_\|l\| e^{ilφ}) |
+| `polarization` | `linear` \| `circular` | `linear` | linear along x, or circular |
+| `helicity` | +1 \| −1 | +1 | circular polarization: sense of rotation (as in the `laser` block) |
+| `beat_cone_angle` | angles | — | cone angles of up to 3 further components |
+| `beat_order` | integers | 0 | their Bessel orders l_c |
+| `beat_amplitude` | numbers | 1 | their amplitudes relative to a0 |
+| `beat_phase` | angles | 0 | their phases ψ_c (at s = 0) |
 
 Requirements and checks:
-- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere. The conical wave has the same transverse wavelength at every
+- **Radial grid:** dr ≤ λ/(10 sin θ) everywhere (θ the largest cone angle). The conical wave has the same transverse wavelength at every
   radius, so the grid cannot coarsen outward.
 - **Window:** it must reach ζc + 3L + r_max θ/2. The rings at radius r run ahead of the axial focus by about rθ/2.
 - **Layer:** it must not contain plasma that differs from `background_density`, such as a neutral gas that gets
   ionized there.
 - **Tests:** `benchmarks/flying_focus/` (vacuum: on-axis amplitude within 2 % over 2 mm, constant phase offset
-  0.08 rad, group velocity c to 3·10⁻⁵).
+  0.08 rad, group velocity c to 3·10⁻⁵). Several components: ctest `flying_focus_beat`
+  (`benchmarks/flying_focus/beat_vacuum.deck`, results there): E_x within 0.15 % of a0, the J1 part within 8 %, the
+  turning intensity maximum within 0.04 µm after 120 µm.
+- **Half-step lag:** the field fed at level s is, after the step, the incident field of s − Δz/2: each component
+  carries the extra phase κ_c Δz/2, so a beat pattern is turned by the constant angle (κ_1 − κ_0)Δz/2.
 - **Backends:** serial, OpenMP and MPI give identical results; the GPU kernel is the OpenMP one and compiles with nvcc, but has not been run on a GPU yet.
 
 ## `plasma` (0 or 1 block)
@@ -391,7 +418,7 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `name` | string | `bunchI` | label in the output |
-| `species` | `electron` \| `positron` | `electron` | |
+| `species` | `electron` \| `positron` \| `proton` | `electron` | `proton`: mass m_p, charge +e (e.g. the SPS bunch of AWAKE). `energy` is then the kinetic energy (γ − 1) m_p c², and `bunches.txt` and the openPMD `mass` use m_p. Bunches from files are electrons or positrons |
 | `charge` | charge | — | total charge. Only the magnitude is used; the sign comes from `species` |
 | `energy` *or* `gamma` | energy / number | — | kinetic energy, or the Lorentz factor |
 | `energy_spread` | number | 0 | relative rms spread of p_z (e.g. `0.1 %`) |
@@ -407,7 +434,7 @@ The plasma block key `free_electrons = false` starts from a neutral gas. All ele
 | `zeta_center` | length | — | centre, measured from the rear end of the window |
 | `x0`, `y0` | length | 0 | transverse offset. It excites modes m ≥ 1, which need m_max ≥ 1 |
 | `z_waist` | length | 0 | position of the beta waist. The bunch is drifted ballistically back to z = 0 |
-| `z_start` | length | 0 | the bunch is loaded only when the run reaches z_start (at the end of that step), at its deck position in the window and with its co-moving self-field, as at the start; then the beam current of the level is deposited anew. E.g. a witness loaded after the vacuum–plasma transition of the driver's wake has settled. A restart from a checkpoint that already holds the bunch does not load it again. Not yet available in the MPI pipeline |
+| `z_start` | length | 0 | the bunch is loaded only when the run reaches z_start (at the end of that step), at its deck position in the window and with its co-moving self-field, as at the start; then the beam current of the level is deposited anew. E.g. a witness loaded after the vacuum–plasma transition of the driver's wake has settled. A restart from a checkpoint that already holds the bunch does not load it again. MPI runs: the pipeline is drained at that step and the bunch is loaded by all ranks together (a synchronization point, README "MPI"); the results equal the serial run |
 | `macroparticles` | integer | 10000 | number of macroparticles |
 
 **Helical ring** (`tests/bunch_functions.sh`): every electron on a circular orbit of radius R0 in a linear focusing
@@ -434,10 +461,21 @@ of N_macro independent particles, much larger than that of the real electrons. F
 | `beamlet` | integer ≥ 3 | 4 | macroparticles per beamlet; `macroparticles` must be a multiple of it |
 | `axis_refine` | integer 1 … 1000 | 1 | more macroparticles near the axis: the centres (particles, or beamlets with `fawley`) at r < `axis_radius` are sampled `axis_refine` times as often, each with 1/`axis_refine` of the charge. The charge density is unchanged, only its macroparticle noise there drops. Useful for the modes m ≥ 1, which vanish on the axis while the noise of the small cells there is largest (FEL harmonics). Bunches from files need resampling (`macroparticles` ≠ the number in the file) |
 | `axis_radius` | length | 4 radial cells | radius of the refined region (with `axis_refine` > 1) |
+| `azimuthal_copies` | integer 1 … 64 | 1 | symmetric loading (generated bunches, not files): every sampled particle comes with K copies turned by 2πj/K about the bunch axis (x, y and u_x, u_y), each with the same charge; `macroparticles` (a multiple of K) is the total. The modes 1 … K−1 of the bunch then vanish about its axis, and an offset (`x0`, `y0`, applied after turning) drives m = 1 alone, without the macroparticle noise. With `axis_refine` the refinement is about the bunch axis |
 
 With `axis_refine = 16` inside 4 µm (the 4 kA, σ_r = 10 µm beam of `benchmarks/harmonics/fel.deck`, 2.2 times the
 macroparticles) the noise of E_z and E_φ in m = 2 in the first radial cell halves, as with 4 times the
 macroparticles everywhere; the outer cells, the charge and the beam size are unchanged (`tests/axis_refine.sh`).
+
+**Why `azimuthal_copies`.** With random positions the modes m ≥ 1 of a bunch carry the shot noise of its
+macroparticles, far above that of the real particles (8 × 10⁶ macroparticles for 1.7 × 10¹¹ protons in AWAKE: about
+150 times in amplitude). In the AWAKE self-modulation run (7 × 10¹⁴ cm⁻³, `m_max = 1`, 12 m) this seed grows into a
+transverse m = 1 wake of tens of MV/m near the axis that lowers the axisymmetric wake by 15–25 % at ξ = 100–250 c/ω_p,
+although the bunch is centred. With `azimuthal_copies = 4` the centred run keeps m = 1 below 0.1 MV/m up to
+ξ ≈ 100 c/ω_p and its on-axis E_z agrees with the m = 0 run and with QUARZ to 3 % up to ξ = 250; a bunch offset by
+50 µm then shows the effect of the offset alone. In `tests/azimuthal_copies.sh` the on-axis E_x of a centred driver is
+1e-14 against 3e-5 for random loading, with the same wake to 2 %. The plasma is loaded symmetrically already
+(`ppc_phi` particles per ring).
 
 The beamlet members share x, y and the momentum. Checked in `tests/beam_import.sh`: N_e⟨\|b\|²⟩ = 1.08 (Fawley) and
 N_macro⟨\|b\|²⟩ = 0.93 (random), against 1 ± 0.1.
@@ -499,6 +537,32 @@ every such bunch ("box for bunch …") and warns if the box is smaller:
   ∫(1 + K_eff²)/(2γ²) dz.
 - **No check in a plasma:** there the field is screened over c/ω_p.
 
+### Chaining stages
+
+A long chain (injector → accelerator → transport → undulator) is computed stage by stage: every stage writes the beam
+as openPMD particles (`output.format = openpmd`, `particles = true`), and the next stage reads it with
+`bunch { file = … }`. Worked example: [`examples/chain_lwfa_fel/`](../examples/chain_lwfa_fel/README.md) (density
+down-ramp injection with FBPIC, acceleration, plasma lens, chicane and undulator with GEM-PIC-RZ).
+
+- **What is handed over:** positions relative to the charge centroid and momenta, per particle with its weight; the
+  time of the file does not matter. Fields are not handed over: a laser stage starts its laser again (analytically,
+  or from a LASY file, `laser { file = … }`), and the beam starts with its co-moving self-field.
+- **Placement:** `zeta_center` puts the centroid of the selected particles into the new window. Behind a laser keep
+  the distance to the laser centre of the previous stage (`examples/chain_lwfa_fel/handoff.py` computes it); in a
+  vacuum stage put the beam near the front of the window with room for the slippage behind the radiation front, and
+  with the gaps of the summary line "box for bunch" at both ends.
+- **Selection and resampling:** `select` keeps a part of the beam (e.g. an energy window: `"gamma > 290"`), its
+  centroid then defines `z`; `macroparticles` resamples to equal weights, `shot_noise = fawley` with
+  `noise_wavelength = λ_r` gives the shot noise of the real number of electrons for an FEL stage.
+- **Other codes:** any code that writes openPMD 1.x particles (FBPIC, HiPACE++, WarpX, …): electrons or positrons;
+  choose the species with `file_species` and the iteration with `file_iteration`.
+- **Check (`tests/chain.sh`, ctest `chain`):** 2 steps of `tests/regression.deck` → import with a selection → drift,
+  thin chicane and 10 undulator periods (`tests/chain_fel.deck`): the moments of the imported beam (charge, energy,
+  spread, sizes, emittances) equal those computed by python from the stage-1 file with the same selection (to the
+  printed digits, < 2e-4); on the particle data the chicane moves the centroid by R56⟨δ⟩ − delay (− the slippage of
+  the step) to 0.5 nm and gives the rms length of the mapped particles to 1e-4; the power at λ_r grows 15-fold in
+  the 10 periods.
+
 ## `undulator` (0 … N blocks)
 
 A static undulator field that acts on all particles (bunches, trapped and plasma particles). The field solver does not see it. Several blocks add up, e.g. two sections with a gap.
@@ -532,31 +596,146 @@ all particles, like the undulators; the field solver does not see them. Several 
 |-------|------|-------|
 | `quadrupole` | `z_start`, `length`, `gradient` (T/m) | B_x = −G y, B_y = −G x. G > 0 focuses electrons in x and defocuses them in y (positrons: the reverse); use G < 0 for the other plane |
 | `plasma_lens` | `z_start`, `length`, `gradient` (T/m), `radius` (optional) | active plasma lens: azimuthal B_φ = −G r inside `radius`, −G R²/r outside. G > 0 focuses electrons in both planes. Only the magnetic field of the discharge is modelled, not its plasma |
-| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. Use `ramp > 0`: the radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame) |
+| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. The radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame); `ramp = 0` is a hard edge, whose B_r kick the push integrates exactly |
 | `chicane` | `z`, `r56`, `delay` (default \|r56\|/2), `energy` or `gamma` (reference) | thin chicane at z: every beam particle moves in ζ by r56·δ − delay, δ = γ/γ_ref − 1. r56 > 0: particles with more energy move forward (towards the head), as in a four-dipole chicane; a negative chirp (more energy at the tail) is then compressed. `delay` is the path difference of the reference particle (moves the beam back with respect to the radiation; ≈ R56/2 for a symmetric chicane) |
 
 - **Thin chicane:** the shift is applied when the beam passes `z` (at the end of that step), without transverse
   dispersion or synchrotron radiation. The co-moving self-field of the beam moves with it (subtracted at the old,
   added at the new positions; vacuum is assumed at the chicane); the radiation in the window stays. About 0.6 % of the
-  field energy of a γ = 1000 bunch remains at its old position. Not available in MPI runs with several ranks yet.
+  field energy of a γ = 1000 bunch remains at its old position. MPI runs: the pipeline is drained at the chicane step
+  and all ranks apply it together to the gathered beam (a synchronization point, README "MPI"); particles move to the
+  rank that owns their new position. The results equal the serial run (`tests/mpi_events.sh`).
 - **Resolution:** the beam push must resolve the elements: `numerics.beam_dz_max` ≤ 0.1/k_β (k_β = √(G/Bρ) or
   B/(2Bρ)), and an element should span ≥ 4 sub-steps. Warnings are printed otherwise. The step `grid.dz` may be larger.
+- **Edges:** the elements may start and end anywhere, also inside a sub-step: the push averages their field over
+  the interval of each kick (a sub-step), so the integrated kick of an element is exact. Check `tests/quad_edges.sh`: six quadrupoles with the edges off the 5 mm
+  sub-steps agree with the linear optics to 1e-4 (README, "Corrections", item 10).
 - **Check (`tests/transport.sh`):** a cold bunch (γ = 1000) through a 100 T/m quadrupole, a plasma lens and a 5 T
-  solenoid and a drift: the rms sizes at the end agree with the linear optics to 0.1 % (quadrupole x 0.38409 vs
-  0.38374, y 1.64493 vs 1.64531; solenoid r 0.96466 vs 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
+  solenoid and a drift: the rms sizes at the end agree with the linear optics to the printed digits (quadrupole
+  x 0.38374, y 1.64531; solenoid r 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
   bunch (rms 0.5761 vs 0.5766 µm).
+
+## `wall` (0 or 1 block)
+
+A perfectly conducting lateral wall at r = r_w(z): a hollow metal waveguide, a capillary electrode or a beam pipe of
+variable radius. With s = z (GT2) a level is the plane z = s, so the wall has one radius for the whole window at every
+step; the field solver takes the radius of the new level, r_w(s¹).
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `radius` | length | — | constant radius |
+| `z_points`, `r_points` | lists of lengths | — | r_w(z) linear between the points, constant beyond the ends (z = 0: start of the simulation) |
+| `radius_function` | function of z | — | r_w(z), e.g. `"12 um - 1.5e-3 * z"` (see [Functions](#functions-and-expressions)) |
+
+Exactly one of the three is given. Example: `wall { z_points = 0, 2 mm; r_points = 12, 9 um }`.
+
+- **The wall lies inside the grid:** 0 < r_w < `grid.r_max` everywhere (checked at every step); the cells between the
+  wall and r_max carry no field. Put a few cells beyond the largest radius.
+- **No absorber:** the block switches the radial absorber off (`grid.r_absorber` must not be given, or ≥ r_max).
+  Hence it cannot be combined with a `flying_focus` block or `laser.inject = boundary`, which feed the field through
+  the absorber layer.
+- **Particles:** particles reaching r ≥ r_w(s¹) are lost (absorbed by the wall); no plasma is loaded inside the metal.
+- **Boundary conditions:** E_z = −r_w′ E_r and E_φ = 0 at the wall (the tangential field of the sloped wall; r_w′ is the
+  slope of the step), zero radial flux of B_z; the wall can lie anywhere in a cell (the last cell ends at r_w). When
+  the wall moves outwards, the field at the old wall continues into the opened annulus. README, section "Metal walls",
+  has the details and the tests.
+- **Limits:** backward waves are not described (∂_s L is dropped), so reflections at steps, irises or corrugations are
+  missing: the wall must vary slowly on the scale of the radiation it guides (adiabatic tapers, |r_w′| ≪ 1).
+  A radius that varies cannot yet be combined with `numerics.theta_stiff` (a constant radius can).
+
+## `dielectric` (0 … N blocks)
+
+A medium of constant (non-dispersive) permittivity ε: the lining of a dielectric wakefield accelerator (with a `wall`
+as the metal jacket), a dielectric capillary, an open medium for Cherenkov radiation, a laser in glass or a gas.
+With s = z a level is the plane z = s, so ε(r) is one radial profile per step, taken at the level s¹ (and s⁰ for
+the old level). The contributions ε − 1 of all blocks add up.
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `epsilon` | number ≥ 1 | — | ε of a layer r_in ≤ r < r_out |
+| `r_in`, `r_out` | length | 0, r_max | radial extent of the layer (with `epsilon`) |
+| `epsilon_function` | function of r, z | — | ε(r, z) instead of a layer (≥ 1 everywhere) |
+| `z_start`, `z_end` | length | −∞, +∞ | the medium is present for z_start ≤ z < z_end (both forms) |
+
+Exactly one of `epsilon`, `epsilon_function` is given. Example, a quartz-lined copper tube from z = 0.1 mm:
+`wall { radius = 75 um }` and `dielectric { epsilon = 3.8; r_in = 50 um; r_out = 75 um; z_start = 0.1 mm }`.
+
+- **Interfaces:** ε of a centre (E_z, E_φ: tangential to r = const) is the average over the cell (64 equal-area
+  samples); ε of a face (E_r, normal) is the harmonic mean of the two neighbouring centres. A layer boundary on a face
+  is exact; inside a cell it converges with dr.
+- **Radial grid:** the transverse wavenumber in the medium is k √(ε − 1) for a synchronous (v = c) field: keep
+  k⊥ dr ≲ 1 there, also for the Cherenkov cone (README, rules for flexible radial grids).
+- **Radial absorber:** the medium must end inside `grid.r_absorber` (the absorber damps R only), or close the box with
+  a `wall` (checked at every step).
+- **Bunches** start with their vacuum co-moving field: let them start ahead of the medium (`z_start` of the block)
+  and enter it.
+- **Validity (GEM model, ∂_s L dropped):** synchronous fields (wake modes with phase velocity c, Cherenkov radiation of
+  a v = c bunch) are exact; the energy flow of non-synchronous fields is that of the reduced system (for a quartz
+  tube the TM₀₁ wake fills behind the bunch with β_g = 0.40 instead of Maxwell's 0.33); a laser has the index
+  (4 + 3χ)/(4 + χ) instead of √(1 + χ) (χ = ε − 1: equal to O(χ²), 1.6 % off for glass). The step must resolve the
+  dephasing of a laser, k (n − 1) Δz ≲ 1. Reflections at the ends of the medium and at steps are missing.
+- **Corrugated metal pipe** (bore a, depth h, period p, gap g; h, p ≪ a): use the equivalent thin layer
+  `wall { radius = a + h }` and `dielectric { epsilon = p/(p − g); r_in = a; r_out = a + h }`. It gives the synchronous
+  wake of small corrugations (Bane–Stupakov). The corrugation itself (period ≪ λ) cannot be resolved by the wall
+  block. README, "Corrugated metal pipes"; ctest `corrugated`.
+  README, section "Dielectric media".
+- **Not combined yet:** `numerics.theta_stiff`, `numerics.beam_consistent`.
+
+## `bound_electrons` (0 or 1 block)
+
+A resonant medium of neutral atoms, described by the Maxwell–Bloch equations of a V-type atom: ground state and one
+or two excited states (e.g. Rb 5S → 5P_1/2 (D1, 795 nm) and 5P_3/2 (D2, 780 nm)). Each cell centre carries the density
+matrix of the atoms on `n_phi` angles; the carrier is resolved (no rotating-wave approximation), so saturation,
+Rabi flopping and resonant dispersion and absorption of the laser follow. The atoms couple to the component of E
+along the laser polarization (x, scalar dipole); the effective dipoles follow from the oscillator strengths,
+d_j² = f_j e²ħ/(2mω_j), so the weak-field susceptibility is that of the Lorentz lines,
+χ = n_a Σ f_j/(ω_j² − ω²) (n_a in n_c, frequencies in ω0).
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `element` | `Rb` | — | built-in lines: D1 (794.979 nm, f = 0.342), D2 (780.241 nm, f = 0.695); ionization energy 4.177 eV |
+| `wavelengths`, `oscillator_strengths` | lists (1 or 2) | — | the lines, instead of (or replacing those of) `element` |
+| `density` | density | — | atom density (without `ion`) |
+| `ion` | name | — | the atoms are the neutral atoms of this `ion` block (`charge_state = 0`, `ionization = adk`): density and profile from it, and ionization (below) |
+| `r_out` | length | r_max | the medium is present for r < r_out |
+| `z_start`, `z_end` | length | −∞, +∞ | and for z_start ≤ z < z_end (with `density`) |
+| `T1`, `T2` | time | 0 (none) | relaxation of the excited states / dephasing of the coherences |
+| `n_phi` | integer | 4 (m_max + 1) | angles of the nodes (≥ 2 m_max + 1) |
+| `ionization_potentials` | energy list | — | ground and excited states (without `ion`; with `ion` they follow from the ion block and the photon energies) |
+
+Example (AWAKE-like Rb vapour, ionized by the laser):
+```
+plasma { density = 7e14 cm^-3; free_electrons = false; r_max = 1 mm }
+ion { name = Rb; mass = 85.4678 u; charge_state = 0; ionization = adk; max_charge_state = 1
+      ionization_potentials = 4.177128, 27.2895 eV; density = 7e14 cm^-3; mobile = false }
+bound_electrons { element = Rb; ion = Rb }
+```
+
+- **Ionization (`ion`):** every level ionizes with its own ADK rate (5S: 4.177 eV, 5P: I_p − ħω_j ≈ 2.6 eV): the
+  trace of the density matrix (the neutral fraction) decays, which depopulates the oscillators, and the dipole
+  removal enters the medium current. The macro-atoms of the ion block ionize with the rate of the levels weighted by
+  the populations at their position, so the grid's neutral fraction is the expectation of the particle ionization.
+  Resonant excitation lowers the ionization threshold strongly (README, "Bound electrons").
+- **Resolution:** the transition frequencies must be resolved by the slices, ω_j h ≲ 0.3 (as the laser carrier);
+  the free precession is exact (frequencies pre-warped), resonant driving to second order in ω_j h.
+- **The window** starts ahead of the medium's response: the atoms are fresh at the front of the window at every
+  level (s = z: the plane z = s^1).
+- **Backends:** all: serial, OpenMP, CUDA (the medium on the device: node kernels, the current in the slice solve,
+  the particles' ionization) and the MPI pipeline (the atoms at the block edges in the messages).
+- **Not modelled:** Doppler (inhomogeneous) broadening, hyperfine and Zeeman structure, the polarization of other
+  field components (E_y, E_z), collisional processes.
 
 ## `output` (0 or 1 block)
 
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `dir` | string | `diag` | output directory |
-| `every` | integer | 25 | field/particle files every N steps (0: only at the start and end) |
+| `every` | integer | 25 | field/particle files every N steps (0: only at the start and end). The first output step reports its size and the projection for the run (`output volume: … GB per output step …`), with a warning if that exceeds the free space of `dir` or if `dir` is on tmpfs (README, "Memory and output volume") |
 | `map_stride` | integer | 4 | every n-th slice in the 2D maps |
 | `axis`, `maps`, `particles` | true/false | true | which files to write (`particles` also controls the beam list in the HDF5 files) |
 | `format` | one or more of `text`, `hdf5`, `openpmd` (`both` = `text, hdf5`) | `text` | `text`: `axis_`, `map_`, `beam_NNNNN.txt`; `hdf5`: one file `data_NNNNN.h5` per output step with all modes on the native grid (see below); `openpmd`: openPMD 1.1.0 files `openpmd/openpmd_<step>.h5` (see below). E.g. `format = text, openpmd` |
 | `openpmd_dr`, `openpmd_dzeta` | length | smallest dr / dzeta of the grid | spacing of the uniform r–ζ grid of the openPMD fields |
-| `openpmd_grid` | `uniform` \| `native` \| `both` | `both` | openPMD fields interpolated to a uniform grid (for every openPMD reader), on the code's own nodes (records `native_*`, exact), or both |
+| `openpmd_grid` | `uniform` \| `native` \| `both` | `uniform` | openPMD fields interpolated to a uniform grid (for every openPMD reader), on the code's own nodes (records `native_*`, exact), or both. The `native_*` records are written only on request: openpmd-viewer does not read them (until 1.1 has rectilinear meshes) and fails on files that hold them |
 | `hdf5_precision` | `double` \| `single` | `double` | floating-point precision of the HDF5 datasets (single: half the size) |
 | `hdf5_compression` | integer 0 … 9 | 0 | gzip level of the HDF5 datasets (0: none; the files of the examples shrink by about 3.5× with `single` + 6) |
 | `fel` | `auto` \| `true` \| `false` | `auto` | FEL table `fel.txt` every step (auto: on when there are undulator and bunch blocks) |
@@ -603,10 +782,11 @@ z, uz, w = ts.get_particle(['z', 'uz', 'w'], species='witness', iteration=100)
 - **Meshes:** `E`, `B` (components `r`, `t`, `z`) and `n_e` (density of all electrons; `Zn_i`: charge density of the mobile ions / e, with ion blocks), in SI via `unitSI`. Geometry `thetaMode` with dataset index 0 for m = 0 and 2m−1, 2m for the cos(mθ), sin(mθ) parts (`imag=+`).
 - **Interpolation:** the standard needs a uniform grid. The fields are interpolated from the staggered (and possibly non-uniform) r–ζ grid to the nodes r_j = j·`openpmd_dr`, ζ_k = k·`openpmd_dzeta`, linearly as in the particle gather, with the regular behaviour on the axis. The defaults (the smallest steps) keep the resolution but make large files on stretched grids; choose coarser values for overviews. The native records (next item) and the `hdf5` format store the exact data.
 - **Native records** (`openpmd_grid = native` or `both`): every mode on the code's own staggered, possibly non-uniform nodes, without interpolation, as scalar meshes `native_E_r`, `native_E_t`, `native_E_z`, `native_B_r`, `native_B_t`, `native_B_z` (faces or centres in r, slices in ζ) and `native_n_e`, `native_Zn_i` (densities / n0, centres × half-cells). They follow the proposal for rectilinear meshes in openPMD 2.0 ([`openpmd_rectilinear.md`](openpmd_rectilinear.md)): the node positions are data sets `<basePath>gridCoordinates/r_faces`, `r_centers`, `zeta_slices`, `zeta_halfcells`, referenced by the mesh attribute `gridCoordinates` (one path per axis). While the files are openPMD 1.1 the records carry `geometry = "other"` with `geometryParameters = "thetaMode;m=…;imag=+"`, so readers that know only regular grids skip them. E_r and B_φ on the axis hold the regular limit. Readers: `h5_extract` (every command except `beam` works on these files exactly as on `data_NNNNN.h5`) and `tools/openpmd_rectilinear.py` (Python; also reads QUARZ's native records, which keep the radial nodes in the attribute `gridCoordinates_r`).
-- **Coordinates:** the lab position is z = ζ + s, and the time t = s/c (`gridGlobalOffset` and particle `positionOffset/z` hold s). Each step is an iteration.
-- **Particles:** one species per bunch (its `name`), `trapped` (self-injected plasma electrons) and `inj_<ion>` (electrons from field ionization), if present: `position`, `positionOffset`, `momentum` (per real particle), `weighting` (real particles per macroparticle), constant `charge` and `mass`, and a `particlePatches` bounding box.
+- **Position (z = const) snapshots:** an output step is the level s, i.e. the plane z = s: slice ζ = z − ct of the window crossed that plane at t = (s − ζ)/c. A file is therefore the time history of a plane, not a snapshot at one time. The iteration carries the attributes proposed for openPMD 2.0 in [`openpmd_zplane.md`](openpmd_zplane.md): `snapshotType = "position"`, `snapshotAxis = "z"`, `snapshotPosition` = s with `snapshotPositionUnitSI`, and `snapshotAxisVelocity = 1` (c), so that the axis label z maps to the crossing time t = `time` + (s − z)/c. For readers that ignore them, the longitudinal axis keeps the label z = ζ + s and `time` = s/c (`gridGlobalOffset` and particle `positionOffset/z` hold s): they show the co-moving window as before. Each step is an iteration.
+- **Particles:** one species per bunch (its `name`), `trapped` (self-injected plasma electrons) and `inj_<ion>` (electrons from field ionization), written in every file, empty ones as zero-length records (openpmd-viewer takes the species list from the first file): `position`, `positionOffset`, `momentum` (per real particle), `weighting` (real particles per macroparticle), `time` (the time at which the particle crossed the plane, (s − ζ)/c, float64; the per-particle `time` of the openPMD BeamPhysics extension), constant `charge` and `mass`, and a `particlePatches` bounding box. `bunch.file` picks the only non-empty species when `file_species` is not given.
+- **Densities:** `n_e`, `Zn_i` (and `native_n_e`, `native_Zn_i`) are stored in units of n0 with `unitSI` = n0 in m⁻³. In files written before 2026-11-10 the uniform records lacked the division by n0/n_c, so their SI values were multiplied by n0/n_c (too small; the native records were right); such files are corrected by dividing by n0/n_c (attribute `n0_m3` / `n_c_m3` of the `hdf5` file, or the deck density in units of n_c). The deck is stored in `/input_deck` (outside the iteration).
 - **Precision and compression:** `hdf5_precision` and `hdf5_compression` apply to these files too.
-- **Check:** the files pass the openPMD validator (`openPMD_check_h5`) without errors or warnings; the `openpmd` test also compares the fields rebuilt from the thetaMode data with the code's own reconstruction.
+- **Check:** the files pass the openPMD validator (`openPMD_check_h5`) without errors or warnings; the `openpmd` test also compares the fields rebuilt from the thetaMode data with the code's own reconstruction, and the `openpmd_viewer` test reads every iteration of a run with field ionization (a species empty at first) with openpmd-viewer and compares fields and particle moments with the native files.
 
 ### LASY files
 
@@ -699,7 +879,8 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `backend` | `serial` \| `openmp` \| `cuda` | `cuda` in a GPU build, else `serial` | `serial`: reference implementation, one thread. `openmp`: parallel engine on CPU threads (CPU build; threads from `OMP_NUM_THREADS`). `cuda`: parallel engine on an NVIDIA GPU (build with `-DGEMPIC_CUDA=ON`). With MPI (several ranks): `serial` or `openmp` (threads on every rank); `cuda` is not yet available with MPI. See "Backends" below |
-| `iterations` | integer | 2 | passes per slice (1 = predictor only) |
+| `iterations` | integer | 2 | passes per slice (1 = predictor only). **Do not use 1 with plasma:** the plasma currents are then never corrected and the laser gains energy from step to step (+18 % over 10 mm in an LWFA run, where 2 passes agree with FBPIC; README, "Passes per slice"); the code warns. Long plasma wakes (more than ~30 plasma periods in the window) need 4 with `predictor = zeta` (README, "Long plasma wakes") |
+| `predictor` | `zeta` \| `level` | `zeta` | prediction of j¹ of the half-cell behind a slice in its R update: `zeta` = j⁰ plus the change j¹ − j⁰ extrapolated along ζ from the two half-cells in front; `level` = j⁰ (versions ≤ 1.0; unstable in long plasma wakes) |
 | `seed` | integer | 12345 | random seed (plasma loading, bunches, ionization) |
 | `tridiag` | `auto` \| `thomas` \| `partition` | `auto` | tridiagonal solves of the field update in the parallel engine: `thomas`, one thread per azimuthal mode; `partition`, the Thomas/PCR partition method (Laszlo, Giles & Appleyard 2016) on all threads of the block. `auto` uses `partition` on the GPU and `thomas` on CPU threads. Both agree to rounding (1e-12); the serial backend always uses Thomas |
 | `beam_dz_max` | length | 10 k0⁻¹ | largest sub-step of the beam push along s |

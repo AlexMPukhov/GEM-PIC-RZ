@@ -1,0 +1,29 @@
+# Reduced chain, stage 2 (tests/chain.sh): the witness written by a short run of tests/regression.deck (openPMD) is
+# imported (select, zeta_center, resampling, Fawley shot noise), drifts 1 cm, passes a thin chicane and 10 periods of a
+# helical undulator (lambda_r = 10 nm at gamma 1000).
+grid {
+  lambda0       = 10 nm
+  m_max         = 1
+  radial_grid   = table
+  r_points      = 0, 5, 40, 1500 um
+  dr_points     = 0.5, 0.5, 4, 60 um
+  r_max         = 1.5 mm
+  dzeta         = 1.25 nm            # 8 slices per lambda_r
+  window_length = 3.5 um
+  dz            = 1.25 mm            # 8 steps per period
+  z_end         = 11.5 cm
+  r_absorber    = 3 mm
+}
+bunch {
+  name           = witness
+  file           = src/openpmd/openpmd_2.h5
+  select         = "abs(z) < 1 um"
+  zeta_center    = 1.7 um
+  macroparticles = 40000
+  shot_noise     = fawley
+  noise_wavelength = 10 nm
+}
+chicane   { z = 1 cm; r56 = 20 um; delay = 0.1 um; gamma = 1000 }
+undulator { type = helical; period = 1 cm; K = 1; periods = 10; ramp_periods = 1; z_start = 1.5 cm }
+output    { dir = fel; every = 4; format = text, hdf5; particles = true; axis = false; maps = false }
+numerics  { iterations = 1; beam_dz_max = 1.25 mm; beam_filter = 0 }

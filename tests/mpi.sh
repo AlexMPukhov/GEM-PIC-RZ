@@ -13,7 +13,12 @@
 #      absorber; beam filter 2); the intense beam in a planar undulator at dz = lambda_u/16
 #      (benchmarks/harmonics/fel.deck, the beam spans the 3 blocks): 3 ranks = serial
 #   8. the march of the blocks on the device (Engine::marchBlock; GPU emulation build, or a CUDA build with a
-#      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run
+#      GPU): 1-3 ranks, the mean-field push and the free-hand grids agree with the serial run, also with the
+#      per-step diagnostics computed during the next step (steps without output)
+#   9. metal wall (tests/wall.deck): steep narrowing and widening tubes on 3 ranks (also on the device) = serial
+#  10. dielectric-lined tube (tests/dielectric_dwa.deck), offset bunch: 1 rank pipelined, 3 ranks (also on the
+#      device) = serial
+#  11. bound electrons with ionization (tests/bound_ionize.deck): 1 rank pipelined, 3 ranks (2 on the device) = serial
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -105,13 +110,60 @@ if [ -n "$DEV" ]; then
   done
   OMP_NUM_THREADS=2 runx 3 "$DEV" "$DECK" $E numerics.beam_field=mean numerics.beam_filter=2 output.dir=dm > dm.log
   for f in axis_00002.txt axis_00004.txt map_00004.txt bunches.txt; do "$CMP" mser/$f dm/$f 1e-6 1e-9; done
+  # steps without output: the diagnostics of a level are computed on a host thread during the next step
+  OMP_NUM_THREADS=2 runx 3 "$DEV" "$DECK" $E output.every=3 output.dir=da > da.log
+  for f in axis_00004.txt bunches.txt; do "$CMP" ser/$f da/$f 1e-6 1e-9; done
+  OMP_NUM_THREADS=2 runx 2 "$DEV" "$DECK" $E output.every=0 numerics.beam_field=mean numerics.beam_filter=2 \
+    output.dir=dam > dam.log
+  for f in axis_00004.txt bunches.txt; do "$CMP" mser/$f dam/$f 1e-6 1e-9; done
   OMP_NUM_THREADS=2 runx 3 "$DEV" "$SRC/tests/flexgrid.deck" $DB output.map_stride=8 output.dir=dfx > dfx.log
   for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" fser/$f dfx/$f 1e-6 1e-9; done
   unset GEMPIC_PIPELINE_ENGINE
-  echo "  device march of the blocks ($DB): 1-3 ranks, mean-field push, free-hand grids = serial"
+  echo "  device march of the blocks ($DB): 1-3 ranks, mean-field push, free-hand grids, diagnostics during the"
+  echo "  next step = serial"
 else
   echo "  device march of the blocks skipped: no GPU emulation build and no GPU"
 fi
+# metal wall (tests/wall.deck): steep narrowing and widening tubes (the wall crosses a face every ~4 steps), the
+# sloped-wall E_z and the field continued into the opened annulus: 3 ranks = serial, also on the device
+for wl in "12 9" "9 12"; do
+  sed "s/^wall.*/wall { z_points = 0 0.3 mm; r_points = $wl um }/" "$SRC/tests/wall.deck" > wall.deck
+  WL="grid.z_end=0.3mm laser.waist=3.5um output.every=60 numerics.backend=serial"
+  "$EXE" wall.deck $WL output.dir=wser > wser.log
+  run 3 wall.deck $WL output.dir=wmp > wmp.log
+  "$CMP" wser/map_00060.txt wmp/map_00060.txt 1e-6 1e-9
+  if [ -n "$DEV" ]; then
+    GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 3 "$DEV" wall.deck $WL $DB output.dir=wdv > wdv.log
+    "$CMP" wser/map_00060.txt wdv/map_00060.txt 1e-6 1e-9
+  fi
+done
+echo "  metal wall, narrowing and widening tube: 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device")"
+# dielectric (tests/dielectric_dwa.deck, shortened, offset bunch: m = 0 and the coupled m = 1 system): the running
+# polarization currents cross the blocks in the F message, the corrected L of slice b in the R message
+DW="grid.z_end=0.3mm grid.window_length=600um bunch.zeta_center=560um grid.m_max=1 bunch.x0=10um output.every=15     numerics.backend=serial"
+"$EXE" "$SRC/tests/dielectric_dwa.deck" $DW output.dir=dser > dser.log
+GEMPIC_PIPELINE=1 "$EXE" "$SRC/tests/dielectric_dwa.deck" $DW output.dir=dp1 > dp1.log
+"$CMP" dser/axis_00015.txt dp1/axis_00015.txt 0 0
+run 3 "$SRC/tests/dielectric_dwa.deck" $DW output.dir=dmp > dmp.log
+for f in axis_00015.txt map_00015.txt; do "$CMP" dser/$f dmp/$f 1e-6 1e-9; done
+if [ -n "$DEV" ]; then
+  GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 3 "$DEV" "$SRC/tests/dielectric_dwa.deck" $DW $DB output.dir=ddv > ddv.log
+  for f in axis_00015.txt map_00015.txt; do "$CMP" dser/$f ddv/$f 1e-6 1e-9; done
+fi
+echo "  dielectric-lined tube, offset bunch: 1 rank pipelined, 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device")"
+# bound electrons (tests/bound_ionize.deck: Rb, resonant excitation, ionization per level): the atoms of both levels at
+# the block edge travel in the F message
+BW="laser.a0=1e-3 grid.z_end=2um output.every=4 numerics.backend=serial"
+"$EXE" "$SRC/tests/bound_ionize.deck" $BW output.dir=bser > bser.log
+GEMPIC_PIPELINE=1 "$EXE" "$SRC/tests/bound_ionize.deck" $BW output.dir=bp1 > bp1.log
+"$CMP" bser/axis_00004.txt bp1/axis_00004.txt 0 0
+run 3 "$SRC/tests/bound_ionize.deck" $BW output.dir=bmp > bmp.log
+for f in axis_00004.txt map_00004.txt; do "$CMP" bser/$f bmp/$f 1e-6 1e-9; done
+if [ -n "$DEV" ]; then  # the medium on the device (2 ranks: the emulation build is slow when oversubscribed)
+  GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 2 "$DEV" "$SRC/tests/bound_ionize.deck" $BW $DB output.dir=bdv > bdv.log
+  for f in axis_00004.txt map_00004.txt; do "$CMP" bser/$f bdv/$f 1e-6 1e-9; done
+fi
+echo "  bound electrons with ionization: 1 rank pipelined, 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device (2 ranks)")"
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi

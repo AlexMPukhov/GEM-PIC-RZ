@@ -152,7 +152,9 @@ class Writer {
   hid_t plain(const std::string& path, const std::vector<hsize_t>& dims, const double* data, bool forceDouble = false) {
     hid_t ds = create(path, dims, (single_ && !forceDouble) ? H5T_IEEE_F32LE : H5T_IEEE_F64LE);
     if (ds < 0) throw std::runtime_error("HDF5 error: dataset " + path);
-    check(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data), "write " + path);
+    hsize_t n = 1;
+    for (hsize_t d : dims) n *= d;
+    if (n > 0) check(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data), "write " + path);
     return ds;
   }
 
@@ -447,12 +449,17 @@ int checkpointStep(const std::string& fname) {
 //           The fields are interpolated (as in the particle gather) from the
 //           staggered, possibly non-uniform r-zeta grid to the uniform nodes
 //           r_j = j dr, zeta_k = k dzeta (output.openpmd_dr, openpmd_dzeta).
-//           Lab coordinate z = zeta + s, time t = s / c (gridGlobalOffset[1] = s).
+//           Axis label z = zeta + s, time = s / c (gridGlobalOffset[1] = s), for
+//           existing readers; the iteration is a position snapshot of the plane
+//           z = s (snapshotType = "position" etc., docs/openpmd_zplane.md): slice
+//           zeta crossed the plane at t = (s - zeta) / c.
 //  particles  one species per bunch (its name), "trapped" (self-injected plasma
-//           electrons) and "inj_<ion>" (electrons from ionization): position
-//           x, y, z (z: zeta, positionOffset z = s), momentum (per real
-//           particle), weighting (real particles per macroparticle), charge and
-//           mass (constant records).
+//           electrons) and "inj_<ion>" (electrons from ionization), in every file
+//           (empty: zero-length records): position x, y, z (z: zeta,
+//           positionOffset z = s), momentum (per real particle), weighting (real
+//           particles per macroparticle), time (crossing time (s - zeta) / c, as
+//           in the BeamPhysics extension), charge and mass (constant records).
+//  native   records native_* only with output.openpmd_grid = native | both.
 // ============================================================================
 
 // ============================================================================
@@ -782,16 +789,27 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S %z", std::localtime(&t));
       Writer::attr(root, "date", std::string(buf));
     }
-    Writer::attr(root, "comment", std::string("GEM-PIC-RZ (Galilean GT2 scheme): fields of the window at z = zeta + s, "
-                                              "t = s / c; input deck in /data/<T>/input_deck"));
+    Writer::attr(root, "comment",
+                 std::string("GEM-PIC-RZ (Galilean GT2 scheme): position snapshot at the plane z = s (snapshotType = "
+                             "position): slice zeta = z - c t crossed the plane at t = (s - zeta) / c; axis label "
+                             "z = zeta + s, time = s / c; particles carry their crossing time in the record time; "
+                             "see docs/openpmd_zplane.md; input deck in /input_deck (outside basePath)"));
     base = "/data/" + std::to_string(S.step_no);
     {
       Handle it(W->groups(base), H5Gclose, "group " + base);
       Writer::attr(it, "time", S.s0);
       Writer::attr(it, "dt", S.Delta);
       Writer::attr(it, "timeUnitSI", si.T0);
+      // position (z = const) snapshot, proposal docs/openpmd_zplane.md: everything is at the plane z = s; the
+      // coordinate x along snapshotAxis (here z = zeta + s) labels the time at which the data crossed the plane,
+      //   t = time + (snapshotPosition - x) / snapshotAxisVelocity   ( = (s - zeta) / c )
+      Writer::attr(it, "snapshotType", std::string("position"));
+      Writer::attr(it, "snapshotAxis", std::string("z"));
+      Writer::attr(it, "snapshotPosition", S.s0);
+      Writer::attr(it, "snapshotPositionUnitSI", si.L);
+      Writer::attr(it, "snapshotAxisVelocity", 1.0);  // c, in snapshotPositionUnitSI / timeUnitSI
     }
-    W->text(base + "/input_deck", S.deckText);
+    W->text("/input_deck", S.deckText);  // outside basePath: readers see only openPMD records in the iteration
     // ---- output grid
     dr = O.openpmd_dr > 0 ? O.openpmd_dr : 1e300;
     dzo = O.openpmd_dzeta > 0 ? O.openpmd_dzeta : 1e300;
@@ -1017,8 +1035,9 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
         const bool ions = (q == 1);
         std::vector<double> d(size_t(nr) * dc);
         auto val = [&](int kk, int i) {
-          return ions ? (S.c0s.rhoi[S.c0s.d(kk, i)] + S.c0b.rhoi[S.c0b.d(kk, i)])
-                      : -(S.c0s.rho[S.c0s.d(kk, i)] + S.c0b.rho[S.c0b.d(kk, i)]);
+          // in units of n0 = n_ref n_c (unitSI = n_ref n_c), as the native records
+          return (ions ? (S.c0s.rhoi[S.c0s.d(kk, i)] + S.c0b.rhoi[S.c0b.d(kk, i)])
+                       : -(S.c0s.rho[S.c0s.d(kk, i)] + S.c0b.rho[S.c0b.d(kk, i)])) / S.n_ref;
         };
         for (int j = 0; j < nr; ++j) {
           const int a = da[j];
@@ -1090,9 +1109,11 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       std::vector<const Particle*> ps;
       for (const auto& p : S.beam)
         if (p.sp == Sp_.id) ps.push_back(&p);
-      if (ps.empty() && Sp_.id < 0) continue;  // no trapped particles: no species
+      // every species at every output step, empty ones as zero-length records: the species list of a series
+      // stays the same (openpmd-viewer reads the list of the first iteration)
       if (first) { Handle h(Wr.groups(pp), H5Gclose, "group " + pp); first = false; }
       const std::string sg = pp + "/" + Sp_.name;
+      const double MS = ME * ((Sp_.id >= 0) ? S.cfg.bunches[size_t(Sp_.id)].mass : 1.0);  // particle mass [kg]
       { Handle h(Wr.groups(sg), H5Gclose, "group " + sg); }
       const hsize_t np = ps.size();
       std::vector<double> col(np);
@@ -1123,10 +1144,21 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
       constant("positionOffset/y", 0.0, L);
       constant("positionOffset/z", S.s0, L);
       record("momentum", unitDim(1, 1, -1, 0), 0u, 1.0);
-      component("momentum/x", [](const Particle& p) { return p.ux; }, ME * C_LIGHT);
-      component("momentum/y", [](const Particle& p) { return p.uy; }, ME * C_LIGHT);
-      component("momentum/z", [](const Particle& p) { return p.uz; }, ME * C_LIGHT);
-      // real particles per macroparticle: |q| Q0 / e (all S.beam particles are electrons or positrons)
+      component("momentum/x", [](const Particle& p) { return p.ux; }, MS * C_LIGHT);
+      component("momentum/y", [](const Particle& p) { return p.uy; }, MS * C_LIGHT);
+      component("momentum/z", [](const Particle& p) { return p.uz; }, MS * C_LIGHT);
+      // time at which the particle crossed the plane z = s (position snapshot; record time of the openPMD
+      // BeamPhysics extension: absolute time = time + timeOffset, no timeOffset record = 0): t = (s - zeta) / c
+      {
+        for (size_t k = 0; k < np; ++k) col[k] = S.s0 - ps[k]->zeta;
+        Handle ds(Wr.plain(sg + "/time", {np}, col.data(), true), H5Dclose, "time");
+        Writer::attr(ds, "unitDimension", unitDim(0, 0, 1, 0));
+        Writer::attr(ds, "timeOffset", 0.0);
+        Writer::attrU32(ds, "macroWeighted", 0u);
+        Writer::attr(ds, "weightingPower", 0.0);
+        Writer::attr(ds, "unitSI", si.T0);
+      }
+      // real particles per macroparticle: |q| Q0 / e (all S.beam particles carry one elementary charge)
       {
         for (size_t k = 0; k < np; ++k) col[k] = std::fabs(ps[k]->q) * Q0 / E_CHARGE_C;
         Handle ds(Wr.plain(sg + "/weighting", {np}, col.data()), H5Dclose, "weighting");
@@ -1182,7 +1214,7 @@ struct Simulation::OpenPMDSink : Simulation::Sink {
         Writer::attr(h, "timeOffset", 0.0);
         Writer::attrU32(h, "macroWeighted", 0u);
         Writer::attr(h, "weightingPower", 1.0);
-        Writer::attr(h, "value", ME);
+        Writer::attr(h, "value", MS);
         Writer::attr(h, "shape", std::vector<unsigned long long>{np});
         Writer::attr(h, "unitSI", 1.0);
       }

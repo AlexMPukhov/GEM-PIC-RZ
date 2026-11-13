@@ -5,6 +5,8 @@
 # (numerics.beam_filter = 1) and the zero-gradient closure at the rear end of
 # the window were introduced, and again with the self-fields of bunches with
 # v < c (gamma = 1000 here: changes of up to 2e-3 near the rear of the window).
+# Regenerated with numerics.predictor = zeta (the prediction of the plasma current behind a slice; the
+# wake ahead of the bubble back changes by 1-2 %, the axis caustic behind it by more).
 # usage: sh tests/regression.sh <gempic_rz> <compare_columns> [block.key=value ...]
 #        (e.g. numerics.backend=cuda: the parallel engine against the same reference)
 set -e

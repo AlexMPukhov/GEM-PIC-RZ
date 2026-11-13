@@ -22,6 +22,9 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#if defined(__linux__)
+#include <sys/vfs.h>
+#endif
 
 #include "comm.hpp"
 #include "simulation.hpp"
@@ -115,7 +118,10 @@ void DiagSums::add(const DiagSums& o) {
 }
 
 // on-axis field extrema over the slices [n0, n1), moments of the beam list
-DiagSums Simulation::diagSums(int n0, int n1) const {
+DiagSums Simulation::diagSums(int n0, int n1) const { return diagSums(n0, n1, beam, freedCharge); }
+
+DiagSums Simulation::diagSums(int n0, int n1, const std::vector<Particle>& beam,
+                              const std::vector<double>& freedCharge) const {
   DiagSums D;
   for (int n = n0; n < n1; ++n) {
     EB f = gather(fold, n, 1.0, n, 0.0, 1e-9, 0.0);
@@ -228,6 +234,11 @@ void Simulation::report(const DiagSums& D, bool files) {
   std::printf("step %5d  z = %8.4f mm  |Ex|max = %.3f  Ez = [%.4f, %.4f]  trapped %.3f pC (N = %zu)", step_no,
               s0 * um * 1e-3, D.maxEx, D.minEz, D.maxEz, cfg.units.codeToPC(tr.Q), tr.n);
   if (!cfg.ions.empty()) std::printf("  Zn_i/n0(axis)max = %.3f", D.nimax);
+  if (bound.on) {
+    std::printf("  bound: excited on the axis at the rear %.6f", bound.excitedAxis());
+    if (bound.ionizing())
+      std::printf(", neutral on the axis %.6f, area mean %.6f", bound.neutralAxis(), bound.neutralMean());
+  }
   std::printf("\n");
   for (size_t s = 0; s < cfg.ions.size(); ++s) {
     if (!cfg.ions[s].ionization) continue;
@@ -245,7 +256,7 @@ void Simulation::report(const DiagSums& D, bool files) {
     const Stats s = statsOf(D, int(b));
     std::printf("      %-10s N = %6zu  Q = %7.3f pC  E = %9.2f MeV  dE/E = %.2e  sig_x = %.3f um  eps_nx = %.3f um"
                 "  sig_z = %.2f um\n",
-                cfg.bunches[b].name.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV, s.dgrel,
+                cfg.bunches[b].name.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV * cfg.bunches[b].mass, s.dgrel,
                 s.sx * um, s.ex * um, s.sz * um);
   }
   std::fflush(stdout);
@@ -432,13 +443,13 @@ void Simulation::writeBunchTable(const DiagSums& D) {
     std::fprintf(fp,
                  "# step  z[mm]  bunch  N  Q[pC]  E[MeV]  dE/E(rms)  sig_x[um]  sig_y[um]  eps_nx[um]  eps_ny[um]"
                  "  <zeta>[um]  sig_z[um]    (bunch 'trapped' = self-injected plasma electrons)\n");
-  auto row = [&](std::string nm, const Stats& s) {
+  auto row = [&](std::string nm, const Stats& s, double mass = 1.0) {
     std::replace(nm.begin(), nm.end(), ' ', '_');  // keep one column per quantity
     std::fprintf(fp, "%6d %10.5f %-12s %8zu %10.4f %12.4f %10.3e %9.4f %9.4f %9.4f %9.4f %10.3f %9.4f\n", step_no,
-                 s0 * um * 1e-3, nm.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV, s.dgrel, s.sx * um,
+                 s0 * um * 1e-3, nm.c_str(), s.n, cfg.units.codeToPC(s.Q), (s.gmean - 1.0) * MC2_MEV * mass, s.dgrel, s.sx * um,
                  s.sy * um, s.ex * um, s.ey * um, s.zm * um, s.sz * um);
   };
-  for (size_t b = 0; b < cfg.bunches.size(); ++b) row(cfg.bunches[b].name, statsOf(D, int(b)));
+  for (size_t b = 0; b < cfg.bunches.size(); ++b) row(cfg.bunches[b].name, statsOf(D, int(b)), cfg.bunches[b].mass);
   row("trapped", statsOf(D, SPECIES_TRAPPED));
   for (size_t s = 0; s < cfg.ions.size(); ++s)
     if (cfg.ions[s].ionization)
@@ -551,8 +562,80 @@ struct Simulation::TextSink : Simulation::Sink {
   }
 };
 
+namespace {
+// bytes in the regular files below dir (0 if it does not exist)
+long long dirSize(const std::string& dir) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  long long n = 0;
+  for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code e2;
+    if (it->is_regular_file(e2)) {
+      const auto s = it->file_size(e2);
+      if (!e2) n += (long long)s;
+    }
+  }
+  return n;
+}
+// output.dir on tmpfs / ramfs: the files are kept in memory
+bool inMemoryFilesystem(const std::string& dir) {
+#if defined(__linux__)
+  struct statfs st;
+  if (statfs(dir.c_str(), &st) != 0) return false;
+  return st.f_type == 0x01021994 /* TMPFS_MAGIC */ || st.f_type == (decltype(st.f_type))0x858458f6 /* RAMFS_MAGIC */;
+#else
+  (void)dir;
+  return false;
+#endif
+}
+}  // namespace
+
+// number of file-output steps after step k (output.every, and always the last step)
+int Simulation::outputStepsAfter(int k) const {
+  const int last = k + cfg.grid.stepsFrom(s0);
+  const int e = cfg.output.every;
+  int n = (e > 0) ? last / e - k / e : 0;
+  if (e <= 0 || last % e != 0) n += (last > k) ? 1 : 0;
+  return n;
+}
+
+// the first file output measures its own volume: bytes of this step, the projection for the rest of the run and the
+// free space of output.dir (output files on tmpfs, or a container whose memory limit counts the file cache, fill the
+// memory: one output step of a large window with particles can be ~0.5 GB)
+std::string Simulation::volumeMessage(long long bytes) const {
+  namespace fs = std::filesystem;
+  const auto& O = cfg.output;
+  const int more = outputStepsAfter(step_no);
+  const double gb = 1e-9, total = double(bytes) * more;
+  char buf[1024];
+  std::string msg;
+  std::snprintf(buf, sizeof buf,
+                "output volume: %.3g GB per output step in '%s', %d more output steps: %.3g GB until z_end", bytes * gb,
+                O.dir.c_str(), more, total * gb);
+  msg = buf;
+  std::error_code ec;
+  const fs::space_info sp = fs::space(O.dir, ec);
+  if (!ec) {
+    std::snprintf(buf, sizeof buf, " (free there: %.3g GB)", double(sp.available) * gb);
+    msg += buf;
+    if (total > double(sp.available)) {
+      std::snprintf(buf, sizeof buf,
+                    "\nWARNING: the output of this run (%.3g GB) does not fit into the free space of '%s' (%.3g GB); "
+                    "reduce it with output.every, output.particles = false, output.format, output.hdf5_precision = "
+                    "single or output.hdf5_compression",
+                    total * gb, O.dir.c_str(), double(sp.available) * gb);
+      msg += buf;
+    }
+  }
+  if (inMemoryFilesystem(O.dir))
+    msg += "\nWARNING: output.dir '" + O.dir + "' is on tmpfs (in memory): the output files take RAM; " +
+           "write them to a disk";
+  return msg;
+}
+
 std::unique_ptr<Simulation::OutputSet> Simulation::beginOutput(const OutputPlan& plan) {
   auto o = std::make_unique<OutputSet>();
+  if (plan.files && !volumeReported) o->dirBytes = dirSize(cfg.output.dir);
   if (plan.files && cfg.output.text) o->sinks.push_back(std::make_unique<TextSink>(*this));
   if (plan.files && cfg.output.hdf5) o->sinks.push_back(makeHdf5Sink(*this, 0));
   if (plan.files && cfg.output.openpmd) o->sinks.push_back(makeHdf5Sink(*this, 1));
@@ -572,6 +655,10 @@ std::vector<std::string> Simulation::endOutput(OutputSet& o) {
     if (!m.empty()) msg.push_back(m);
   }
   o.sinks.clear();
+  if (o.dirBytes >= 0) {
+    volumeReported = true;
+    msg.push_back(volumeMessage(std::max(0LL, dirSize(cfg.output.dir) - o.dirBytes)));
+  }
   return msg;
 }
 

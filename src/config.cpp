@@ -268,6 +268,17 @@ double UndulatorConfig::resonance(double gamma) const {
   return period * (1.0 + kk) / (2.0 * gamma * gamma);
 }
 
+double DielectricConfig::chi(double r, double z) const {
+  if (!fn.empty()) return (z >= z_start && z < z_end) ? fn({r, z}) - 1.0 : 0.0;
+  return (z >= z_start && z < z_end && r >= r_in && r < r_out) ? epsilon - 1.0 : 0.0;
+}
+
+double WallConfig::at(double z) const {
+  if (!fn.empty()) return fn({z});
+  if (!z_points.empty()) return interpTable(z_points, r_points, z);
+  return radius;
+}
+
 double PlasmaConfig::longitudinal(double z) const {
   if (z_points.empty()) return 1.0;
   return interpTable(z_points, z_values, z);
@@ -644,8 +655,46 @@ void readFlyingFocus(const Block& b, const Deck& d, const Units& u, const GridCo
   BlockReader r(b, d, u);
   F.present = true;
   F.a0 = r.num("a0", Dim::None);
-  F.theta = r.num("cone_angle", Dim::Angle);
-  if (!(F.theta > 0 && F.theta < 0.5)) r.failKey("cone_angle", "must be between 0 and 0.5 rad");
+  FlyingFocusConfig::Component c0;
+  c0.theta = r.num("cone_angle", Dim::Angle);
+  if (!(c0.theta > 0 && c0.theta < 0.5)) r.failKey("cone_angle", "must be between 0 and 0.5 rad");
+  c0.order = int(r.integer("order", 0));
+  F.comps = {c0};
+  F.circular = r.word("polarization", "linear", {"linear", "circular"}) == "circular";
+  F.helicity = int(r.integer("helicity", 1));
+  if (F.helicity != 1 && F.helicity != -1) r.failKey("helicity", "must be +1 or -1");
+  if (r.has("helicity") && !F.circular) r.failKey("helicity", "only with polarization = circular");
+  // further components that beat with the main one
+  if (r.has("beat_cone_angle")) {
+    const auto th = r.vec("beat_cone_angle", Dim::Angle);
+    if (th.size() > 3) r.failKey("beat_cone_angle", "at most 3 further components");
+    auto list = [&](const char* key, Dim dim, double def) {
+      std::vector<double> v = r.has(key) ? r.vec(key, dim) : std::vector<double>(th.size(), def);
+      if (v.size() != th.size()) r.failKey(key, "must have as many entries as beat_cone_angle");
+      return v;
+    };
+    const auto ord = list("beat_order", Dim::None, 0.0), amp = list("beat_amplitude", Dim::None, 1.0),
+               ph = list("beat_phase", Dim::Angle, 0.0);
+    for (size_t k = 0; k < th.size(); ++k) {
+      FlyingFocusConfig::Component c;
+      c.theta = th[k];
+      if (!(c.theta > 0 && c.theta < 0.5)) r.failKey("beat_cone_angle", "must be between 0 and 0.5 rad");
+      if (ord[k] != std::round(ord[k])) r.failKey("beat_order", "must be integers");
+      c.order = int(ord[k]);
+      c.amp = amp[k];
+      c.phase = ph[k];
+      F.comps.push_back(c);
+    }
+  } else {
+    for (const char* k : {"beat_order", "beat_amplitude", "beat_phase"})
+      if (r.has(k)) r.failKey(k, "needs beat_cone_angle");
+  }
+  for (const auto& t : F.terms())
+    if (t.m > g.M) {
+      warn.push_back(b.label() + ": a component of Bessel order " + std::to_string(F.comps[t.comp].order) +
+                     " has field in azimuthal mode " + std::to_string(t.m) + " > m_max: it is left out");
+      break;
+    }
   if (r.oneOf("tau_fwhm", "length_1e") == 0)
     F.length_1e = r.num("tau_fwhm", Dim::Time) / std::sqrt(2.0 * std::log(2.0));
   else
@@ -656,21 +705,51 @@ void readFlyingFocus(const Block& b, const Deck& d, const Units& u, const GridCo
   F.cep = r.num("cep", Dim::Angle, 0.0);
   F.background = r.num("background_density", Dim::Density, 0.0);
   if (F.background < 0) r.failKey("background_density", "must be >= 0");
-  if (2.0 * F.kappa() - F.kappa() * F.kappa() <= F.background)
-    r.failKey("background_density", "too high for this cone angle: no conical wave (k_perp^2 < 0); "
-                                    "needs omega_p^2 < omega^2 sin^2(theta)");
+  for (const auto& c : F.comps)
+    if (2.0 * c.kappa() - c.kappa() * c.kappa() <= F.background)
+      r.failKey("background_density", "too high for this cone angle: no conical wave (k_perp^2 < 0); "
+                                      "needs omega_p^2 < omega^2 sin^2(theta)");
   if (g.M < 1) r.error(b.line, "a flying focus needs azimuthal mode 1: set grid.m_max >= 1");
   if (!(g.r_absorber < g.r_max))
     r.error(b.line, "the flying focus is fed through the radial absorber layer: set grid.r_absorber < r_max");
   // the conical wave has the transverse wavelength 2 pi / (k sin theta) at every radius
-  const double lperp = 2.0 * PI / std::sin(F.theta);
+  const double lperp = 2.0 * PI / std::sin(F.thetaMax());
   if (g.dr_max > lperp / 10.0)
     warn.push_back(b.label() + ": dr_max = " + std::to_string(g.dr_max / lperp).substr(0, 5) +
                    " transverse wavelengths 2 pi / (k sin theta): use dr <= 1/10 of it everywhere");
   // the rings ahead of the axial focus: at radius r the converging wave is ~ r theta / 2 ahead in zeta
-  if (F.zeta_center + 3.0 * F.length_1e + 0.5 * g.r_max * F.theta > g.window())
+  if (F.zeta_center + 3.0 * F.length_1e + 0.5 * g.r_max * F.thetaMax() > g.window())
     warn.push_back(b.label() + ": the converging wave at r_max (r theta / 2 ahead) and the pulse need room in front "
                    "of zeta_center: window too short");
+}
+
+// block 'wall': perfectly conducting wall at r = r_w(z) inside the grid; it switches the radial absorber off
+void readWall(const Block& b, const Deck& d, const Units& u, GridConfig& g, WallConfig& W) {
+  BlockReader r(b, d, u);
+  W.present = true;
+  const int given = int(r.has("radius")) + int(r.has("z_points")) + int(r.has("radius_function"));
+  if (given != 1) r.error(b.line, b.label() + " needs exactly one of 'radius', 'z_points' (with 'r_points') or 'radius_function'");
+  if (r.has("radius")) {
+    W.radius = r.num("radius", Dim::Length);
+    if (!(W.radius > 0.0 && W.radius < g.r_max)) r.failKey("radius", "must lie between 0 and grid.r_max");
+  } else if (r.has("z_points")) {
+    W.z_points = r.vec("z_points", Dim::Length);
+    W.r_points = r.vec("r_points", Dim::Length);
+    if (W.z_points.size() != W.r_points.size() || W.z_points.empty())
+      r.failKey("r_points", "must have as many entries as z_points");
+    for (size_t i = 1; i < W.z_points.size(); ++i)
+      if (!(W.z_points[i] > W.z_points[i - 1])) r.failKey("z_points", "must be strictly increasing");
+    for (double rw : W.r_points)
+      if (!(rw > 0.0 && rw < g.r_max)) r.failKey("r_points", "must lie between 0 and grid.r_max");
+  } else {
+    W.fn = r.expr("radius_function", {"z"});  // checked at every step (Simulation::setWall)
+  }
+  // the wall reflects; an absorber in front of it would damp the guided field
+  const Block* gb = d.single("grid");
+  const BlockReader gr(*gb, d, u);
+  if (gr.has("r_absorber") && g.r_absorber < g.r_max)
+    gr.failKey("r_absorber", "a wall block switches the radial absorber off: remove r_absorber or set it >= r_max");
+  g.r_absorber = g.r_max;
 }
 
 void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
@@ -970,8 +1049,9 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
     readBunchFile(b, d, u, g, B, warn);
     return;
   }
-  const std::string sp = r.word("species", "electron", {"electron", "positron"});
-  B.qm = (sp == "electron") ? -1.0 : 1.0;
+  const std::string sp = r.word("species", "electron", {"electron", "positron", "proton"});
+  B.mass = (sp == "proton") ? MP_OVER_ME : 1.0;
+  B.qm = ((sp == "electron") ? -1.0 : 1.0) / B.mass;
   // charge: magnitude from the deck, sign from the species
   const double q = std::fabs(r.num("charge", Dim::Charge));
   if (!(q > 0)) r.failKey("charge", "must not be zero");
@@ -980,7 +1060,7 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   const int eg = r.oneOf("energy", "gamma", !r.has("gamma_function"));
   if (eg == 0) {
     const double E = r.num("energy", Dim::Energy);
-    B.gamma = 1.0 + E / MC2_MEV;
+    B.gamma = 1.0 + E / (MC2_MEV * B.mass);  // kinetic energy
   } else if (eg == 1) {
     B.gamma = r.num("gamma", Dim::None);
   } else {
@@ -1087,6 +1167,11 @@ void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& 
   B.macroparticles = int(r.integer("macroparticles", 10000));
   if (B.macroparticles < 1) r.failKey("macroparticles", "must be >= 1");
   readShotNoise(r, B);
+  B.azimuthal_copies = int(r.integer("azimuthal_copies", 1));
+  if (B.azimuthal_copies < 1 || B.azimuthal_copies > 64) r.failKey("azimuthal_copies", "must be 1 ... 64");
+  if (B.macroparticles % (B.azimuthal_copies * (B.fawley ? B.beamlet : 1)) != 0)
+    r.failKey("macroparticles", "must be a multiple of azimuthal_copies" +
+                                    std::string(B.fawley ? " x beamlet" : ""));
 
   const double half = (B.shape == BunchConfig::Shape::Gaussian) ? 3.0 * B.sigma_z : 0.5 * B.length;
   if (B.zeta_center - half < 0 || B.zeta_center + half > g.window())
@@ -1128,7 +1213,7 @@ void readOutput(const Block& b, const Deck& d, const Units& u, OutputConfig& O) 
   O.openpmd_dzeta = r.num("openpmd_dzeta", Dim::Length, 0.0);
   if (O.openpmd_dr < 0) r.failKey("openpmd_dr", "must be positive");
   if (O.openpmd_dzeta < 0) r.failKey("openpmd_dzeta", "must be positive");
-  const std::string og = r.word("openpmd_grid", "both", {"uniform", "native", "both"});
+  const std::string og = r.word("openpmd_grid", "uniform", {"uniform", "native", "both"});
   O.openpmd_uniform = (og != "native");
   O.openpmd_native = (og != "uniform");
   if (!O.openpmd && r.has("openpmd_grid")) r.failKey("openpmd_grid", "needs format = openpmd");
@@ -1252,6 +1337,78 @@ void readChicane(const Block& b, const Deck& d, const Units& u, ChicaneConfig& C
   if (!(C.gamma_ref > 1.0)) r.failKey(r.has("gamma") ? "gamma" : "energy", "the reference must be relativistic");
 }
 
+// block 'dielectric': a layer of constant eps (r_in <= r < r_out, z_start <= z < z_end) or eps(r, z)
+void readDielectric(const Block& b, const Deck& d, const Units& u, const GridConfig& g, DielectricConfig& D) {
+  BlockReader r(b, d, u);
+  if (r.oneOf("epsilon", "epsilon_function") == 0) {
+    D.epsilon = r.num("epsilon", Dim::None);
+    if (!(D.epsilon >= 1.0)) r.failKey("epsilon", "must be >= 1 (a dielectric without dispersion)");
+    D.r_in = r.num("r_in", Dim::Length, 0.0);
+    D.r_out = r.num("r_out", Dim::Length, 1e300);
+    if (!(D.r_in >= 0.0 && D.r_out > D.r_in)) r.failKey("r_out", "must be larger than r_in >= 0");
+  } else {
+    D.fn = r.expr("epsilon_function", {"r", "z"});
+    if (r.has("r_in") || r.has("r_out")) r.failKey("r_in", "r_in, r_out go with 'epsilon', not 'epsilon_function'");
+  }
+  D.z_start = r.num("z_start", Dim::Length, -1e300);
+  D.z_end = r.num("z_end", Dim::Length, 1e300);
+  if (!(D.z_end > D.z_start)) r.failKey("z_end", "must be larger than z_start");
+  (void)g;
+}
+
+// block 'bound_electrons': Maxwell-Bloch medium of a V-type atom (element = Rb: D1, D2 built in)
+void readBound(const Block& b, const Deck& d, const Units& u, const GridConfig& g, BoundElectronsConfig& B) {
+  BlockReader r(b, d, u);
+  B.present = true;
+  B.element = r.str("element", "");
+  std::vector<double> lam, fs, ipx;
+  if (B.element == "Rb") {  // D. A. Steck, Rubidium 87 D line data; NIST
+    lam = {794.979e-3, 780.241e-3};  // um
+    fs = {0.342, 0.695};
+    B.ip_ground_eV = 4.177128;
+    ipx = {4.177128 - 1.559591, 4.177128 - 1.589049};  // 5P_1/2, 5P_3/2
+  } else if (!B.element.empty()) {
+    r.failKey("element", "only 'Rb' is built in; give wavelengths and oscillator_strengths instead");
+  }
+  if (r.has("wavelengths")) {
+    lam = r.vec("wavelengths", Dim::Length);
+    for (double& l : lam) l *= u.k0inv_um();  // code -> um
+  }
+  if (r.has("oscillator_strengths")) fs = r.vec("oscillator_strengths", Dim::None);
+  if (r.has("ionization_potentials")) {  // ground, excited 1, excited 2 [eV]
+    auto v = r.vec("ionization_potentials", Dim::Energy);
+    if (v.size() != lam.size() + 1) r.failKey("ionization_potentials", "needs the ground state and every excited state");
+    B.ip_ground_eV = v[0] * 1e6;  // energies come in MeV
+    ipx.assign(v.begin() + 1, v.end());
+    for (double& x : ipx) x *= 1e6;
+  }
+  if (lam.empty() || lam.size() > 2 || fs.size() != lam.size())
+    r.error(b.line, b.label() + " needs one or two lines: element = Rb, or wavelengths and oscillator_strengths");
+  B.lines = int(lam.size());
+  for (int j = 0; j < B.lines; ++j) {
+    if (!(lam[j] > 0 && fs[j] > 0)) r.failKey("wavelengths", "wavelengths and oscillator strengths must be > 0");
+    B.omega[j] = u.lambda0_um / lam[j];
+    B.f[j] = fs[j];
+    // d^2 / (e a0)^2 = f hbar / (2 m omega a0^2) = f E_h / (2 hbar omega); hbar omega [eV] = 1.239842 / lambda[um]
+    B.dipole[j] = std::sqrt(fs[j] * 27.211386 / (2.0 * 1.2398420 / lam[j]));
+    B.ip_excited_eV[j] = ipx.size() > size_t(j) ? ipx[j] : 0.0;
+  }
+  B.ion = r.str("ion", "");
+  if (B.ion.empty()) {
+    B.density = r.num("density", Dim::Density);
+    if (!(B.density > 0)) r.failKey("density", "must be > 0");
+  } else if (r.has("density")) {
+    r.failKey("density", "with 'ion' the atom density is that of the ion species");
+  }
+  B.r_out = r.num("r_out", Dim::Length, 1e300);
+  B.z_start = r.num("z_start", Dim::Length, -1e300);
+  B.z_end = r.num("z_end", Dim::Length, 1e300);
+  B.T1 = r.num("T1", Dim::Time, 0.0);
+  B.T2 = r.num("T2", Dim::Time, 0.0);
+  B.n_phi = int(r.integer("n_phi", 0));
+  if (B.n_phi != 0 && B.n_phi < 2 * g.M + 1) r.failKey("n_phi", "must be >= 2 m_max + 1");
+}
+
 void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig& N) {
   BlockReader r(b, d, u);
 #if defined(GEMPIC_HAVE_CUDA)
@@ -1274,6 +1431,7 @@ void readNumerics(const Block& b, const Deck& d, const Units& u, NumericsConfig&
   N.tridiag = td == "thomas" ? NumericsConfig::Tridiag::Thomas
               : td == "partition" ? NumericsConfig::Tridiag::Partition : NumericsConfig::Tridiag::Auto;
   N.iterations = int(r.integer("iterations", N.iterations));
+  N.predictor = (r.word("predictor", "zeta", {"zeta", "level"}) == "zeta") ? 1 : 0;
   N.beam_filter = int(r.integer("beam_filter", N.beam_filter));
   if (N.beam_filter < 0 || N.beam_filter > 8) r.failKey("beam_filter", "must be 0 ... 8");
   N.beam_smooth_length = r.num("beam_smooth_length", Dim::Length, 0.0);
@@ -1445,7 +1603,7 @@ std::vector<std::string> coneGridWarnings(const Config& c) {
 Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   std::vector<std::string> warn;
   deck.checkBlockNames({"constants", "grid", "laser", "flying_focus", "plasma", "ion", "bunch", "undulator", "quadrupole",
-                        "plasma_lens", "solenoid", "chicane", "output", "numerics"});
+                        "plasma_lens", "solenoid", "chicane", "wall", "dielectric", "bound_electrons", "output", "numerics"});
   Config c;
   g_consts = &c.constants;  // the expressions of all blocks see the constants
   struct Reset { ~Reset() { g_consts = nullptr; } } reset;
@@ -1455,6 +1613,16 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
 
   if (const Block* b = deck.single("constants")) readConstants(*b, deck, c.units, c.constants);
   readGrid(*grid, deck, c.units, c.grid, warn);
+  if (const Block* b = deck.single("wall")) readWall(*b, deck, c.units, c.grid, c.wall);
+  if (const Block* b = deck.single("bound_electrons")) {
+    readBound(*b, deck, c.units, c.grid, c.bound);
+    if (c.grid.M < 1) throw DeckError(deck.where(b->line) + ": bound_electrons couple to the laser: set grid.m_max >= 1");
+  }
+  for (const Block* b : deck.all("dielectric")) {
+    DielectricConfig D;
+    readDielectric(*b, deck, c.units, c.grid, D);
+    c.dielectrics.push_back(D);
+  }
   for (const Block* b : deck.all("laser")) {
     LaserConfig L;
     readLaser(*b, deck, c.units, c.grid, L, warn);
@@ -1473,6 +1641,20 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     readIon(*b, deck, c.units, c.plasma, I, warn);
     fsum += I.fraction();
     c.ions.push_back(I);
+  }
+  if (c.bound.present && !c.bound.ion.empty()) {  // bound electrons of an ion species: the neutral atoms ionize
+    const Block* bb = deck.single("bound_electrons");
+    auto& B = c.bound;
+    for (size_t s = 0; s < c.ions.size(); ++s)
+      if (c.ions[s].name == B.ion) B.ionIndex = int(s);
+    if (B.ionIndex < 0) throw DeckError(deck.where(bb->line) + ": bound_electrons.ion = '" + B.ion + "' is no ion block");
+    const IonConfig& I = c.ions[size_t(B.ionIndex)];
+    if (I.Z != 0 || !I.ionization)
+      throw DeckError(deck.where(bb->line) + ": bound_electrons.ion needs neutral atoms with field ionization "
+                      "(ion block with charge_state = 0, ionization = true)");
+    // ground state = the first ionization energy of the species; excited states: minus the photon energy
+    B.ip_ground_eV = I.ip_eV[0];
+    for (int j = 0; j < B.lines; ++j) B.ip_excited_eV[j] = B.ip_ground_eV - 1.2398420 * B.omega[j] / c.units.lambda0_um;
   }
   if (!c.plasma.free_electrons && fsum > 0.0) {
     throw DeckError(deck.where(deck.single("plasma")->line) +
@@ -1538,7 +1720,25 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
   if (c.output.lasy && c.grid.M < 1)
     throw DeckError(deck.source + ": output.lasy needs the laser modes: set grid.m_max >= 1");
   if (const Block* b = deck.single("numerics")) readNumerics(*b, deck, c.units, c.numerics);
+  if (c.wall.present && c.numerics.theta_stiff > 0 && (!c.wall.fn.empty() || c.wall.z_points.size() > 1))
+    throw DeckError(deck.where(deck.single("wall")->line) +
+                    ": a wall of varying radius cannot be combined with numerics.theta_stiff yet (a constant radius can)");
+  if (!c.dielectrics.empty() && (c.numerics.theta_stiff > 0 || c.numerics.beam_consistent))
+    throw DeckError(deck.where(deck.all("dielectric")[0]->line) +
+                    ": a dielectric cannot be combined with numerics.theta_stiff or numerics.beam_consistent yet");
   deck.checkAllUsed();
+  // long plasma wakes: with the predictor zeta the passes per slice must converge (README, "Long plasma wakes")
+  if (c.plasma.present && c.numerics.predictor == 1 && c.numerics.iterations < 4) {
+    const double periods = c.grid.window() * std::sqrt(c.plasma.n0) / (2.0 * PI);
+    if (periods > 30.0)
+      warn.push_back("the window holds " + std::to_string(int(periods)) +
+                     " plasma periods: long wakes need numerics.iterations = 4 (here " +
+                     std::to_string(c.numerics.iterations) + "), otherwise they grow from step to step");
+  }
+  // one pass (predictor only) with plasma: the laser gains energy from step to step (README, "Passes per slice")
+  if (c.plasma.present && c.numerics.iterations == 1)
+    warn.push_back("numerics.iterations = 1 (predictor only) with plasma: the plasma currents are not corrected and "
+                   "the laser gains energy from step to step (+18 % over 10 mm in an LWFA run); use 2 or more");
   // box size for bunches with v < c (Config::boxAdvice): warn if too small
   for (const auto& A : c.boxAdvice()) {
     if (A.rmax_now < A.rmax_need)
@@ -1574,8 +1774,9 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
     if (G.length < 4.0 * c.numerics.beam_dz_max)
       warn.push_back(G.label + ": shorter than 4 sub-steps of the beam push (numerics.beam_dz_max)");
     for (const auto& B : c.bunches) {
-      const double k = (G.kind == MagnetConfig::Kind::Solenoid) ? 0.5 * std::fabs(G.field) / B.gamma
-                                                                  : std::sqrt(std::fabs(G.gradient) / B.gamma);
+      const double qm = std::fabs(B.qm);  // 1 for electrons and positrons
+      const double k = (G.kind == MagnetConfig::Kind::Solenoid) ? 0.5 * qm * std::fabs(G.field) / B.gamma
+                                                                  : std::sqrt(qm * std::fabs(G.gradient) / B.gamma);
       if (k * c.numerics.beam_dz_max > 0.1)
         warn.push_back(G.label + ", bunch '" + B.name + "': numerics.beam_dz_max exceeds 0.1 / k_beta (" +
                        fmtUm(0.1 / k, c.units) + ")");
@@ -1647,6 +1848,28 @@ std::string Config::summary() const {
   } else {
     line("       dz = %.4g um, z_end = %.4g mm (%d steps); absorber r > %.4g um, strength %.3g", g.dz * um,
          g.z_end * um * 1e-3, g.stepsFrom(0.0), g.r_absorber * um, g.absorber_strength);
+  }
+  if (wall.present) {
+    if (!wall.fn.empty())
+      line("wall : perfectly conducting, r_w(z) = %s; r_w(0) = %.4g um (absorber off)", wall.fn.text().c_str(),
+           wall.at(0.0) * um);
+    else if (!wall.z_points.empty())
+      line("wall : perfectly conducting, r_w(z) linear between %zu points, %.4g .. %.4g um (absorber off)",
+           wall.z_points.size(), *std::min_element(wall.r_points.begin(), wall.r_points.end()) * um,
+           *std::max_element(wall.r_points.begin(), wall.r_points.end()) * um);
+    else
+      line("wall : perfectly conducting, r_w = %.4g um (absorber off)", wall.radius * um);
+  }
+  for (const auto& D : dielectrics) {
+    const std::string zr = (D.z_start > -1e299 || D.z_end < 1e299)
+                               ? " for " + std::to_string(D.z_start * um * 1e-3) + " <= z < " +
+                                     std::to_string(D.z_end * um * 1e-3) + " mm"
+                               : std::string();
+    if (!D.fn.empty())
+      line("dielectric : eps(r, z) = %s%s", D.fn.text().c_str(), zr.c_str());
+    else
+      line("dielectric : eps = %.6g for %.4g <= r < %s um%s", D.epsilon, D.r_in * um,
+           D.r_out > 1e299 ? "r_max" : std::to_string(D.r_out * um).c_str(), zr.c_str());
   }
   for (size_t i = 0; i < lasers.size(); ++i) {
     const auto& L = lasers[i];
@@ -1785,7 +2008,7 @@ std::string Config::summary() const {
     const auto& B = bunches[i];
     line("bunch[%zu] '%s': %s, Q = %.4g pC, E = %.5g MeV (gamma %.5g), dE/E = %.3g, sigma_x,y = %.4g, %.4g um, "
          "eps_n = %.4g, %.4g um, %s %.4g um at zeta = %.4g um, %d macroparticles",
-         i, B.name.c_str(), B.qm < 0 ? "electrons" : "positrons", B.charge_pC, (B.gamma - 1.0) * MC2_MEV, B.gamma,
+         i, B.name.c_str(), B.speciesName(), B.charge_pC, (B.gamma - 1.0) * MC2_MEV * B.mass, B.gamma,
          B.energy_spread, B.sigma_x * um, B.sigma_y * um, B.emittance_x * um, B.emittance_y * um,
          B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? "sigma_z" : "length",
          (B.shape == BunchConfig::Shape::Gaussian || B.shape == BunchConfig::Shape::File ? B.sigma_z : B.length) * um,
@@ -1797,6 +2020,9 @@ std::string Config::summary() const {
     if (B.fawley)
       line("        shot noise: %s beamlets of %d macroparticles at %.4g um", B.quiet ? "quiet (noise-free)" : "Fawley",
            B.beamlet, B.noise_wavelength * um);
+    if (B.azimuthal_copies > 1)
+      line("        azimuthal copies: %d per sampled particle, turned by 360/%d deg about the bunch axis (modes 1 ... %d "
+           "of the bunch vanish there)", B.azimuthal_copies, B.azimuthal_copies, B.azimuthal_copies - 1);
     if (B.axis_refine > 1)
       line("        axis refinement: %d times the macroparticles at r < %s, with 1/%d of the charge", B.axis_refine,
            B.axis_radius > 0 ? (std::to_string(B.axis_radius * um) + " um").c_str() : "4 radial cells",
@@ -1830,10 +2056,27 @@ std::string Config::summary() const {
   }
   if (flying_focus.present) {
     const auto& F = flying_focus;
+    const double th = F.comps[0].theta;
     line("flying focus: luminal Bessel pulse, a0 = %.4g on the axis, cone angle %.4g mrad (core radius %.4g um, "
          "transverse wavelength %.4g um), length_1e = %.4g um at zeta = %.4g um; fed through the absorber layer r > %.4g um",
-         F.a0, F.theta * 1e3, 2.405 / std::sin(F.theta) * um, 2.0 * PI / std::sin(F.theta) * um, F.length_1e * um,
+         F.a0, th * 1e3, 2.405 / std::sin(th) * um, 2.0 * PI / std::sin(th) * um, F.length_1e * um,
          F.zeta_center * um, grid.r_absorber * um);
+    if (F.circular) line("        circular polarization, helicity %+d", F.helicity);
+    const auto T = F.terms();
+    for (size_t c = 0; c < F.comps.size(); ++c) {
+      const auto& C = F.comps[c];
+      std::string modes;
+      for (const auto& t : T)
+        if (t.comp == int(c) && modes.find(std::to_string(t.m)) == std::string::npos)
+          modes += (modes.empty() ? "" : ", ") + std::to_string(t.m) + (t.m > grid.M ? " (left out)" : "");
+      line("        component %zu: J_%d e^{i %d phi}, cone angle %.4g mrad, amplitude %.4g, phase %.4g rad: modes m = %s",
+           c, std::abs(C.order), C.order, C.theta * 1e3, C.amp, C.phase, modes.c_str());
+      if (c > 0) {
+        const double dk = C.kappa() - F.comps[0].kappa();
+        line("        beat with component 0: period 2 pi / |kappa_%zu - kappa_0| = %.5g um in z", c,
+             2.0 * PI / std::abs(dk) * um);
+      }
+    }
     if (F.background > 0) line("        incident field in a uniform plasma of %.4g n_c", F.background);
   }
   if (output.fel)
@@ -1869,9 +2112,9 @@ std::string Config::summary() const {
     line("beam self-fields: theta per radial mode %s, consistent beam sources %s",
          numerics.theta_stiff > 0 ? ("on (theta_stiff = " + std::to_string(numerics.theta_stiff) + ")").c_str() : "off",
          numerics.beam_consistent ? "on" : "off");
-  line("output: dir '%s', every %d steps; numerics: %d iterations/slice, theta %.3g, trap advance %.3g dz, beam "
+  line("output: dir '%s', every %d steps; numerics: %d iterations/slice (predictor %s), theta %.3g, trap advance %.3g dz, beam "
        "filter %d, beam pusher %s, beam field %s, seed %lu, backend %s",
-       output.dir.c_str(), output.every, numerics.iterations, numerics.theta, numerics.trap_advance, numerics.beam_filter,
+       output.dir.c_str(), output.every, numerics.iterations, numerics.predictor == 1 ? "zeta" : "level", numerics.theta, numerics.trap_advance, numerics.beam_filter,
        numerics.beam_vay ? "vay" : "boris", numerics.beam_field == BEAM_FIELD_MEAN ? "mean of s^0, s^1" : "s^0",
        numerics.seed,
        numerics.backend == NumericsConfig::Backend::Cuda     ? "cuda"

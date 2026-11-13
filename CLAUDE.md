@@ -72,7 +72,17 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     6. real-GPU tests and the scaling series (1, 4, 16, 64 GPUs) on JUPITER / JUWELS Booster, run by Thomas
        Wilson: scripts in benchmarks/jupiter/ (README there: build.sh, check.sbatch = GPU vs serial on 1-4 GPUs,
        submit_scaling.sh + scaling.sbatch + cpu_reference.sbatch, collect.sh = table). Dry-run in WSL with
-       stand-ins for srun/sbatch/nvidia-smi and the emulation binary. Waiting for his results.
+       stand-ins for srun/sbatch/nvidia-smi and the emulation binary. Results 2026-10-26 in
+       benchmarks/jupiter/README.md (35/35 ctests, 1-4 GPUs = serial; 4/16/64 GPUs: LWFA 88/66/28 %, FEL 64/47/30 %
+       efficiency; 1 GH200 node = 2.6x (LWFA) / 1.4x (FEL) one CPU node). The engine part scales ideally (engine
+       profile = 1/P); all losses are host side. Critical cycle: steady step = whole step + the prefix before the R
+       message (messages, mean phase, diagnostics, beam push, uploads), so the prefix counts twice.
+       5e round 1 (branch `device-resident`, 2026-10-26): level s^0 + currents stay on the device (recvRear uploads
+       only ghosts; Engine::swapPreAbsorber for the mean phase), per-step diagnostics on a host thread during the
+       next step (PipelineRun::dueDiag/joinDiag/finishDiag; output/checkpoint steps synchronous), sparse FEL slice
+       tables to rank 0, `pipeline profile` + time per step after the fill (GEMPIC_PROFILE=1), weak-scaling scripts
+       (submit_weak.sh). Emulation: files and console bit-identical to main. Waiting for Tom's round-2 profiles.
+       Open: device-resident beam list (bookkeeping on the device), CUDA-aware MPI.
        6a done (2026-10-25, branch gpu-rtx5090): first real-GPU run, one RTX 5090 (cc 12.0, CUDA 13.0, no MPI, so
        1 rank): ctest of the GPU build 29/30 pass + gui skipped (python 3.6); benchmarks/gpu/check_1gpu.sh (the
        1-rank part of check.sbatch, no Slurm) 0 failed comparisons, GPU = serial to all printed digits (engine and
@@ -88,4 +98,57 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     default (bit-identical when off). Open: beam_consistent in the MPI pipeline (needs c1b at half-cell b and the
     flux across block edges); team-parallel band solves on the GPU. Private context: CLAUDE-notes
     gem-pic-rz/self_field/HANDOVER.md.
+  - **Metal wall** (branch `metal-wall`; block `wall`, README "Metal walls", ctest wall_*): perfectly conducting
+    wall r = r_w(z) inside the grid (FieldSolver::setWall: last face K, ghost centre of E_z at r_w, zero B_z flux,
+    fields outside zero; absorber off). Sloped wall: E_z = -r_w' E_r at the wall (kept in e[K]); widening wall: the
+    field continues into the opened annulus (Simulation/Engine::extendWall). Serial, engine, pipeline and MPI.
+    Against the modal theory of the tube (tests/wall.py, the scheme's dispersion relation): 0.8 % straight, 1.0 %
+    12 -> 9 um taper. Open: varying radius with theta_stiff; reflections (backward waves) are outside the model.
+    Asked for by Alexander (waveguides of variable radius); dielectric structures were discussed, not started.
+  - **Dielectric media** (branch `dielectric`, 2026-11-05; block `dielectric`, README "Dielectric media", ctest
+    dielectric_*): constant eps(r, z) as the polarization current J = -d_zeta(chi E), trapezoidal over the half-cells
+    (running J along zeta, J^0 recomputed from the stored s^0: no extra state); coupled pentadiagonal (B_z, E_z) per
+    mode built by probing (src/dielectric.cpp). Serial, engine, MPI (J in the F message, corrected L in the R
+    message). Tests: DWA tube vs TM_0n / HEM_1n modal theory, Cherenkov cone, laser slippage vs the scheme's
+    dispersion. Physics (Alexander): keep the GEM model; the energy flow of non-synchronous fields is that of the
+    reduced system (DWA TM01 beta_g 0.40 vs Maxwell 0.33), documented. Merged (PR #28).
+  - **Bound electrons** (branch `bound-electrons`; block `bound_electrons`, README "Bound electrons", ctest bound_*):
+    Maxwell-Bloch V-type atom (Rb D1 + D2 built in; Alexander: V-system, scalar dipole along x, ADK per level, no
+    damping by default) on cell centres x n_phi angles (src/bloch.hpp node step: Cayley with pre-warped frequencies
+    and coupling factor tan x/(x cos x); src/bound.*); medium current into the existing current inputs (trapezoidal
+    slice current, half-cell current); `ion = <block>` links it to neutral atoms: depopulation, macro-atoms ionize
+    with population-weighted ADK. Serial, engine (OpenMP / CUDA: BoundV node kernels in Engine::march, state
+    uploaded before and downloaded after every march) and MPI (host or device march; state in the F message).
+    Result: resonant excitation lowers the Rb ionization threshold (a0 5e-4 instead of ~1e-3).
+  - **Chained runs** (2026-11-05; handoff CLAUDE-notes gem-pic-rz/chain_handoff.md): `examples/chain_lwfa_fel/`
+    (stage 1 down-ramp injection with FBPIC, stage1_fbpic.py; handoff.py; stage 2 acceleration and stage 3 lens,
+    chicane, helical undulator with GEM-PIC-RZ; run_chain.sh [ranks]; README there with the numbers), ctest `chain`
+    (tests/chain.sh: import moments vs python, chicane shift on the particle data, FEL growth) and `mpi_chain`.
+    Alexander: down-ramp injection belongs to a full PIC code (GEM-PIC-RZ traps there, charge unreliable); ionization
+    injection, acceleration, transport and FEL in GEM-PIC-RZ. The FEL stage of the example keeps one plasma lens on
+    purpose (his choice: demo as is); a matched lattice is the next step for a quantitative case.
+    MPI synchronization points (pipeline.cpp eventIn / drain / syncEvent / exchangeGhosts): `bunch.z_start` (PR #25,
+    merged) and thin chicanes (branch mpi-chicane): the pipeline is drained at the event step, the beam gathered, the
+    event applied as serially (self-fields solved across the ranks), ghosts from the owners, restart-like new start;
+    ctest mpi_events (1-4 ranks, mean push, restarts across the event, device emulation = serial). Under Slurm run MPI
+    tests with --ntasks >= 4 (a 1-task allocation binds all ranks to one core). Open: E (import of protons/ions from
+    openPMD files), ask Alexander first.
+  - **Memory / output volume** (branch `output-volume`, 2026-11-08): Alexei Petrenko's DWA microbuncher run (16 MPI
+    ranks, every = 5, particles, text + openPMD) filled a 46 GB VM at z = 1.02 m. Not a leak: the 16 ranks stay at
+    4.4 GB; the output files (0.40 GB per output step, 41 GB) took the RAM. Now the first output step reports
+    "output volume: ..." with a warning for tmpfs / too little free space, and the run ends with "peak memory: ...";
+    ctest output_volume. README "Memory and output volume".
+  - **openPMD z = const snapshots** (branch `openpmd-zplane`, 2026-11-10; feedback of Anton Golovanov, FBPIC user):
+    an output step is the plane z = s (slice zeta crossed it at t = (s - zeta)/c), not a t = const snapshot.
+    Alexander's decision: extend openPMD with position snapshots, GEM-PIC-RZ writes them. Iteration attributes
+    snapshotType = "position", snapshotAxis, snapshotPosition(+UnitSI), snapshotAxisVelocity; particle record `time`
+    (BeamPhysics); axis label z = zeta + s and time = s/c kept for old readers. Proposal docs/openpmd_zplane.md
+    (Alexander opens the openPMD pull request himself; issue #161 of openPMD-standard is related). Also:
+    Bug fixed (Anton): uniform n_e, Zn_i came out multiplied by n_ref = n0/n_c in SI (too small; missing / n_ref; native records were
+    right); ctest openpmd checks the SI density of a uniform plasma. input_deck moved out of the iteration (/input_deck).
+    native_* records only with openpmd_grid = native/both (default now uniform), every species in every file
+    (empty = zero-length), bunch.file picks the only non-empty species. ctest openpmd_viewer (openpmd-viewer 1.11
+    on atto in /storage2/pukhov/opmdv/pylib). Not done (option): reconstructed t = const output by copying each
+    slice at the level s = c t* + zeta (about L/dz steps of buffering). Waiting: Anton's markdown (one more
+    "straightforward mistake"), his deck + LASY file for the field-energy growth with ionized He (flying focus).
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
