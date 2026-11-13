@@ -232,6 +232,10 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME transport_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/transport.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract> ${b})
   endforeach()
+  # element edges between the sub-steps of the beam push (FODO, hard-edge solenoid) against linear optics
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME quad_edges_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/quad_edges.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
   # proton bunches: mass, charge sign and energy against linear optics
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME proton_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/proton.sh $<TARGET_FILE:gempic_rz> ${b})

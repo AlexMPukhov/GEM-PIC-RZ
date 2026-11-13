@@ -190,6 +190,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
 | `tests/long_wake.sh`, `tests/long_wake.deck` | long linear plasma wake (`numerics.predictor`): k_p amplitude of the on-axis E_z against the linear theory, no growth from step to step; the old prediction (`level`) must grow, per backend |
+| `tests/quad_edges.sh` | element edges inside the sub-steps of the beam push: a FODO of six quadrupoles with the edges off the 5 mm sub-steps and a hard-edge solenoid against the linear optics of `tests/transport_expect.awk` (README "Corrections", item 10) |
 | `tests/proton.sh` | proton bunches (400 GeV): energy in `bunches.txt`, quadrupole and plasma lens with the gradients scaled by Bρ against the linear optics of `tests/transport_expect.awk` (planes swapped by the positive charge) |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
@@ -1221,6 +1222,17 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
    predictor–corrector with a second solve of s¹ (10.413 µm) and as the converged λ_u/64 run. Stable at λ_u/8.
    Extrapolating the field from s⁻¹ and s⁰ instead made it worse. Without undulators nothing changes
    (`auto` = `level`), bit for bit. Test: `tests/planar_step.sh`.
+10. **Edges of transport elements inside a sub-step** (found with a FODO channel whose quadrupole lengths are
+    not multiples of the sub-step). The push kicked the momentum with the field at one point of
+    each sub-step, so a quadrupole or plasma lens acted over a whole number of sub-steps: an edge inside a sub-step
+    changed its effective length by up to one sub-step, and a hard-edge solenoid (`ramp = 0`) gave no edge focusing
+    at all. Now the field is averaged over the interval of the kick, [z − Δz/2, z + Δz/2]: an element contributes
+    with the fraction it covers, a solenoid with the mean of B_z and of dB_z/dz (the exact integrated edge kick).
+    Test (`tests/quad_edges.sh`, ctest `quad_edges`): six touching 4.37 cm quadrupoles (±100 T/m, γ = 1000) with the
+    edges off the 5 mm sub-steps; the rms size ratio of a cold beam is x 0.63188, y 1.30038 against 0.63188 and
+    1.30029 from the linear optics (before: x 0.72429, y 1.19758, 15 % and 8 % off); a hard-edge 5 T solenoid gives
+    r 0.96046 against 0.95846 (before: 1.00000, no focusing). The single quadrupole of `tests/transport.sh`, edges
+    on the grid, is now exact too (x 0.38374, y 1.64531; before 0.38409, 1.64493). Also on a GPU (RTX 5090).
 
 ## What is new compared with the prototype
 
