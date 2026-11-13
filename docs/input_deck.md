@@ -590,7 +590,7 @@ all particles, like the undulators; the field solver does not see them. Several 
 |-------|------|-------|
 | `quadrupole` | `z_start`, `length`, `gradient` (T/m) | B_x = −G y, B_y = −G x. G > 0 focuses electrons in x and defocuses them in y (positrons: the reverse); use G < 0 for the other plane |
 | `plasma_lens` | `z_start`, `length`, `gradient` (T/m), `radius` (optional) | active plasma lens: azimuthal B_φ = −G r inside `radius`, −G R²/r outside. G > 0 focuses electrons in both planes. Only the magnetic field of the discharge is modelled, not its plasma |
-| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. Use `ramp > 0`: the radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame) |
+| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. The radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame); `ramp = 0` is a hard edge, whose B_r kick the push integrates exactly |
 | `chicane` | `z`, `r56`, `delay` (default \|r56\|/2), `energy` or `gamma` (reference) | thin chicane at z: every beam particle moves in ζ by r56·δ − delay, δ = γ/γ_ref − 1. r56 > 0: particles with more energy move forward (towards the head), as in a four-dipole chicane; a negative chirp (more energy at the tail) is then compressed. `delay` is the path difference of the reference particle (moves the beam back with respect to the radiation; ≈ R56/2 for a symmetric chicane) |
 
 - **Thin chicane:** the shift is applied when the beam passes `z` (at the end of that step), without transverse
@@ -601,9 +601,12 @@ all particles, like the undulators; the field solver does not see them. Several 
   rank that owns their new position. The results equal the serial run (`tests/mpi_events.sh`).
 - **Resolution:** the beam push must resolve the elements: `numerics.beam_dz_max` ≤ 0.1/k_β (k_β = √(G/Bρ) or
   B/(2Bρ)), and an element should span ≥ 4 sub-steps. Warnings are printed otherwise. The step `grid.dz` may be larger.
+- **Edges:** the elements may start and end anywhere, also inside a sub-step: the push averages their field over
+  the interval of each kick (a sub-step), so the integrated kick of an element is exact. Check `tests/quad_edges.sh`: six quadrupoles with the edges off the 5 mm
+  sub-steps agree with the linear optics to 1e-4 (README, "Corrections", item 10).
 - **Check (`tests/transport.sh`):** a cold bunch (γ = 1000) through a 100 T/m quadrupole, a plasma lens and a 5 T
-  solenoid and a drift: the rms sizes at the end agree with the linear optics to 0.1 % (quadrupole x 0.38409 vs
-  0.38374, y 1.64493 vs 1.64531; solenoid r 0.96466 vs 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
+  solenoid and a drift: the rms sizes at the end agree with the linear optics to the printed digits (quadrupole
+  x 0.38374, y 1.64531; solenoid r 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
   bunch (rms 0.5761 vs 0.5766 µm).
 
 ## `wall` (0 or 1 block)
