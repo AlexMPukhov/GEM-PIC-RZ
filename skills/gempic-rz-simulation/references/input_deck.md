@@ -179,6 +179,12 @@ r_max       = 24 um                    # or: nr
 - **Reference points:** if the first point is not 0, the step `dr_points[0]` is used from the axis on. `r_points` need not coincide with cell faces; `r_max` (or `nr`) sets the outer edge independently.
 - **Smoothness:** h(r) is continuous, its slope jumps at the reference points. The scheme stays second-order accurate (checked with the Laplacian eigenvalues of modes 0–2 under refinement); only the cell-to-cell change |b| = |Δh/Δr| matters. The summary prints the largest change, and a warning is issued above 25 %. Keep it below ~20 %.
 - **Resolution:** a uniform grid is `r_points = 0` with a single `dr_points` value.
+- **Radiation must not be reflected:** the discrete radial operator carries only transverse wavenumbers k_⊥ ≤ 2/dr (a
+  coarser cell throws the wave back), and below that its k_⊥,eff = (2/dr) sin(k_⊥ dr/2) falls where dr grows outward,
+  which turns grazing waves back (numerical total internal reflection). Keep k_⊥ dr ≲ 1 wherever radiation must
+  propagate; stretch only outside it or behind the absorber. With undulators `--check` warns for the off-axis harmonic
+  cones (k_⊥ = h k_r θ, θ² = (1/h)(1 + K²/2)/γ² for harmonic h + 1 at hω₁; README, "Undulators (FEL)"): it names the
+  radius where the grid first stretches with k_⊥ dr > 1 and where dr exceeds 2/k_⊥, up to the radius the cone reaches.
 - **Summary:** `--check` prints Nr, the step range, the actual `r_max`, the largest cell-to-cell change and the reference points in µm.
 
 The window and the propagation distance use the same mapping:
@@ -591,7 +597,7 @@ all particles, like the undulators; the field solver does not see them. Several 
 |-------|------|-------|
 | `quadrupole` | `z_start`, `length`, `gradient` (T/m) | B_x = −G y, B_y = −G x. G > 0 focuses electrons in x and defocuses them in y (positrons: the reverse); use G < 0 for the other plane |
 | `plasma_lens` | `z_start`, `length`, `gradient` (T/m), `radius` (optional) | active plasma lens: azimuthal B_φ = −G r inside `radius`, −G R²/r outside. G > 0 focuses electrons in both planes. Only the magnetic field of the discharge is modelled, not its plasma |
-| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. Use `ramp > 0`: the radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame) |
+| `solenoid` | `z_start`, `length`, `field` (T), `ramp` (default 0) | B_z = B f(z) and B_r = −(r/2) B f′(z), with linear fringes of length `ramp` inside the length. The radial fringe field gives the focusing (strength (B/2Bρ)² in the Larmor frame); `ramp = 0` is a hard edge, whose B_r kick the push integrates exactly |
 | `chicane` | `z`, `r56`, `delay` (default \|r56\|/2), `energy` or `gamma` (reference) | thin chicane at z: every beam particle moves in ζ by r56·δ − delay, δ = γ/γ_ref − 1. r56 > 0: particles with more energy move forward (towards the head), as in a four-dipole chicane; a negative chirp (more energy at the tail) is then compressed. `delay` is the path difference of the reference particle (moves the beam back with respect to the radiation; ≈ R56/2 for a symmetric chicane) |
 
 - **Thin chicane:** the shift is applied when the beam passes `z` (at the end of that step), without transverse
@@ -602,9 +608,12 @@ all particles, like the undulators; the field solver does not see them. Several 
   rank that owns their new position. The results equal the serial run (`tests/mpi_events.sh`).
 - **Resolution:** the beam push must resolve the elements: `numerics.beam_dz_max` ≤ 0.1/k_β (k_β = √(G/Bρ) or
   B/(2Bρ)), and an element should span ≥ 4 sub-steps. Warnings are printed otherwise. The step `grid.dz` may be larger.
+- **Edges:** the elements may start and end anywhere, also inside a sub-step: the push averages their field over
+  the interval of each kick (a sub-step), so the integrated kick of an element is exact. Check `tests/quad_edges.sh`: six quadrupoles with the edges off the 5 mm
+  sub-steps agree with the linear optics to 1e-4 (README, "Corrections", item 10).
 - **Check (`tests/transport.sh`):** a cold bunch (γ = 1000) through a 100 T/m quadrupole, a plasma lens and a 5 T
-  solenoid and a drift: the rms sizes at the end agree with the linear optics to 0.1 % (quadrupole x 0.38409 vs
-  0.38374, y 1.64493 vs 1.64531; solenoid r 0.96466 vs 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
+  solenoid and a drift: the rms sizes at the end agree with the linear optics to the printed digits (quadrupole
+  x 0.38374, y 1.64531; solenoid r 0.96466). A chicane with R56 = 100 µm halves a chirped 4 µm
   bunch (rms 0.5761 vs 0.5766 µm).
 
 ## `wall` (0 or 1 block)
@@ -727,7 +736,7 @@ bound_electrons { element = Rb; ion = Rb }
 | `axis`, `maps`, `particles` | true/false | true | which files to write (`particles` also controls the beam list in the HDF5 files) |
 | `format` | one or more of `text`, `hdf5`, `openpmd` (`both` = `text, hdf5`) | `text` | `text`: `axis_`, `map_`, `beam_NNNNN.txt`; `hdf5`: one file `data_NNNNN.h5` per output step with all modes on the native grid (see below); `openpmd`: openPMD 1.1.0 files `openpmd/openpmd_<step>.h5` (see below). E.g. `format = text, openpmd` |
 | `openpmd_dr`, `openpmd_dzeta` | length | smallest dr / dzeta of the grid | spacing of the uniform r–ζ grid of the openPMD fields |
-| `openpmd_grid` | `uniform` \| `native` \| `both` | `both` | openPMD fields interpolated to a uniform grid (for every openPMD reader), on the code's own nodes (records `native_*`, exact), or both |
+| `openpmd_grid` | `uniform` \| `native` \| `both` | `uniform` | openPMD fields interpolated to a uniform grid (for every openPMD reader), on the code's own nodes (records `native_*`, exact), or both. The `native_*` records are written only on request: openpmd-viewer does not read them (until 1.1 has rectilinear meshes) and fails on files that hold them |
 | `hdf5_precision` | `double` \| `single` | `double` | floating-point precision of the HDF5 datasets (single: half the size) |
 | `hdf5_compression` | integer 0 … 9 | 0 | gzip level of the HDF5 datasets (0: none; the files of the examples shrink by about 3.5× with `single` + 6) |
 | `fel` | `auto` \| `true` \| `false` | `auto` | FEL table `fel.txt` every step (auto: on when there are undulator and bunch blocks) |
@@ -774,10 +783,11 @@ z, uz, w = ts.get_particle(['z', 'uz', 'w'], species='witness', iteration=100)
 - **Meshes:** `E`, `B` (components `r`, `t`, `z`) and `n_e` (density of all electrons; `Zn_i`: charge density of the mobile ions / e, with ion blocks), in SI via `unitSI`. Geometry `thetaMode` with dataset index 0 for m = 0 and 2m−1, 2m for the cos(mθ), sin(mθ) parts (`imag=+`).
 - **Interpolation:** the standard needs a uniform grid. The fields are interpolated from the staggered (and possibly non-uniform) r–ζ grid to the nodes r_j = j·`openpmd_dr`, ζ_k = k·`openpmd_dzeta`, linearly as in the particle gather, with the regular behaviour on the axis. The defaults (the smallest steps) keep the resolution but make large files on stretched grids; choose coarser values for overviews. The native records (next item) and the `hdf5` format store the exact data.
 - **Native records** (`openpmd_grid = native` or `both`): every mode on the code's own staggered, possibly non-uniform nodes, without interpolation, as scalar meshes `native_E_r`, `native_E_t`, `native_E_z`, `native_B_r`, `native_B_t`, `native_B_z` (faces or centres in r, slices in ζ) and `native_n_e`, `native_Zn_i` (densities / n0, centres × half-cells). They follow the proposal for rectilinear meshes in openPMD 2.0 ([`openpmd_rectilinear.md`](https://github.com/AlexMPukhov/GEM-PIC-RZ/blob/main/docs/openpmd_rectilinear.md)): the node positions are data sets `<basePath>gridCoordinates/r_faces`, `r_centers`, `zeta_slices`, `zeta_halfcells`, referenced by the mesh attribute `gridCoordinates` (one path per axis). While the files are openPMD 1.1 the records carry `geometry = "other"` with `geometryParameters = "thetaMode;m=…;imag=+"`, so readers that know only regular grids skip them. E_r and B_φ on the axis hold the regular limit. Readers: `h5_extract` (every command except `beam` works on these files exactly as on `data_NNNNN.h5`) and `tools/openpmd_rectilinear.py` (Python; also reads QUARZ's native records, which keep the radial nodes in the attribute `gridCoordinates_r`).
-- **Coordinates:** the lab position is z = ζ + s, and the time t = s/c (`gridGlobalOffset` and particle `positionOffset/z` hold s). Each step is an iteration.
-- **Particles:** one species per bunch (its `name`), `trapped` (self-injected plasma electrons) and `inj_<ion>` (electrons from field ionization), if present: `position`, `positionOffset`, `momentum` (per real particle), `weighting` (real particles per macroparticle), constant `charge` and `mass`, and a `particlePatches` bounding box.
+- **Position (z = const) snapshots:** an output step is the level s, i.e. the plane z = s: slice ζ = z − ct of the window crossed that plane at t = (s − ζ)/c. A file is therefore the time history of a plane, not a snapshot at one time. The iteration carries the attributes proposed for openPMD 2.0 in [`openpmd_zplane.md`](openpmd_zplane.md): `snapshotType = "position"`, `snapshotAxis = "z"`, `snapshotPosition` = s with `snapshotPositionUnitSI`, and `snapshotAxisVelocity = 1` (c), so that the axis label z maps to the crossing time t = `time` + (s − z)/c. For readers that ignore them, the longitudinal axis keeps the label z = ζ + s and `time` = s/c (`gridGlobalOffset` and particle `positionOffset/z` hold s): they show the co-moving window as before. Each step is an iteration.
+- **Particles:** one species per bunch (its `name`), `trapped` (self-injected plasma electrons) and `inj_<ion>` (electrons from field ionization), written in every file, empty ones as zero-length records (openpmd-viewer takes the species list from the first file): `position`, `positionOffset`, `momentum` (per real particle), `weighting` (real particles per macroparticle), `time` (the time at which the particle crossed the plane, (s − ζ)/c, float64; the per-particle `time` of the openPMD BeamPhysics extension), constant `charge` and `mass`, and a `particlePatches` bounding box. `bunch.file` picks the only non-empty species when `file_species` is not given.
+- **Densities:** `n_e`, `Zn_i` (and `native_n_e`, `native_Zn_i`) are stored in units of n0 with `unitSI` = n0 in m⁻³. In files written before 2026-11-10 the uniform records lacked the division by n0/n_c, so their SI values were multiplied by n0/n_c (too small; the native records were right); such files are corrected by dividing by n0/n_c (attribute `n0_m3` / `n_c_m3` of the `hdf5` file, or the deck density in units of n_c). The deck is stored in `/input_deck` (outside the iteration).
 - **Precision and compression:** `hdf5_precision` and `hdf5_compression` apply to these files too.
-- **Check:** the files pass the openPMD validator (`openPMD_check_h5`) without errors or warnings; the `openpmd` test also compares the fields rebuilt from the thetaMode data with the code's own reconstruction.
+- **Check:** the files pass the openPMD validator (`openPMD_check_h5`) without errors or warnings; the `openpmd` test also compares the fields rebuilt from the thetaMode data with the code's own reconstruction, and the `openpmd_viewer` test reads every iteration of a run with field ionization (a species empty at first) with openpmd-viewer and compares fields and particle moments with the native files.
 
 ### LASY files
 
@@ -870,7 +880,7 @@ if [ $? -eq 3 ]; then sbatch job.sh; fi     # time limit reached: continue in a 
 | key | kind | default | meaning |
 |-----|------|---------|---------|
 | `backend` | `serial` \| `openmp` \| `cuda` | `cuda` in a GPU build, else `serial` | `serial`: reference implementation, one thread. `openmp`: parallel engine on CPU threads (CPU build; threads from `OMP_NUM_THREADS`). `cuda`: parallel engine on an NVIDIA GPU (build with `-DGEMPIC_CUDA=ON`). With MPI (several ranks): `serial` or `openmp` (threads on every rank); `cuda` is not yet available with MPI. See "Backends" below |
-| `iterations` | integer | 2 | passes per slice (1 = predictor only). Long plasma wakes (more than ~30 plasma periods in the window) need 4 with `predictor = zeta` (README, "Long plasma wakes") |
+| `iterations` | integer | 2 | passes per slice (1 = predictor only). **Do not use 1 with plasma:** the plasma currents are then never corrected and the laser gains energy from step to step (+18 % over 10 mm in an LWFA run, where 2 passes agree with FBPIC; README, "Passes per slice"); the code warns. Long plasma wakes (more than ~30 plasma periods in the window) need 4 with `predictor = zeta` (README, "Long plasma wakes") |
 | `predictor` | `zeta` \| `level` | `zeta` | prediction of j¹ of the half-cell behind a slice in its R update: `zeta` = j⁰ plus the change j¹ − j⁰ extrapolated along ζ from the two half-cells in front; `level` = j⁰ (versions ≤ 1.0; unstable in long plasma wakes) |
 | `seed` | integer | 12345 | random seed (plasma loading, bunches, ionization) |
 | `tridiag` | `auto` \| `thomas` \| `partition` | `auto` | tridiagonal solves of the field update in the parallel engine: `thomas`, one thread per azimuthal mode; `partition`, the Thomas/PCR partition method (Laszlo, Giles & Appleyard 2016) on all threads of the block. `auto` uses `partition` on the GPU and `thomas` on CPU threads. Both agree to rounding (1e-12); the serial backend always uses Thomas |
