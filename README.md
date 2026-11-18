@@ -143,6 +143,34 @@ numerics { ... }    algorithm parameters               (optional)
 | `examples/ionization_injection.deck` | ionization injection: N⁵⁺ dopant field-ionized to N⁶⁺/N⁷⁺ by an a0 = 2 pulse (ADK, NIST energies) |
 | `examples/dwa_proton_microbuncher/` | dielectric wakefield structure (quartz-lined copper tube, Petrenko & Sheinman, RuPAC 2016): 600 MeV, 5 nC drive beam in a tapered FODO channel (BBU), proton microbuncher, chicane and proton "klystron"; deck generator `make_deck.py` (README there) |
 
+## Agent skill
+
+The repository ships two [agent skills](https://agentskills.io) in [`skills/`](skills/): instructions that AI
+coding agents load on demand, so that an agent can build the code and write, check, run and debug input decks
+without being told how. The format (`SKILL.md` with a YAML header, plus `references/`, `scripts/`, `examples/`) is an
+open standard that is read natively by Claude Code, OpenCode, Codex, Cursor, Gemini CLI, Goose, Cline, Qwen Code,
+OpenHands and others, with commercial or open models.
+
+```
+npx skills add AlexMPukhov/GEM-PIC-RZ          # the `skills` CLI (skills.sh, needs Node.js): choose skills and agents
+```
+
+Without Node.js copy the two folders `skills/gempic-rz-setup` and `skills/gempic-rz-simulation` into the skill
+directory of the agent (`.agents/skills/` in a project for OpenCode, Codex, Cursor and Gemini CLI, `.claude/skills/`
+for Claude Code, or the user-wide `~/.claude/skills/`, `~/.config/opencode/skills/`, `~/.agents/skills/`). Then ask
+for a simulation in plain words, e.g. "LWFA, a0 = 2, 800 nm, n = 1e18 cm^-3, 2 mm".
+
+| skill | content |
+|---|---|
+| `gempic-rz-setup` | clone, build (cmake or make), ctest, the backends (serial, OpenMP, MPI, CUDA), where the output goes, cluster jobs |
+| `gempic-rz-simulation` | helps the user run the code for a physics problem: which code fits, the questions to ask and the choices to discuss, then the deck (the agent does not modify the source); structure of a deck, the rules for resolution, box and radial grid, what the code can and cannot model, verification steps (`--check`, warnings, smoke run), diagnostics and plotting, a debugging table; the complete deck reference; six example decks (plain LWFA, LWFA with witness, PWFA, SASE FEL, undulator emission, LASY laser); helper scripts (plasma numbers and starting values of the grid, quick-look plot, LASY file) |
+
+The skills cannot drift from the code: the deck reference and four of the example decks in the skill are copies of
+`docs/input_deck.md` and `examples/` (`sh tools/sync_skills.sh` after editing those), and the ctest `agent_skill`
+checks the format, the copies, every deck key the skill names against the parser and the reference, and runs every
+deck of the skill for 3 steps with the real executable. Details and the result of the trial with a fresh agent:
+[`docs/agent_skill.md`](docs/agent_skill.md).
+
 ## Source layout
 
 | file | content |
@@ -205,6 +233,9 @@ numerics { ... }    algorithm parameters               (optional)
 | `tools/install_cuda_pip.sh` | installs nvcc + CUDA runtime from PyPI into a user directory (no root) |
 | `tools/compare_columns.cpp` | numeric comparison of ASCII tables (used by the regression test) |
 | `tools/plot_maps.gp` | gnuplot → PDF: E_z and density maps, on-axis lineout |
+| `skills/` | agent skills (`gempic-rz-setup`, `gempic-rz-simulation`): `SKILL.md`, references, example decks and helper scripts for AI coding agents (see "Agent skill") |
+| `tools/sync_skills.sh` | regenerates the copies of `docs/input_deck.md` and of the example decks inside the skills (`--check`: compare) |
+| `tests/agent_skill.sh` | ctest `agent_skill`: skill format, copies in sync, deck keys named in the skills against the parser and the reference, deck snippets and all decks of the skills run with the executable |
 
 ## Lasers from and to LASY files
 

@@ -1,0 +1,46 @@
+# ============================================================================
+#  LWFA driven by a laser pulse read from a LASY envelope file
+#
+#  The file holds the pulse at its focal plane. `file_z = 0.3 mm` puts that
+#  plane 0.3 mm into the simulation: the field at z = 0 is computed from the
+#  file by exact (non-paraxial) vacuum propagation, so the pulse starts
+#  0.3 mm before its focus, converging. The plasma begins at 0.2 mm.
+#
+#  make the file:  python3 scripts/make_lasy_gaussian.py        (lasy_gaussian.h5; numpy + h5py)
+#                  or any LASY file: Laser(...).write_to_file(...)
+#  run:            gempic_rz lasy_laser.deck                    (needs a build with HDF5)
+#  Check in the console: "propagated from its plane", the share of the energy
+#  in azimuthal modes beyond m_max, and no warning about the edge of the file.
+# ============================================================================
+
+grid {
+  lambda0       = 0.8 um
+  m_max         = 1               # a linearly polarized, axisymmetric envelope lives in mode 1
+  radial_grid   = uniform         # the converging pulse must propagate freely: no coarsening in its path
+  dr            = 0.4 um
+  r_max         = 40 um           # 5 w0: holds the pulse 0.3 mm before its focus (w = 12.5 um there)
+  dzeta         = 32 nm           # 25 points per wavelength
+  window_length = 60 um
+  dz            = 10 um
+  z_end         = 0.7 mm          # 0.4 mm behind the focus the spot is 15 um: still inside the absorber (34 um)
+}
+
+laser {
+  file        = lasy_gaussian.h5  # relative to the working directory or to the deck
+  a0          = 1.5               # rescales the file to this peak amplitude at its plane
+  zeta_center = 40 um             # window position of the centre of the file's pulse
+  file_z      = 0.3 mm            # plane of the file (its focus) in the simulation
+}
+
+plasma {
+  density  = 2e18 cm^-3
+  z_points = 0.2, 0.3 mm          # vacuum up to 0.2 mm, linear ramp to 0.3 mm
+  z_values = 0, 1
+  r_max    = 32 um                # inside the radial absorber (0.85 r_max = 34 um)
+}
+
+output {
+  dir       = lasy_laser
+  every     = 25
+  particles = false
+}

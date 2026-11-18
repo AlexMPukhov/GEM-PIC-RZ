@@ -138,6 +138,12 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     4.4 GB; the output files (0.40 GB per output step, 41 GB) took the RAM. Now the first output step reports
     "output volume: ..." with a warning for tmpfs / too little free space, and the run ends with "peak memory: ...";
     ctest output_volume. README "Memory and output volume".
+  - **Agent skills** (branch `agent-skill`, 2026-11-18; `skills/gempic-rz-setup`, `skills/gempic-rz-simulation`,
+    docs/agent_skill.md, README "Agent skill"): open Agent Skills format (SKILL.md), installed with
+    `npx skills add AlexMPukhov/GEM-PIC-RZ` or by copying the folders. After editing docs/input_deck.md or one of the
+    examples copied into the skill run `sh tools/sync_skills.sh`; a new deck key that the skill should know is
+    written as `block.key` in the skill files. ctest `agent_skill` checks format, copies, keys and runs the decks.
+    The skills are public text: nothing from CLAUDE-notes goes in. QUARZ and VLPL can follow the same pattern.
   - **openPMD z = const snapshots** (branch `openpmd-zplane`, 2026-11-10; feedback of Anton Golovanov, FBPIC user):
     an output step is the plane z = s (slice zeta crossed it at t = (s - zeta)/c), not a t = const snapshot.
     Alexander's decision: extend openPMD with position snapshots, GEM-PIC-RZ writes them. Iteration attributes
