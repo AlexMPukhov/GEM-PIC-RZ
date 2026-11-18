@@ -140,6 +140,10 @@ add_executable(test_adk tests/test_adk.cpp)
 target_link_libraries(test_adk gemcore)
 add_test(NAME adk COMMAND test_adk)
 
+add_executable(solver_source tests/solver_source.cpp)
+target_link_libraries(solver_source gemcore)
+add_test(NAME solver_source COMMAND solver_source)
+
 add_executable(compare_columns tools/compare_columns.cpp)
 add_executable(check_physics tests/check_physics.cpp)
 target_link_libraries(check_physics gemcore)
@@ -232,6 +236,10 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME transport_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/transport.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract> ${b})
   endforeach()
+  # element edges between the sub-steps of the beam push (FODO, hard-edge solenoid) against linear optics
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME quad_edges_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/quad_edges.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
   # proton bunches: mass, charge sign and energy against linear optics
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME proton_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/proton.sh $<TARGET_FILE:gempic_rz> ${b})
@@ -247,6 +255,10 @@ if(GEMPIC_HAVE_HDF5)
   add_test(NAME openpmd
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   set_tests_properties(openpmd PROPERTIES SKIP_RETURN_CODE 77)
+  # openPMD files read with openpmd-viewer (empty species, z = const metadata) against the native files
+  add_test(NAME openpmd_viewer
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/openpmd_viewer.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
+  set_tests_properties(openpmd_viewer PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME undulator
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/undulator.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
   # beam push in a planar undulator at dz = lambda_u / 16: numerics.beam_field = mean against level
@@ -324,6 +336,7 @@ if(GEMPIC_HAVE_HDF5)
     set_tests_properties(bound_gpu_emulation PROPERTIES SKIP_RETURN_CODE 77)
   endif()
   # energy spread dE/E of bunches.txt against the particle data (gamma = 1000, dE/E down to 1e-6)
+  add_test(NAME cone_grid COMMAND sh ${CMAKE_SOURCE_DIR}/tests/cone_grid.sh $<TARGET_FILE:gempic_rz>)
   add_test(NAME energy_spread COMMAND sh ${CMAKE_SOURCE_DIR}/tests/energy_spread.sh $<TARGET_FILE:gempic_rz>)
   set_tests_properties(energy_spread PROPERTIES SKIP_RETURN_CODE 77)
   # GUI (tools/gempic_gui.py): runs started through its HTTP API; fields against the code's gather

@@ -48,6 +48,11 @@ if awk -v a="$AL" -v t="$THEORY" 'BEGIN { exit !(a > 10 * t) }'; then
 else
   echo "  level: amplitude at step 8 = $AL, expected > 10 x $THEORY  FAILED"; exit 1
 fi
+if "$EXE" "$SRC/tests/long_wake.deck" --check numerics.iterations=1 2>&1 | grep -q "iterations = 1 (predictor only)"; then
+  echo "  iterations = 1 with plasma: warning printed  ok"
+else
+  echo "  iterations = 1 with plasma: no warning  FAILED"; exit 1
+fi
 cd - > /dev/null
 rm -rf "$WORK"
 echo "long wake test passed ($BACKEND)"

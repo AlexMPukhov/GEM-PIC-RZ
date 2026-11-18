@@ -86,8 +86,12 @@ ImportedBeam readOpenPMD(const File& F, const std::string& species, long iterati
   const std::vector<std::string> sps = F.children(ip);
   std::string sp = species;
   if (sp.empty()) {
-    if (sps.size() != 1) F.fail("give file_species: the file holds the species " + join(sps));
-    sp = sps[0];
+    // the only species with particles (writers such as GEM-PIC-RZ keep empty species in every iteration)
+    std::vector<std::string> full;
+    for (const auto& c : sps)
+      if (!F.exists(ip + c + "/position/x") || F.count(ip + c + "/position/x") > 0) full.push_back(c);
+    if (full.size() != 1) F.fail("give file_species: the file holds the species " + join(sps));
+    sp = full[0];
   } else if (std::find(sps.begin(), sps.end(), sp) == sps.end()) {
     F.fail("species '" + sp + "' not found (species: " + join(sps) + ")");
   }

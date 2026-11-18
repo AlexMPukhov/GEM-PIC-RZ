@@ -218,12 +218,15 @@ deck of the skill for 3 steps with the real executable. Details and the result o
 | `tests/lasy.sh`, `tests/lasy_files.py` | LASY files: import against the built-in Gaussian (thetaMode, cartesian, circular), exact propagation, export and re-import (read by LASY if installed), boundary injection against the built-in flying focus |
 | `tests/energy_spread.sh`, `tests/energy_spread.py` | dE/E of `bunches.txt` against the particle data (two-pass, extended precision): γ = 1000, dE/E from 0 to 2 × 10⁻⁵, the printed value must be the rounded reference |
 | `tests/long_wake.sh`, `tests/long_wake.deck` | long linear plasma wake (`numerics.predictor`): k_p amplitude of the on-axis E_z against the linear theory, no growth from step to step; the old prediction (`level`) must grow, per backend |
+| `tests/quad_edges.sh` | element edges inside the sub-steps of the beam push: a FODO of six quadrupoles with the edges off the 5 mm sub-steps and a hard-edge solenoid against the linear optics of `tests/transport_expect.awk` (README "Corrections", item 10) |
 | `tests/proton.sh` | proton bunches (400 GeV): energy in `bunches.txt`, quadrupole and plasma lens with the gradients scaled by Bρ against the linear optics of `tests/transport_expect.awk` (planes swapped by the positive charge) |
 | `tests/cherenkov.sh` | numerical Cherenkov: ζ-Nyquist field energy of a relativistic bunch in vacuum and in plasma, with and without the beam filter |
 | `tests/azimuthal_copies.sh` | `bunch.azimuthal_copies`: a centred bunch loaded with 4 turned copies keeps the mode m = 1 at round-off (on-axis E_x 1e-14 against 3e-5 for random loading) with the same wake, charge and size; an offset bunch has its centroid at (x0, y0) |
 | `tests/chain.sh`, `tests/chain_fel.deck` | chained runs: openPMD hand-off (moments of the selected beam against python on the stage-1 file), thin chicane on the particle data (shift R56 δ − delay), FEL power growth in the reduced undulator stage; ctest `mpi_chain`: stage 2 on 2 MPI ranks = 1 rank |
 | `tests/bunch_zstart.sh` | `bunch.z_start`: a bunch loaded later in the run (with its self-field) equals the same bunch loaded at z = 0, to rounding |
 | `tests/thin_ring.sh`, `tests/thin_ring.py`, `tests/thin_ring.deck` | thin, intense, low-γ ring (`beam_consistent`, `theta_stiff`): static and prescribed-expansion rings at γ = 10⁶ against the exact field relations; a 10 kA, γ = 50 ring at rest and on matched orbits in a plasma lens against a long-beam shell model, per backend |
+| `tests/solver_source.cpp` | field solver driven by a prescribed source (no particles): smooth m = 2 currents at 2k (j_z; transverse current of an offset beam at K = −k_u) against a 4× finer radial grid; the deposition weights of `Simulation::deposit` against the exact azimuthal projection (differences only in the first cells near the axis, second order in dr); no spurious radial structure at 1.0 < \|k_r\| < 1.6 µm⁻¹. Also a tool: `solver_source <dr_um> <z\|a\|b> <K/k_u> <steps> <out.txt>` writes one profile |
+| `tests/cone_grid.sh` | `--check` warning for undulator harmonic cones the radial grid turns back: θ and k_⊥ for h = 1–3 of `benchmarks/harmonics/fel.deck` against the cone formula (10⁻³), the stretching (40 µm) and cutoff (51.5 µm) radii of the h = 2 cone, the cutoff beyond 100 µm with dr = 1 µm to 100 µm, no warning on a uniform 0.5 µm grid |
 | `tests/mpi_events.sh` | MPI synchronization points: `bunch.z_start` and a thin chicane on 1–4 ranks (also mean-field push, restarts, device march) = serial |
 | `tests/mpi.sh` | MPI: one-rank pipeline = serial; 2–4 ranks against serial (also `beam_field = mean`); restarts across rank counts; wall-time stop |
 | `tests/restart.sh` | interrupted + restarted run against the uninterrupted run (checkpoint file, wall-time stop) |
@@ -420,12 +423,19 @@ layout is listed in `docs/input_deck.md`.
 `output { format = openpmd }` (combinable: `format = text, openpmd`) writes files that follow the openPMD standard
 1.1.0, `<dir>/openpmd/openpmd_<step>.h5`, readable with openPMD-viewer, openPMD-api, VisualPIC or ParaView. The fields
 are written in `thetaMode` on a uniform r–ζ grid (`openpmd_dr`, `openpmd_dzeta`; interpolated as in the particle
-gather), the lab position is z = ζ + s and the time s/c, and each bunch is a particle species with SI units. The
-files pass the openPMD validator without errors or warnings; details in
-[`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
+gather), and each bunch, the trapped electrons and the electrons from ionization of every ion block are particle
+species with SI units, written in every file (empty ones as zero-length records, so openpmd-viewer sees the same
+species in all iterations). The files pass the openPMD validator without errors or warnings, and openpmd-viewer
+reads every iteration (ctest `openpmd_viewer`); details in [`docs/input_deck.md`](docs/input_deck.md#openpmd-files).
 
-openPMD 1.1 has no non-uniform grids. Besides the interpolated fields the files therefore hold the exact data
-on the code's own nodes (`output.openpmd_grid = both`, the default; or `native`): records `native_*` whose
+**z = const snapshots.** An output step of GEM-PIC-RZ is the plane z = s: slice ζ of the window crossed it at
+t = (s − ζ)/c. The files say so with the iteration attributes `snapshotType = "position"`, `snapshotAxis`,
+`snapshotPosition` and `snapshotAxisVelocity`, and every particle carries its crossing time in the record `time`
+(as in the openPMD BeamPhysics extension). For existing readers the longitudinal axis keeps the label z = ζ + s
+and `time` = s/c. This is our proposal for openPMD 2.0, [`docs/openpmd_zplane.md`](docs/openpmd_zplane.md).
+
+openPMD 1.1 has no non-uniform grids. On request the files also hold the exact data on the code's own nodes
+(`output.openpmd_grid = both` or `native`; default `uniform`, because openpmd-viewer fails on them): records `native_*` whose
 node positions are data sets referenced by the mesh attribute `gridCoordinates`. This is the form we propose for
 openPMD 2.0 ([`docs/openpmd_rectilinear.md`](docs/openpmd_rectilinear.md)); QUARZ writes an interim variant.
 `h5_extract` and `tools/openpmd_rectilinear.py` read both.
@@ -466,8 +476,8 @@ much larger than that, and they grow with every output step:
   step, 41 GB by z = 1.02 m. On a 46 GB virtual machine this filled the memory, while the 16 MPI ranks together needed
   a constant 4.4 GB.
 - **Fewer bytes:** a larger `every`; `particles = false` except at a few steps; one format only; `hdf5_precision =
-  single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` (the uniform copy of the fields
-  is dropped). `bunches.txt` has the beam moments of every step anyway.
+  single` and `hdf5_compression = 6` (about 3.5× smaller); `openpmd_grid = native` instead of the default `uniform` (smaller on
+  stretched grids, but openpmd-viewer cannot read it). `bunches.txt` has the beam moments of every step anyway.
 - **Test:** `output_volume` (serial and parallel backend) compares the reported volume with the bytes of the files
   written (within 1 %, it agrees to 0.4 %). It checks that the peak memory after 160 steps equals that after 20
   (within 5 % + 20 MB; measured: the same to 1 MB after 20, 80 and 320 steps, serial and OpenMP) and that an output
@@ -545,6 +555,16 @@ spontaneous and coherent emission, and the FEL interaction, are contained in the
 resolves the radiation (λ_r/20 or finer). The steps along z resolve the wiggling (λ_u/16 or finer); the summary
 warns otherwise. With undulators the beam is pushed in the mean of the fields of the two levels of a step
 (`numerics.beam_field = mean`, "Corrections", item 9); this keeps intense beams in planar undulators stable at λ_u/16.
+
+**Radial grid and harmonic cones.** At the frequency hω₁ the harmonic n = h + 1 is emitted off axis, on the cone
+θ² = (1/h)(1 + K²/2)/γ² (helical: 1 + K²), with the transverse wavenumber k_⊥ = h k_r θ (k_⊥² = 2h k_r k_u). The
+discrete radial operator carries only k_⊥ ≤ 2/dr: a coarser cell throws the wave back, and where the grid stretches
+with k_⊥ dr > 1 the numerical dispersion turns grazing waves back (numerical total internal reflection). The turned
+cone then collects near the beam. Example: in `benchmarks/harmonics/fel.deck` the 2nd harmonic (h = 2) has
+k_⊥ = 1.22 µm⁻¹ (a 5.1 µm radial structure near the beam); the grid (dr = 1 µm to 40 µm, then stretching) turns it
+back at 40–52 µm. `--check` warns for every harmonic up to
+`output.fel_harmonics` whose cone the grid turns back before the cone leaves the run (θ times the undulator length plus
+3σ, at most r_absorber). Keep k_⊥ dr ≲ 1 wherever the cone propagates; stretch only behind the absorber.
 
 **Test: coherent spontaneous emission** (`examples/undulator_emission.deck`). The setup:
 - planar undulator, 50 periods of 14.22 mm, K = 0.5;
@@ -715,6 +735,22 @@ periods). Uniform plasma, weak driver, window 1000 c/ω_p (160 periods), h = 1/6
 | 20 (60–80 steps) | grows ×1.4 per 5 steps | 8.2 … 8.3 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ | 8.2 … 8.4 × 10⁻⁶ |
 
 With up to ~20 periods (laser wakefield windows) 2 passes are enough.
+
+**One pass is not enough with plasma.** `numerics.iterations = 1` uses the predicted currents without
+correction, and the laser then gains energy from step to step. Flying-focus LWFA in neutral He (LASY
+axiparabola-type pulse, 5 × 10¹⁷ cm⁻³ after full ionization, Δ = 5 µm, h = 0.04 µm, 10 mm; reported by a user
+against FBPIC), laser field energy at z = 0 → 10 mm:
+
+| passes | smoothing a | He | energy [J] |
+|---|---|---|---|
+| 1 | 0 | neutral, ADK | 0.854 → 1.006 (+18 %) |
+| 2 | 0 | neutral, ADK | 0.854 → 0.841 |
+| 2 | 0.25 µm | neutral, ADK | 0.854 → 0.841 |
+| 2 | 0.25 µm | pre-ionized | 0.854 → 0.845 |
+| FBPIC | | neutral, ADK | 0.855 → 0.842 |
+
+In vacuum 1 and 2 passes keep the energy constant (0.8541 J over 2 mm), so the growth is the uncorrected
+coupling to the plasma, not the field solve. The code warns about `iterations = 1` with plasma.
 
 **Checks.**
 - `tests/long_wake.sh` (window 60 c/ω_p, Δ = 100 c/ω_p, 8 steps): the k_p amplitude of E_z on the axis is
@@ -1229,6 +1265,17 @@ saturate, and a linear (Lorentz) model does not apply: the medium is a V-type at
    predictor–corrector with a second solve of s¹ (10.413 µm) and as the converged λ_u/64 run. Stable at λ_u/8.
    Extrapolating the field from s⁻¹ and s⁰ instead made it worse. Without undulators nothing changes
    (`auto` = `level`), bit for bit. Test: `tests/planar_step.sh`.
+10. **Edges of transport elements inside a sub-step** (found with a FODO channel whose quadrupole lengths are
+    not multiples of the sub-step). The push kicked the momentum with the field at one point of
+    each sub-step, so a quadrupole or plasma lens acted over a whole number of sub-steps: an edge inside a sub-step
+    changed its effective length by up to one sub-step, and a hard-edge solenoid (`ramp = 0`) gave no edge focusing
+    at all. Now the field is averaged over the interval of the kick, [z − Δz/2, z + Δz/2]: an element contributes
+    with the fraction it covers, a solenoid with the mean of B_z and of dB_z/dz (the exact integrated edge kick).
+    Test (`tests/quad_edges.sh`, ctest `quad_edges`): six touching 4.37 cm quadrupoles (±100 T/m, γ = 1000) with the
+    edges off the 5 mm sub-steps; the rms size ratio of a cold beam is x 0.63188, y 1.30038 against 0.63188 and
+    1.30029 from the linear optics (before: x 0.72429, y 1.19758, 15 % and 8 % off); a hard-edge 5 T solenoid gives
+    r 0.96046 against 0.95846 (before: 1.00000, no focusing). The single quadrupole of `tests/transport.sh`, edges
+    on the grid, is now exact too (x 0.38374, y 1.64531; before 0.38409, 1.64493). Also on a GPU (RTX 5090).
 
 ## What is new compared with the prototype
 
