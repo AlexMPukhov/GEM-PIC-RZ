@@ -332,3 +332,8 @@ if(GEMPIC_HAVE_HDF5)
   add_test(NAME cherenkov
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/cherenkov.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:h5_extract>)
 endif()
+
+# agent skills (skills/*/SKILL.md, docs/agent_skill.md): format, copies of the docs and examples in sync, every
+# deck key they name known to the parser, every deck they ship parsed and run for 3 steps
+add_test(NAME agent_skill
+  COMMAND sh ${CMAKE_SOURCE_DIR}/tests/agent_skill.sh $<TARGET_FILE:gempic_rz> $<BOOL:${GEMPIC_HAVE_HDF5}>)

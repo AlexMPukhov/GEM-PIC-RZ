@@ -1,0 +1,59 @@
+# ============================================================================
+#  Plain laser wakefield: a0 = 2, 0.8 um, 30 fs, w0 = 15 um (matched spot) in
+#  1e18 cm^-3, 1 mm.  No witness: the template for "LWFA, a0, density, length".
+#
+#  All numbers below come from
+#     python3 scripts/plasma_numbers.py --density 1e18 --a0 2 --waist 15 --tau 30 --length 1
+#  lambda_p = 33.4 um, c/omega_p = 5.31 um, z_R = 0.88 mm, P = 30 TW = 1.0 P_c.
+#  For another case run the script with the new numbers and replace the values
+#  marked (script); then: gempic_rz deck --check, smoke run, full run.
+#
+#  run:   OMP_NUM_THREADS=8 gempic_rz lwfa_plain.deck numerics.backend=openmp
+#  look:  python3 scripts/plot_run.py lwfa_plain
+# ============================================================================
+
+constants {
+  n0 = 1e18 cm^-3
+  w0 = 15 um
+}
+
+grid {
+  lambda0     = 0.8 um
+  m_max       = 1                # mode 0: wake, mode 1: linearly polarized laser
+
+  radial_grid = uniform          # uniform wherever the laser propagates (no reflection at a coarsening grid)
+  dr          = 0.53 um          # (script) min(w0 / 20, 0.1 c/omega_p)
+  r_max       = 64 um            # (script) box for the unguided pulse: 3 w at the end of the run,
+  r_absorber  = 53.5 um          # (script) 2.5 w, w = w0 sqrt(1 + (z - z_focus)^2 / z_R^2) = 21.4 um
+
+  dzeta       = 32 nm            # lambda0 / 25
+  nzeta       = 2503             # (script) window 80.1 um
+  dz          = 9.57 um          # (script) 1.8 c/omega_p; halve it for a convergence check
+  z_end       = 1 mm
+}
+
+laser {
+  a0          = 2
+  waist       = w0
+  tau_fwhm    = 30 fs            # FWHM of the intensity
+  zeta_center = 56.77 um         # (script) 1.7 lambda_p from the rear end, 3 length_1e to the front
+  z_focus     = 100 um           # at the end of the up-ramp
+}
+
+plasma {
+  density       = n0
+  z_points      = 0, 100 um      # (script) linear up-ramp over 3 lambda_p, constant beyond
+  z_values      = 0, 1
+  r_max         = 51 um          # (script) inside the absorber
+  smooth_length = 0.53 um        # (script) a0 >~ 2: caps the singular density spike at the bubble closure
+}
+
+output {
+  dir   = lwfa_plain
+  every = 25
+}
+
+numerics {
+  iterations = 2
+  trap_gamma = 6                 # (script) electrons quivering in the laser are not counted as trapped
+}
