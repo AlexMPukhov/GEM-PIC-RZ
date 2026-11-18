@@ -131,6 +131,12 @@ and what was changed:
 | paths `scripts/…`, `examples/…` taken as relative to the working directory | stated: relative to the skill directory |
 | wake estimate did not cover a0 ≈ 2; density spikes of 10–40 on the axis not mentioned; no convergence step in the checklist | estimate (a0²/2)/√(1 + a0²/2) E0; note on the spikes; step 6 "Convergence" |
 
+**Retrial with the revised skill** (small model, same request, no questions allowed): one `--check`, no warning;
+box for the unguided pulse (absorber at 88.8 µm), 37 fs, `grid.nzeta`, ramp, focus and `trap_gamma` taken from the
+script; 209 steps in 598 s on 6 threads (predicted from the smoke run: 16 min). Laser amplitude 1.99 → 2.12 (0.5 mm)
+→ 1.25 (2 mm); accelerating field 0.88 E0 (85 GV/m) at 0.4 mm against the estimate of 1.15 E0; field at the
+absorber 0.27 % of the peak at 2 mm (first trials: 11 %); no trapped charge. No convergence run was made.
+
 **Dialogue and the limits of the model.** After these runs the skill was centred on its purpose: to help the user
 run the code for a physics problem (ask for the missing physics, state the assumptions and discuss the choices in
 physics terms, then the deck, the cost and the checks), with the hard rule that the agent does not modify the

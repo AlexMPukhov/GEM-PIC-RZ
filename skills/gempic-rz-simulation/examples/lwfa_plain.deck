@@ -5,7 +5,7 @@
 #  All numbers below come from
 #     python3 scripts/plasma_numbers.py --density 1e18 --a0 2 --waist 15 --tau 30 --length 1
 #  lambda_p = 33.4 um, c/omega_p = 5.31 um, z_R = 0.88 mm, P = 30 TW = 1.0 P_c.
-#  For another case run the script with the new numbers and replace the values
+#  For another case (also another length: the box depends on it) run the script with the new numbers and replace the values
 #  marked (script); then: gempic_rz deck --check, smoke run, full run.
 #
 #  Result (105 steps, 155 s on 8 threads): laser amplitude 1.98 at z = 0, 2.08 at 0.48 mm, 1.81 at 1 mm;

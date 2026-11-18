@@ -17,7 +17,7 @@ p.add_argument("--wavelength", type=float, default=0.8, help="laser wavelength [
 p.add_argument("--a0", type=float, help="normalized laser amplitude")
 p.add_argument("--waist", type=float, help="laser waist w0, 1/e field radius [um]")
 p.add_argument("--tau", type=float, help="laser duration, FWHM of the intensity [fs]")
-p.add_argument("--length", type=float, help="propagation distance of the run [mm]: sizes the radial box")
+p.add_argument("--length", type=float, help="propagation distance of the run = grid.z_end [mm]: sizes the radial box")
 a = p.parse_args()
 
 c = 299792458.0
@@ -57,6 +57,7 @@ if laser:
     print(f"length_1e = c tau_fwhm/1.177= {L1e:.4g} um   (1/e half length of the field)")
     print(f"dephasing length (linear)   = {lam_p**3 / lam**2 / 1e3:.4g} mm")
     print(f"wake estimate (1D, resonant): E_z ~ (a0^2/2)/sqrt(1 + a0^2/2) E0 = "
+          f"{a0**2 / 2 / math.sqrt(1 + a0**2 / 2):.3g} E0 = "
           f"{a0**2 / 2 / math.sqrt(1 + a0**2 / 2) * math.sqrt(n / n_c):.3g} m c omega0/e (upper estimate)")
     dzeta = lam / 25
     nfront = math.ceil(3.05 * L1e / dzeta)                        # slices ahead of the laser centre
