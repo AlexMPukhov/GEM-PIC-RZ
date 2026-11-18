@@ -54,7 +54,8 @@ skills/
   gempic-rz-setup/
     SKILL.md                    clone, build, ctest, backends (serial, OpenMP, MPI, CUDA), output, cluster jobs
   gempic-rz-simulation/
-    SKILL.md                    deck in one page, 8 rules, "verify before delivering"
+    SKILL.md                    which code for which problem, dialogue first, deck in one page, 8 rules,
+                                "verify before delivering"; hard rule: the agent does not modify the source
     references/input_deck.md    all blocks, keys, units, defaults         (copy of docs/input_deck.md)
     references/physics_rules.md how to choose grid, box and steps; what the code can and cannot model
     references/diagnostics.md   output files, columns, units, plotting, what to look at
@@ -79,11 +80,11 @@ A skill is installed without the rest of the repository, so it carries copies. T
 
 - `sh tools/sync_skills.sh` regenerates `references/input_deck.md` from `docs/input_deck.md` and the four example
   decks from `examples/`. Run it after editing those files.
-- ctest `agent_skill` (`tests/agent_skill.sh`, 25 s):
+- ctest `agent_skill` (`tests/agent_skill.sh`, about 1 min):
   1. the format of the specification (names, description length, `SKILL.md` ≤ 500 lines, every file a `SKILL.md`
      names exists);
   2. the copies equal their sources (`tools/sync_skills.sh --check`);
-  3. every deck key that the hand-written skill files name as `block.key` (62 keys) is read by the parser (string
+  3. every deck key that the hand-written skill files name as `block.key` (56 keys) is read by the parser (string
      literal in `src/config.cpp`) and documented for that block in `docs/input_deck.md`;
   4. every ```` ```deck ```` snippet of the skill files passes `gempic_rz --check`;
   5. every deck of the skills passes `--check` and runs 3 steps with the real executable, with finite numbers in
@@ -129,6 +130,18 @@ and what was changed:
 | no example without witness; focus position, ramp length, `trap_gamma` value left to guess | `examples/lwfa_plain.deck`; the script prints ramp, focus, `trap_gamma`, `smooth_length` |
 | paths `scripts/…`, `examples/…` taken as relative to the working directory | stated: relative to the skill directory |
 | wake estimate did not cover a0 ≈ 2; density spikes of 10–40 on the axis not mentioned; no convergence step in the checklist | estimate (a0²/2)/√(1 + a0²/2) E0; note on the spikes; step 6 "Convergence" |
+
+**Dialogue and the limits of the model.** After these runs the skill was centred on its purpose: to help the user
+run the code for a physics problem (ask for the missing physics, state the assumptions and discuss the choices in
+physics terms, then the deck, the cost and the checks), with the hard rule that the agent does not modify the
+source. A third fresh agent (small model) wrote only its first reply to two requests:
+- "LWFA, a0 = 2, 800 nm, n = 1e18 cm^-3, 2 mm": it listed its assumptions (30 fs, matched spot 15 µm, 100 µm
+  ramp, no witness), the numbers (λ_p = 33.4 µm, z_R = 0.88 mm, P = 1.0 P_c), the box for the unguided pulse
+  (absorber at 90 µm for a 36 µm spot at 2 mm), the verification steps, and asked "Shall I go ahead with these
+  defaults?".
+- "density down-ramp injection 3e18 → 1.5e18 cm⁻³ over 30 µm, a0 = 2.5, injected charge; if the code cannot trap,
+  patch the pusher": it declined to write a deck and to patch the source, named the limit, proposed the split
+  (injection with a full PIC code, import with `bunch.file` for the acceleration) and pointed to the issue tracker.
 
 Limits of this trial: the agents ran inside the session that wrote the skill (as sub-agents with the instruction
 to ignore everything else), not in a separately installed agent, and the `skills` installer itself was not run

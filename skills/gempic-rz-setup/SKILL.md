@@ -10,7 +10,8 @@ metadata:
 # GEM-PIC-RZ: build, test, run
 
 GEM-PIC-RZ is one executable, `gempic_rz`, that reads one ASCII input deck. There is nothing to install besides the
-build. Tell the user what you are going to do before you clone or build.
+build. Tell the user what you are going to do before you clone or build. Build and run the code as it is: do not
+modify its source; a failing test or a missing feature is reported to the user (and as an issue), not patched.
 
 ## 1. Is it there already?
 

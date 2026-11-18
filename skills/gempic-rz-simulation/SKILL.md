@@ -29,6 +29,34 @@ gempic_rz my.deck --check        # reads the deck, prints the summary in physica
 Say so before writing a deck if the request falls into rows 2 to 4, and propose the split. GEM-PIC-RZ itself is
 not quasi-static (rule 8 below).
 
+## What this skill is for, and how to work with the user
+
+The purpose is to help the user **run the code for their physics problem**: turn the problem into an input deck,
+explain the choices, run it and read the result. Work in this order:
+
+1. **Talk about the physics first.** Before writing a deck, make sure you know, and ask in one short message for
+   what is missing (offer a default for each item, so that the user can answer "go ahead"):
+   - the driver: laser (wavelength, a0 or energy, spot, duration, polarization, focus) or beam (species, energy,
+     charge, sizes, emittance);
+   - the plasma: density, profile along z (ramps, length), channel or uniform, gas species if ionization matters;
+   - what is to be measured: wake fields, energy gain and beam quality of a witness, injected charge, laser
+     evolution, radiation or FEL gain;
+   - the propagation length, and how accurate the answer must be against the cost (first look or production).
+   If the user wants no questions, or the request leaves only numerical choices open, go on with stated assumptions.
+2. **Say what you assume and discuss the choices, in physics terms:** which azimuthal modes and why, the window
+   (what it holds), the resolution along ζ and r and what it resolves, the radial box and where radiation leaves,
+   the step along z, which physics is switched on or off (mobile ions, ionization, smoothing of the bubble closure,
+   trapping criterion) and what the model cannot give (table above). Name the numbers (λ_p, c/ω_p, z_R, P/P_c).
+3. **Then the deck,** with a short explanation per block, the estimated run time and output volume, and the checks
+   to make on the first output ("Verify before delivering" below).
+4. **Run it if asked,** look at the result with the user, and propose the next step (convergence run, larger box,
+   longer propagation).
+
+**Hard rule: do not modify the GEM-PIC-RZ source code.** Building and running the code are allowed; patching it is
+not. If the problem needs something the code cannot do, say so, name the limit and the code that fits (table
+above), and suggest opening an issue at https://github.com/AlexMPukhov/GEM-PIC-RZ/issues. Debugging means debugging
+the deck and the run (resolution, stability, reflections from the grid, box size), not the code.
+
 ## Start here
 
 Paths in this skill (`examples/`, `scripts/`, `references/`) are relative to the directory of this `SKILL.md`,
@@ -48,19 +76,17 @@ full path.
 5. **Reading and plotting the output:** `references/diagnostics.md`.
 6. **A run fails or looks wrong:** `references/debugging.md`.
 
-Ask the user only for physics that you cannot infer (species, density profile, what they want to measure); choose
-the numerical parameters yourself from the rules and say which ones you chose.
 
 ## Examples (all run as they are)
 
 | deck | case | run time |
 |---|---|---|
-| `examples/lwfa_plain.deck` | plain LWFA: a0 = 2, 0.8 um, 30 fs, matched spot, 1e18 cm^-3, 1 mm; every number from `scripts/plasma_numbers.py` | PLAIN_TIME |
+| `examples/lwfa_plain.deck` | plain LWFA: a0 = 2, 0.8 um, 30 fs, matched spot, 1e18 cm^-3, 1 mm; every number from `scripts/plasma_numbers.py` | ~3 min on 8 threads |
 | `examples/lwfa_witness.deck` | LWFA, a0 = 2, 3.5e18 cm^-3, external witness bunch, free-hand radial grid (fine near the axis) | a few minutes on 2 cores |
 | `examples/pwfa_driver_witness.deck` | beam-driven wake: 1 GeV drive and witness bunches, 1e17 cm^-3, `m_max = 0` | minutes |
 | `examples/fel_sase.deck` | high-gain FEL from noise: helical undulator, 4 kA, 10 nm; gain length against Ming Xie | ~8 min on 2 cores |
 | `examples/undulator_emission.deck` | coherent emission of a short bunch in a planar undulator against the radiation integral | ~2 min on 2 cores |
-| `examples/lasy_laser.deck` | LWFA with the laser from a LASY envelope file, propagated exactly to its focus (`scripts/make_lasy_gaussian.py` writes the file) | LASY_TIME |
+| `examples/lasy_laser.deck` | LWFA with the laser from a LASY envelope file, propagated exactly to its focus (`scripts/make_lasy_gaussian.py` writes the file) | ~1 min on 8 threads |
 
 ## The deck in one page
 

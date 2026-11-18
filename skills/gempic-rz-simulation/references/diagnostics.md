@@ -82,8 +82,8 @@ z, uz, w = ts.get_particle(["z", "uz", "w"], species="witness", iteration=100)
 | case | quantity | where | sanity estimate |
 |---|---|---|---|
 | any laser | amplitude against z | console `\|Ex\|max`, `axis_*.txt` | starts at a0 (less if the focus is ahead: a0/√(1 + z_focus²/z_R²)); in vacuum it follows the Gaussian beam |
-| LWFA | wake amplitude | most negative `Ez` in the first bucket of `axis_*.txt` (the positive spike at the bubble closure is not the wake amplitude) | in units of √(n/n_c): upper estimate (a0²/2)/√(1 + a0²/2) for a resonant, wide pulse (1D); 0.5–1 found for a0 = 2 with the matched spot; of order √a0 in a fully formed bubble |
-| LWFA | laser amplitude and spot against z | console `|Ex|max`, table of `plot_run.py` | self-focusing raises a0 by 5–20 % in the first Rayleigh length; later the amplitude falls by diffraction of the unguided part and depletion. A fall that changes with the box size is the box (field at the absorber) |
+| LWFA | wake amplitude | most negative `Ez` in the first bucket of `axis_*.txt` (the positive spike at the bubble closure is not the wake amplitude) | in units of √(n/n_c): upper estimate (a0²/2)/√(1 + a0²/2) for a resonant, wide pulse (1D); 0.84 in `examples/lwfa_plain.deck` (a0 = 2, 30 fs, matched spot); of order √a0 in a fully formed bubble |
+| LWFA | laser amplitude and spot against z | console `|Ex|max`, table of `plot_run.py` | in `examples/lwfa_plain.deck` (a0 = 2, matched spot, P ≈ P_c) the amplitude rises to 2.08 at 0.5 mm (self-focusing) and falls to 1.81 at 1 mm (diffraction of the unguided part, depletion). A fall that changes with the box size is the box (field at the absorber) |
 | witness | energy, spread, emittance against z | `bunches.txt` | gain = e E_z × distance: E_z[code] × 3.2107 TV/m / λ0[µm] |
 | trapped charge | `trapped`, `inj_*` lines | `bunches.txt` | self-injection is **not quantitative** (see physics_rules.md); with a laser set `numerics.trap_gamma` so that quivering electrons are not counted |
 | PWFA | accelerating and decelerating field | `axis_*.txt` | of order √(n/n_c) in the blowout regime; transformer ratio ≤ 2 for a symmetric driver |

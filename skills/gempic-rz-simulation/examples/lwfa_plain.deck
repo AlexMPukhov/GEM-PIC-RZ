@@ -8,6 +8,10 @@
 #  For another case run the script with the new numbers and replace the values
 #  marked (script); then: gempic_rz deck --check, smoke run, full run.
 #
+#  Result (105 steps, 155 s on 8 threads): laser amplitude 1.98 at z = 0, 2.08 at 0.48 mm, 1.81 at 1 mm;
+#  accelerating field of the first bucket -0.020 m c omega0/e = 0.84 E0 = 80 GV/m at 0.24-0.48 mm (1D estimate
+#  0.028); field at the absorber 0.3 % of the peak at the end; no trapped charge.
+#
 #  run:   OMP_NUM_THREADS=8 gempic_rz lwfa_plain.deck numerics.backend=openmp
 #  look:  python3 scripts/plot_run.py lwfa_plain
 # ============================================================================

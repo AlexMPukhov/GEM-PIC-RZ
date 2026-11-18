@@ -87,7 +87,8 @@ try:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 except ImportError:
-    raise SystemExit("no figure: matplotlib is not installed (the table above is complete; pip install matplotlib)")
+    print("no figure: matplotlib is not installed (the table above is complete; pip install matplotlib)")
+    raise SystemExit(0)
 
 fig, ax = plt.subplots(2, 2, figsize=(12, 8))
 z, ex, ez, ne = np.loadtxt(name("axis"), usecols=(0, 1, 2, 3), unpack=True)

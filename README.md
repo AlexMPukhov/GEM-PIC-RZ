@@ -163,7 +163,7 @@ for a simulation in plain words, e.g. "LWFA, a0 = 2, 800 nm, n = 1e18 cm^-3, 2 m
 | skill | content |
 |---|---|
 | `gempic-rz-setup` | clone, build (cmake or make), ctest, the backends (serial, OpenMP, MPI, CUDA), where the output goes, cluster jobs |
-| `gempic-rz-simulation` | structure of a deck, the rules for resolution, box and radial grid, what the code can and cannot model, verification steps (`--check`, warnings, smoke run), diagnostics and plotting, a debugging table; the complete deck reference; six example decks (plain LWFA, LWFA with witness, PWFA, SASE FEL, undulator emission, LASY laser); helper scripts (plasma numbers and starting values of the grid, quick-look plot, LASY file) |
+| `gempic-rz-simulation` | helps the user run the code for a physics problem: which code fits, the questions to ask and the choices to discuss, then the deck (the agent does not modify the source); structure of a deck, the rules for resolution, box and radial grid, what the code can and cannot model, verification steps (`--check`, warnings, smoke run), diagnostics and plotting, a debugging table; the complete deck reference; six example decks (plain LWFA, LWFA with witness, PWFA, SASE FEL, undulator emission, LASY laser); helper scripts (plasma numbers and starting values of the grid, quick-look plot, LASY file) |
 
 The skills cannot drift from the code: the deck reference and four of the example decks in the skill are copies of
 `docs/input_deck.md` and `examples/` (`sh tools/sync_skills.sh` after editing those), and the ctest `agent_skill`

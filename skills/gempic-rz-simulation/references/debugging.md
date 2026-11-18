@@ -1,5 +1,8 @@
 # Debugging a GEM-PIC-RZ deck or run
 
+Debugging here means the deck and the run: resolution, box, stability, reflections from the grid. It never means
+changing the source code of GEM-PIC-RZ (see section 6).
+
 Work from the top: most problems are caught by the first three steps.
 
 ## 1. The deck does not pass `--check`
