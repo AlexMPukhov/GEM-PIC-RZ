@@ -1186,7 +1186,9 @@ whose noise adds energy spread; `gaussian` the Fokker–Planck model, for compar
 - `classical`: the loss S = Λm₁.
 - `stochastic`: S = 0 with probability e^{−Λ}, otherwise S ~ Gamma(k, θ) matched to the conditional mean
   r₁ = Λm₁/q and variance σ² = (qΛm₂ − Λ²m₁²e^{−Λ})/q² of the compound-Poisson sum of the photons
-  (q = 1 − e^{−Λ}, k = r₁²/σ², θ = σ²/r₁): a zero-inflated Gamma law (method of N. Elkina and A. Pukhov). Mean and
+  (q = 1 − e^{−Λ}, k = r₁²/σ², θ = σ²/r₁): a zero-inflated Gamma law (N. Elkina and A. Pukhov, *Aggregating soft-photon recoil with a
+  positive finite-step sampler*, [arXiv:2611.26402](https://arxiv.org/abs/2611.26402); here in its frozen-step form
+  with the classical moments, without the state-feedback correction, which is negligible at ≪ 1 photon per sub-step). Mean and
   variance are exact for any Λ and S ≥ 0: a particle never gains energy by radiating. The classical synchrotron
   photon spectrum is itself close to a Gamma law (k = 0.30 for one photon), so the shape of the loss distribution is
   good for any number of photons per sub-step (Wasserstein distance to the exact compound-Poisson sum ≤ 0.025 σ for

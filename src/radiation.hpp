@@ -11,8 +11,8 @@
 //  chi^3 gamma dt the quantum excitation (Sokolov-Ternov).
 //    classical   : S = Lambda m1 (deterministic drag, leading Landau-Lifshitz term)
 //    stochastic  : S = 0 with probability exp(-Lambda), else Gamma(k, theta) matched to the conditional mean r1 and
-//                  variance s2 of the compound-Poisson sum (zero-inflated Gamma, method of N. Elkina and
-//                  A. Pukhov): exact mean and variance, S >= 0. The classical synchrotron spectrum is itself close
+//                  variance s2 of the compound-Poisson sum (zero-inflated Gamma: N. Elkina and A. Pukhov,
+//                  arXiv:2611.26402 (2026), frozen-step form with the classical moments): exact mean and variance, S >= 0. The classical synchrotron spectrum is itself close
 //                  to a Gamma law (k = 0.30 for one photon), so the shape is good for any Lambda.
 //    gaussian    : S = Lambda m1 + sqrt(Lambda m2) N(0, 1) (Fokker-Planck; can gain energy; for comparison)
 //  The loss S is removed along u after the Lorentz push of a sub-step; chi from u before it and from the fields at
