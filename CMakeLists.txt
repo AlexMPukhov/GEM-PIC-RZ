@@ -202,6 +202,11 @@ if(GEMPIC_HAVE_MPI AND GEMPIC_HAVE_HDF5)
   add_test(NAME mpi_events
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mpi_events.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
             ${MPIEXEC_EXECUTABLE} ${MPIEXEC_PREFLAGS})
+  # radiation reaction of the beam list on 3 ranks (tests/radiation.sh)
+  add_test(NAME mpi_radiation
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/radiation.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> serial
+            ${MPIEXEC_EXECUTABLE})
+  set_tests_properties(mpi_radiation PROPERTIES SKIP_RETURN_CODE 77)
   # the reduced chain (tests/chain.sh) with stage 2 also on 2 ranks (import, chicane, undulator): = 1 rank
   add_test(NAME mpi_chain
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/chain.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns>
@@ -253,6 +258,12 @@ if(GEMPIC_HAVE_HDF5)
   # element edges between the sub-steps of the beam push (FODO, hard-edge solenoid) against linear optics
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME quad_edges_${b} COMMAND sh ${CMAKE_SOURCE_DIR}/tests/quad_edges.sh $<TARGET_FILE:gempic_rz> ${b})
+  endforeach()
+  # radiation reaction of the beam list: classical / stochastic / Gaussian against Landau-Lifshitz + Sokolov-Ternov
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME radiation_${b}
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/radiation.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
+    set_tests_properties(radiation_${b} PROPERTIES SKIP_RETURN_CODE 77)
   endforeach()
   # proton bunches: mass, charge sign and energy against linear optics
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)

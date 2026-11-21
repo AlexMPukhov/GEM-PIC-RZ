@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "portable.hpp"
+#include "radiation.hpp"
 #include "rng.hpp"
 #include "simulation.hpp"
 
@@ -183,6 +184,7 @@ struct Params {
   const int* cls;  // matrix class of slice n (FieldSolver::classOf)
   ExternalV ext;   // external fields (undulators)
   int vay;         // beam list: Vay pusher (else Boris)
+  RadParams rad;   // radiation reaction of the beam list
   double beamDzMax;  // numerics.beam_dz_max (sub-steps of the beam push)
   GridV g;
   // metal wall (FieldSolver::setWall): last face inside, ghost centre, control volume of face K, wall present,
@@ -547,9 +549,14 @@ GEM_HD inline void pushBeamParticle(const Params& P, const FieldsV& F, Particle&
       f = {b * f.Ex + a2 * f2.Ex, b * f.Ey + a2 * f2.Ey, b * f.Ez + a2 * f2.Ez,
            b * f.Bx + a2 * f2.Bx, b * f.By + a2 * f2.By, b * f.Bz + a2 * f2.Bz};
     }
+    EB fr = f;  // radiation: the external field at the point, not averaged over the sub-step
+    if (P.rad.model != RAD_OFF) addExternal(P.ext, p.x, p.y, p.z, fr);
     addExternal(P.ext, p.x, p.y, p.z, f, dz);
+    const double ux0 = p.ux, uy0 = p.uy, uz0 = p.uz, x0 = p.x, y0 = p.y, zeta0 = p.zeta, z0 = p.z;
     if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+    radiate(P.rad, p, ux0, uy0, uz0, x0, y0, zeta0, z0, fr, dt,
+            P.rad.model != RAD_OFF ? radUndulatorFactor(P.ext, z0) : 1.0);
     gm = gammaOf(p);
     p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
     p.zeta += (p.uz / gm - 1.0) * dt;
@@ -579,9 +586,14 @@ GEM_HD inline bool pushBeamCont(const Params& P, const FieldsV& F, Particle& p, 
       f = {b * f.Ex + a2 * f2.Ex, b * f.Ey + a2 * f2.Ey, b * f.Ez + a2 * f2.Ez,
            b * f.Bx + a2 * f2.Bx, b * f.By + a2 * f2.By, b * f.Bz + a2 * f2.Bz};
     }
+    EB fr = f;  // radiation: the external field at the point, not averaged over the sub-step
+    if (P.rad.model != RAD_OFF) addExternal(P.ext, p.x, p.y, p.z, fr);
     addExternal(P.ext, p.x, p.y, p.z, f, dz);
+    const double ux0 = p.ux, uy0 = p.uy, uz0 = p.uz, x0 = p.x, y0 = p.y, zeta0 = p.zeta, z0 = p.z;
     if (P.vay) vay(p.ux, p.uy, p.uz, f, p.qm, dt);
     else boris(p.ux, p.uy, p.uz, f, p.qm, dt);
+    radiate(P.rad, p, ux0, uy0, uz0, x0, y0, zeta0, z0, fr, dt,
+            P.rad.model != RAD_OFF ? radUndulatorFactor(P.ext, z0) : 1.0);
     gm = gammaOf(p);
     p.x += p.ux / gm * dt; p.y += p.uy / gm * dt;
     p.zeta += (p.uz / gm - 1.0) * dt;
@@ -1581,6 +1593,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
                   E.zwhi.data()};
   P.cls = E.cls.data();
   P.vay = sim.cfg.numerics.beam_vay ? 1 : 0;
+  P.rad = sim.rad;
   P.beamDzMax = sim.cfg.numerics.beam_dz_max;
   if (!sim.undV.empty()) E.und.assign(sim.undV.data(), sim.undV.size());
   if (!sim.undK.empty()) E.undK.assign(sim.undK.data(), sim.undK.size());

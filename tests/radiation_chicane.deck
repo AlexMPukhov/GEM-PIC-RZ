@@ -1,0 +1,14 @@
+# Incoherent synchrotron radiation in a thin chicane (tests/radiation.sh): 10 GeV electrons (gamma = 2e4), four
+# dipoles of 2.5 mrad and 0.2 m (B = 0.43 T), R56 = 0 (radiation only). chi = 2.2e-6, Lambda = 2.1 photons per
+# particle in one draw: P(no loss) = exp(-Lambda) = 12 %. The chicane acts at the end of the last step.
+grid {
+  lambda0 = 0.8 um;  m_max = 1
+  radial_grid = uniform;  dr = 1 um;  r_max = 40 um
+  dzeta = 0.1 um;  window_length = 2 um
+  dz = 0.5 mm;  z_end = 1 mm
+}
+chicane { z = 1 mm; r56 = 0 um; delay = 0 um; gamma = 2e4; bend_angle = 2.5 mrad; bend_length = 0.2 m; dipoles = 4 }
+bunch { name = b; charge = 1 fC; gamma = 2e4; sigma_x = 0.1 um; emittance_x = 0 um
+        sigma_z = 0.1 um; zeta_center = 1 um; macroparticles = 100000 }
+output { dir = chic_out; every = 0; format = hdf5; particles = true }
+numerics { iterations = 1; beam_filter = 0; radiation_reaction = stochastic }

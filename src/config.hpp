@@ -361,6 +361,9 @@ struct BoundElectronsConfig {
 // thin magnetic chicane at z: the beam particles move by r56 * delta - delay in zeta
 struct ChicaneConfig {
   double z = 0.0, r56 = 0.0, delay = 0.0, gamma_ref = 1.0;
+  // incoherent synchrotron radiation (with numerics.radiation_reaction): dipoles of bending angle and length
+  double bend_angle = 0.0, bend_length = 0.0;
+  int dipoles = 4;
 };
 
 // ---------------------------------------------------------------- output / numerics
@@ -427,6 +430,8 @@ struct NumericsConfig {
   int beam_field = -1;       // fields of the beam push: BEAM_FIELD_LEVEL (s^0), BEAM_FIELD_MEAN; -1 = auto
   bool beam_field_auto = true;  // beam_field chosen by the code (mean with undulators, else level)
   bool beam_vay = true;      // beam list pushed with the Vay pusher (false: Boris)
+  int radiation_reaction = 0;   // beam list: 0 off, 1 classical (LL drag), 2 stochastic (zero-inflated Gamma), 3 gaussian
+  unsigned long radiation_seed = 1;
   unsigned long seed = 12345;
   double beam_dz_max = 10.0; // max sub-step of the beam push along s
   double vz_min = 0.8;       // beam particles slower than this return to streaming
