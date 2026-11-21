@@ -307,7 +307,16 @@ plasma { density = 3e18 cm^-3;  density_file = jet_axis.txt;  r_max = 19 um }
   peak, and gradients shorter than 4 steps or radial cells, give warnings.
 - **All backends, MPI, restart:** the profile only enters the loading of the fresh plasma at the front of the
   window, which is the same code in every path; every MPI rank reads the file, and so does a restart.
-- **Checks** (ctest `density_file_<backend>`, `tests/mpi.sh`): XXNUMBERS
+- **Checks** (ctest `density_file_<backend>`, `tests/mpi.sh`), against the same profile
+  written in the deck, on the regression case (laser, up-ramp, H⁺ ions, witness; 4 steps): a file with the points of
+  `z_points` / `z_values` gives the identical run (difference 0, serial and OpenMP); the ramp in cm⁻³ over µm, in
+  the grid layout in m⁻³ with `file_z`, n(r, z) in both layouts and as openPMD meshes (regular thetaMode,
+  rectilinear in m⁻³) against `density_function`, and n(z) with a transverse function (Gaussian; x-dependent)
+  against the table times that function agree within 10⁻⁶ relative; a smooth Gaussian jet sampled on 321 × 161
+  points differs from its function by 1.0·10⁻⁴ (E_x), 1.2·10⁻⁴ (E_z) and 2.5·10⁻⁴ (n_e) of the peak on the axis
+  (linear interpolation); a restart equals the uninterrupted run; 21 faulty files and combinations are rejected
+  with a message. The GPU emulation build gives the same; MPI: 1 rank pipelined identical, 3 ranks and a
+  3 → 2 rank restart equal the serial run.
 - **Example:** `examples/gas_jet/` (deck, `jet_axis.txt`, `jet_rz.txt`, `jet_gauss.txt`).
 
 ## MPI: domain decomposition along ζ
