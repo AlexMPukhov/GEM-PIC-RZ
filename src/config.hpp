@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "deck.hpp"
+#include "density_file.hpp"
 #include "laser_file.hpp"
 #include "expr.hpp"
 #include "mapping.hpp"
@@ -196,9 +197,15 @@ struct PlasmaConfig {
   double r_axis_refine = 10.0;
 
   Expr fn;                         // density_function(x, y, z, r): further factor (empty: 1)
-  double longitudinal(double z) const;  // relative profile f(z)
+  // density_file: n(z) (replaces z_points / z_values) or n(r, z) (replaces the radial profile too)
+  std::shared_ptr<const DensityFile> file;
+  double file_z = 0.0;             // z of the simulation at the file's z = 0
+  bool file_hold = false;          // file_outside = hold: edge values beyond the file (else 0)
+  std::vector<std::string> file_info;  // lines of the run summary
+  double longitudinal(double z) const;  // relative profile f(z) of the table (1 with a density_file)
   double radialFactor(double r) const;  // relative profile g(r)
-  double density(double r, double z) const;  // n0 f(z) g(r), 0 outside r_max (axisymmetric part)
+  double density(double r, double z) const;  // n0 f(z) g(r), 0 outside r_max (axisymmetric part);
+                                             // density_file: the file's n (absolute, or n0 x its factor) x g(r)
   double density(double x, double y, double z) const;  // ... times density_function(x, y, z, r)
 };
 

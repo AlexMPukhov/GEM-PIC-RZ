@@ -295,6 +295,10 @@ double PlasmaConfig::radialFactor(double r) const {
 
 double PlasmaConfig::density(double r, double z) const {
   if (!present || r >= r_max) return 0.0;
+  if (file) {  // the same order of the factors as below: a file that repeats a table gives the same numbers
+    const double f = file->at(r, z - file_z, file_hold);
+    return (file->absolute ? f : n0 * f) * radialFactor(r);
+  }
   return n0 * longitudinal(z) * radialFactor(r);
 }
 
@@ -752,8 +756,151 @@ void readWall(const Block& b, const Deck& d, const Units& u, GridConfig& g, Wall
   g.r_absorber = g.r_max;
 }
 
-void readProfile(const BlockReader& r, const GridConfig& g, PlasmaConfig& P) {
-  (void)g;
+// density_file: n(z) or n(r, z) from a text table or an openPMD mesh (density_file.hpp)
+void readDensityFileKeys(const BlockReader& r, const Deck& d, const Units& u, PlasmaConfig& P) {
+  if (!r.has("density_file")) {
+    for (const char* k : {"file_mesh", "file_iteration", "file_z", "file_outside"})
+      if (r.has(k)) r.failKey(k, "is only used with 'density_file' (a density profile from a file)");
+    return;
+  }
+  for (const char* k : {"z_points", "z_values"})
+    if (r.has(k)) r.failKey(k, "the longitudinal profile is given by density_file (remove it, or remove 'density_file')");
+  std::string path = r.str("density_file", "");
+  if (!std::filesystem::exists(path)) {  // relative to the directory of the deck
+    const std::filesystem::path alt = std::filesystem::path(d.source).parent_path() / path;
+    if (std::filesystem::exists(alt)) path = alt.string();
+  }
+  try {
+    P.file = readDensityFile(path, r.str("file_mesh", ""), r.has("file_iteration") ? r.integer("file_iteration") : -1, u);
+  } catch (const std::runtime_error& e) {
+    r.failKey("density_file", e.what());
+  }
+  P.file_z = r.num("file_z", Dim::Length, 0.0);
+  P.file_hold = r.word("file_outside", "zero", {"zero", "hold"}) == "hold";
+  if (P.file->twoD())
+    for (const char* k : {"radial_profile", "channel_depth", "r_channel", "r_points", "r_values"})
+      if (r.has(k))
+        r.failKey(k, "the density_file holds n(r, z), which includes the radial profile (remove it; r_max and "
+                     "density_function still apply)");
+}
+
+// start-up checks of a density file against the run: ranges, peak, cuts at the ends, steep gradients
+void checkDensityFile(const BlockReader& r, const std::string& label, const Units& u, const GridConfig& g,
+                      PlasmaConfig& P, std::vector<std::string>& warn) {
+  const DensityFile& F = *P.file;
+  const double um = u.k0inv_um(), mm = um * 1e-3;
+  const double za = F.z.front() + P.file_z, zb = F.z.back() + P.file_z;
+  const double toNc = F.absolute ? 1.0 : P.n0;
+  const double rNeed = std::min(P.r_max, g.r_max);
+  const size_t nz = F.z.size(), nr = F.nr();
+  char buf[640];
+  const std::string kind = F.absolute ? "absolute density [" + F.nUnit + "]" : std::string("factor on 'density'");
+  if (F.twoD())
+    std::snprintf(buf, sizeof buf, "density file %s (%s; %s): n(r, z) on %zu x %zu points, %s", F.path.c_str(),
+                  F.format.c_str(), F.detail.c_str(), nr, nz, kind.c_str());
+  else
+    std::snprintf(buf, sizeof buf, "density file %s (%s; %s): n(z) on %zu points, %s", F.path.c_str(),
+                  F.format.c_str(), F.detail.c_str(), nz, kind.c_str());
+  P.file_info.push_back(buf);
+  if (F.twoD())
+    std::snprintf(buf, sizeof buf, "z = %.6g ... %.6g mm (run: 0 ... %.6g mm), r = %.6g ... %.6g um (plasma up to "
+                  "%.6g um)", za * mm, zb * mm, g.z_end * mm, F.r.front() * um, F.r.back() * um, rNeed * um);
+  else
+    std::snprintf(buf, sizeof buf, "z = %.6g ... %.6g mm (run: 0 ... %.6g mm)", za * mm, zb * mm, g.z_end * mm);
+  P.file_info.push_back(buf);
+  if (F.twoD())
+    std::snprintf(buf, sizeof buf, "peak %.4g cm^-3 (%.4g n_c) at z = %.6g mm, r = %.6g um",
+                  F.peak * toNc * u.nc_cm3(), F.peak * toNc, (F.zPeak + P.file_z) * mm, F.rPeak * um);
+  else
+    std::snprintf(buf, sizeof buf, "peak %.4g cm^-3 (%.4g n_c) at z = %.6g mm", F.peak * toNc * u.nc_cm3(),
+                  F.peak * toNc, (F.zPeak + P.file_z) * mm);
+  P.file_info.push_back(buf);
+  const double tol = g.endTol();
+  const bool cutA = za > tol, cutB = zb < g.z_end - tol, cutR = F.twoD() && F.r.back() < rNeed * (1.0 - 1e-12);
+  if (P.file_hold) {
+    P.file_info.push_back("outside the file: the edge values are continued (file_outside = hold)");
+  } else if (cutA || cutB || cutR) {
+    std::string w;
+    if (cutA) w += "before its first z";
+    if (cutB) w += std::string(w.empty() ? "" : ", ") + "behind its last z";
+    if (cutR) w += std::string(w.empty() ? "" : ", ") + "beyond its last r";
+    P.file_info.push_back("outside the file the density is zero: " + w);
+  }
+  if (!P.file_hold && (zb <= 0.0 || za >= g.z_end)) {
+    std::snprintf(buf, sizeof buf, "the file covers z = %.6g ... %.6g mm, outside the run (0 ... %.6g mm): no density "
+                  "(shift it with file_z, the z of the simulation at the file's z = 0)", za * mm, zb * mm, g.z_end * mm);
+    r.failKey("density_file", buf);
+  }
+  // cut where the density is not small: a jump from or to zero
+  if (!P.file_hold) {
+    auto edgeMax = [&](size_t i) {
+      double m = 0.0;
+      for (size_t j = 0; j < nr; ++j) m = std::max(m, F.v[i * nr + j]);
+      return m / F.peak;
+    };
+    auto cut = [&](const char* what, double pos, const char* unit, double frac) {
+      if (frac <= 0.01) return;
+      std::snprintf(buf, sizeof buf, "%s: the density file %s at %.6g %s with %.3g %% of its peak; beyond it the "
+                    "density is zero (a jump): extend the file, or set file_outside = hold", label.c_str(), what, pos,
+                    unit, 100.0 * frac);
+      warn.push_back(buf);
+    };
+    if (cutA) cut("starts", za * mm, "mm", edgeMax(0));
+    if (cutB) cut("ends", zb * mm, "mm", edgeMax(nz - 1));
+    if (cutR) {
+      double m = 0.0;
+      for (size_t i = 0; i < nz; ++i) m = std::max(m, F.v[i * nr + nr - 1]);
+      cut("ends radially", F.r.back() * um, "um", m / F.peak);
+    }
+  }
+  // gradients against the steps: the density is sampled once per step dz and per radial cell
+  double qz = 0.0, qzPos = 0.0, qzStep = 0.0;
+  for (size_t i = 0; i + 1 < nz; ++i) {
+    const double z0 = F.z[i] + P.file_z, z1 = F.z[i + 1] + P.file_z;
+    if (z1 <= 0.0 || z0 >= g.z_end) continue;
+    const double zm = std::min(std::max(0.5 * (z0 + z1), 0.0), g.z_end - tol);
+    const double step = g.zTable ? g.stepAt(zm) : g.dz;
+    for (size_t j = 0; j < nr; ++j) {
+      if (F.twoD() && F.r[j] > rNeed) break;
+      const double q = std::fabs(F.v[(i + 1) * nr + j] - F.v[i * nr + j]) / (z1 - z0) * step / F.peak;
+      if (q > qz) { qz = q; qzPos = 0.5 * (z0 + z1); qzStep = step; }
+    }
+  }
+  if (qz > 0.25) {
+    std::snprintf(buf, sizeof buf, "%s: the density file changes by %.3g %% of its peak per step (dz = %.4g um) at "
+                  "z = %.6g mm: scale length n_peak / |dn/dz| = %.4g um, less than 4 steps; the steps do not resolve "
+                  "this gradient", label.c_str(), 100.0 * qz, qzStep * um, qzPos * mm, qzStep / qz * um);
+    warn.push_back(buf);
+  }
+  if (F.twoD()) {
+    std::vector<double> face(size_t(g.Nr) + 1);
+    for (int k = 0; k <= g.Nr; ++k) face[size_t(k)] = g.mapping(k);
+    double qr = 0.0, qrPos = 0.0, qrStep = 0.0;
+    for (size_t j = 0; j + 1 < nr; ++j) {
+      const double rm = 0.5 * (F.r[j] + F.r[j + 1]);
+      if (rm >= rNeed) break;
+      size_t k = size_t(std::upper_bound(face.begin(), face.end(), rm) - face.begin());
+      k = std::min(std::max<size_t>(k, 1), face.size() - 1);
+      const double dr = face[k] - face[k - 1];
+      for (size_t i = 0; i < nz; ++i) {
+        const double z0 = F.z[i] + P.file_z;
+        if (z0 < 0.0 || z0 > g.z_end) continue;
+        const double q = std::fabs(F.v[i * nr + j + 1] - F.v[i * nr + j]) / (F.r[j + 1] - F.r[j]) * dr / F.peak;
+        if (q > qr) { qr = q; qrPos = rm; qrStep = dr; }
+      }
+    }
+    if (qr > 0.25) {
+      std::snprintf(buf, sizeof buf, "%s: the density file changes by %.3g %% of its peak per radial cell (dr = %.4g "
+                    "um) at r = %.6g um: scale length n_peak / |dn/dr| = %.4g um, less than 4 cells; the radial grid "
+                    "does not resolve this gradient", label.c_str(), 100.0 * qr, qrStep * um, qrPos * um,
+                    qrStep / qr * um);
+      warn.push_back(buf);
+    }
+  }
+}
+
+void readProfile(const BlockReader& r, const Deck& d, const Units& u, PlasmaConfig& P) {
+  readDensityFileKeys(r, d, u, P);
   // longitudinal profile
   if (r.has("z_points") || r.has("z_values")) {
     P.z_points = r.vec("z_points", Dim::Length);
@@ -804,7 +951,13 @@ void readPlasma(const Block& b, const Deck& d, const Units& u, const GridConfig&
   P.free_electrons = r.flag("free_electrons", true);
   if (P.n0 > 0.1) warn.push_back("plasma.density exceeds 0.1 n_c: the scheme assumes underdense plasma");
 
-  readProfile(r, g, P);
+  readProfile(r, d, u, P);
+  if (P.file) {
+    checkDensityFile(r, b.label(), u, g, P, warn);
+    const double pk = P.file->peak * (P.file->absolute ? 1.0 : P.n0);
+    if (pk > 0.1 && !(P.n0 > 0.1))
+      warn.push_back("plasma.density_file: the peak density exceeds 0.1 n_c: the scheme assumes underdense plasma");
+  }
 
   // macroparticles
   P.ppc_r = int(r.integer("ppc_r", 2));
@@ -820,7 +973,7 @@ void readPlasma(const Block& b, const Deck& d, const Units& u, const GridConfig&
     warn.push_back("plasma.r_max extends into the radial absorber");
 }
 
-void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& P, IonConfig& I,
+void readIon(const Block& b, const Deck& d, const Units& u, const GridConfig& g, const PlasmaConfig& P, IonConfig& I,
              std::vector<std::string>& warn) {
   BlockReader r(b, d, u);
   // ---- identity: chemical element (NIST data) or explicit mass
@@ -886,13 +1039,24 @@ void readIon(const Block& b, const Deck& d, const Units& u, const PlasmaConfig& 
   if (I.own) {
     if (r.has("fraction")) r.failKey("fraction", "is not used with profile = own (give the atom 'density')");
     I.prof.present = true;
-    I.prof.n0 = r.num("density", Dim::Density);
-    if (!(I.prof.n0 > 0)) r.failKey("density", "must be positive");
-    readProfile(r, GridConfig{}, I.prof);
+    readProfile(r, d, u, I.prof);
+    if (I.prof.file && I.prof.file->absolute) {  // the file is the atom density; the reference is its peak
+      if (r.has("density"))
+        r.failKey("density", "the density_file holds the absolute atom density (unit " + I.prof.file->nUnit +
+                             "): remove 'density', or give the file values without unit (a factor on 'density')");
+      I.prof.n0 = I.prof.file->peak;
+    } else {
+      I.prof.n0 = r.num("density", Dim::Density);
+      if (!(I.prof.n0 > 0)) r.failKey("density", "must be positive");
+    }
+    if (I.prof.file) checkDensityFile(r, b.label(), u, g, I.prof, warn);
     I.atoms = I.prof.n0 / P.n0;  // at the reference density, for the summary
   }
   // ---- amount: share of the neutralizing charge, or atom density
   const int which = I.own ? -1 : r.oneOf("fraction", "density", false);
+  if (!I.own)
+    for (const char* k : {"density_file", "file_mesh", "file_iteration", "file_z", "file_outside"})
+      if (r.has(k)) r.failKey(k, "is only used with profile = own (else the ions follow the plasma profile)");
   if (I.own) {
   } else if (which == 1) {
     I.atoms = r.num("density", Dim::Density) / P.n0;
@@ -1638,7 +1802,7 @@ Config Config::fromDeck(const Deck& deck, std::vector<std::string>* warnings) {
       throw DeckError(deck.where(b->line) + ": an 'ion' block needs a 'plasma' block (ions follow its profile)");
     if (c.ions.size() >= 10) throw DeckError(deck.where(b->line) + ": at most 10 ion blocks are supported");
     IonConfig I;
-    readIon(*b, deck, c.units, c.plasma, I, warn);
+    readIon(*b, deck, c.units, c.grid, c.plasma, I, warn);
     fsum += I.fraction();
     c.ions.push_back(I);
   }
@@ -1952,7 +2116,8 @@ std::string Config::summary() const {
     if (plasma.r_max < 1e299) std::snprintf(rbuf, sizeof rbuf, "%.4g um", plasma.r_max * um);
     line("plasma: n0 = %.4g cm^-3 (%.4g n_c), lambda_p = %.4g um, radial profile: %s, r_max = %s",
          plasma.n0 * units.nc_cm3(), plasma.n0, 2.0 * PI / kp * um,
-         plasma.radial == PlasmaConfig::Radial::Uniform     ? "uniform"
+         plasma.file && plasma.file->twoD()                 ? "from the density file"
+         : plasma.radial == PlasmaConfig::Radial::Uniform   ? "uniform"
          : plasma.radial == PlasmaConfig::Radial::Parabolic ? "parabolic channel"
                                                             : "table",
          rbuf);
@@ -1965,6 +2130,7 @@ std::string Config::summary() const {
       }
       line("        longitudinal profile: %s", s.c_str());
     }
+    for (const auto& l : plasma.file_info) line("        %s", l.c_str());
     if (!plasma.fn.empty()) line("        times density_function(x, y, z, r) = %s", plasma.fn.text().c_str());
     line("        macroparticles per cell: %d x %d, and %d x %d for r < %.4g um", plasma.ppc_r, plasma.ppc_phi,
          plasma.ppc_r_axis, plasma.ppc_phi_axis, plasma.r_axis_refine * um);
@@ -1987,9 +2153,10 @@ std::string Config::summary() const {
            I.mobile ? "mobile" : "fixed");
       if (I.own)
         line("        own profile%s%s%s (atom density above: reference; with %d electrons per atom)",
-             I.prof.z_points.empty() ? "" : ", longitudinal table",
+             I.prof.file ? ", density file" : I.prof.z_points.empty() ? "" : ", longitudinal table",
              I.prof.radial == PlasmaConfig::Radial::Uniform ? "" : ", radial profile",
              I.prof.fn.empty() ? "" : (", density_function " + I.prof.fn.text()).c_str(), I.Z);
+      for (const auto& l : I.prof.file_info) line("        %s", l.c_str());
       if (I.ionization) {
         anyIonization = true;
         std::string lv;
