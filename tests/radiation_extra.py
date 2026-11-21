@@ -18,6 +18,7 @@ import sys
 import h5py
 import numpy as np
 
+trapezoid = getattr(np, "trapezoid", None) or np.trapz  # numpy < 2.0 has only trapz
 RE, LC, ALPHA = 2.8179403262e-15, 3.8615926796e-13, 7.2973525693e-3
 
 
@@ -49,7 +50,7 @@ if sys.argv[1] == "undulator":
         a = RE * ku * ku * k * k / 3
         V += h * (-4 * a * g * V + 7 / 15 * RE * LC * g ** 4 * ku ** 3 * k * k * (1.2032 * k + 1 / (1 + 1.34 * k + 0.43 * k * k)))
         g -= h * a * g * g
-    Vloc = np.trapezoid(0.5615 * RE * LC * g0 ** 4 * ku ** 3 * Kz ** 3, z)
+    Vloc = trapezoid(0.5615 * RE * LC * g0 ** 4 * ku ** 3 * Kz ** 3, z)
     gc, gs = gammas(dc), gammas(ds)
     lc, ls, rms = g0 - gc.mean(), g0 - gs.mean(), (gs - gc).std()
     se = np.sqrt(V / len(gs))
