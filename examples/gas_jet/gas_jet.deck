@@ -5,6 +5,8 @@
 #  run:   gempic_rz examples/gas_jet/gas_jet.deck
 #  with the profile n(r, z) (a jet with a shallow channel):
 #         gempic_rz examples/gas_jet/gas_jet.deck plasma.density_file=jet_rz.txt
+#  with n(z) times a transverse function given in the file (a Gaussian jet):
+#         gempic_rz examples/gas_jet/gas_jet.deck plasma.density_file=jet_gauss.txt
 #
 #  The file is looked up in the working directory and then beside the deck.
 #  The run summary reports the range of the file against the run, the peak

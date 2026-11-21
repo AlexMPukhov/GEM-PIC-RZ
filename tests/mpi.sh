@@ -167,7 +167,7 @@ if [ -n "$DEV" ]; then  # the medium on the device (2 ranks: the emulation build
 fi
 echo "  bound electrons with ionization: 1 rank pipelined, 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device (2 ranks)")"
 # plasma density n(r, z) from a text table (the profile of tests/density_file.sh, part 3)
-awk 'BEGIN { print "# z[k0^-1] r[k0^-1] n"
+awk 'BEGIN { print "# geometry = rz"; print "# columns = z[k0^-1] r[k0^-1] n"
   nz = split("0 400 1000", z, " "); nr = split("0 75 150 400", r, " ")
   for (i = 1; i <= nz; i++) for (j = 1; j <= nr; j++) {
     f = z[i] < 400 ? z[i] / 400 : 1; g = 0.6 + 0.8 * (r[j] < 75 ? r[j] / 75 : 1)

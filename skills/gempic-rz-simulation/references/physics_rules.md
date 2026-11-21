@@ -63,8 +63,9 @@ injection with FBPIC, then acceleration here; worked example in the repository: 
    (or `plasma.density_function`), about 3 λ_p long if the user gave none; the profile is constant beyond the
    last point. Put the focus (`laser.z_focus`) at the end of the ramp unless the user says otherwise.
    A measured or simulated profile (gas jet from interferometry, nozzle or hydro simulation) is read from a file
-   with `plasma.density_file`: a text table `# z[mm] n[cm^-3]` for n(z) or `# z[mm] r[um] n[cm^-3]` for n(r, z), or
-   an openPMD mesh. A density with a unit in the file is the absolute density (`plasma.density` then only
+   with `plasma.density_file`: a text table whose header states the geometry and the columns (`# geometry = z`,
+   `# columns = z[mm] n[cm^-3]`; or `# geometry = rz`, `# columns = z[mm] r[um] n[cm^-3]`), or an openPMD mesh. A
+   file with n(z) may also carry the transverse shape (`# transverse = "exp(-(r / (50 um))^2)"`). A density with a unit in the file is the absolute density (`plasma.density` then only
    normalizes the output); without unit it is a factor on `plasma.density`. Do not retype such data into
    `plasma.z_points`. `plasma.file_z` shifts the file along z; outside the file the density is zero unless
    `plasma.file_outside = hold`. Read the summary of `--check`: it prints the range of the file against the run

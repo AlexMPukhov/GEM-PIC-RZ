@@ -202,6 +202,8 @@ struct PlasmaConfig {
   double file_z = 0.0;             // z of the simulation at the file's z = 0
   bool file_hold = false;          // file_outside = hold: edge values beyond the file (else 0)
   std::vector<std::string> file_info;  // lines of the run summary
+  // the density depends on (x, y) beyond r: density_function, or a transverse function of the density file
+  bool perParticle() const { return !fn.empty() || (file && !file->transverse.empty()); }
   double longitudinal(double z) const;  // relative profile f(z) of the table (1 with a density_file)
   double radialFactor(double r) const;  // relative profile g(r)
   double density(double r, double z) const;  // n0 f(z) g(r), 0 outside r_max (axisymmetric part);

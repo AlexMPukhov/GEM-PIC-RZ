@@ -281,28 +281,34 @@ plasma { density = 3e18 cm^-3;  density_file = jet_axis.txt;  r_max = 19 um }
 ```
 
 ```
-# z[mm]  n[cm^-3]             # z[mm]  r[um]  n[cm^-3]          (jet_axis.txt: n(z);  jet_rz.txt: n(r, z))
-0.00     0                    0.00     0      0
-0.05     2.0e17               0.00     5      0
-...                           ...
+# geometry = z                    # geometry = rz                  (jet_axis.txt: n(z);  jet_rz.txt: n(r, z))
+# columns  = z[mm]  n[cm^-3]      # columns  = z[mm]  r[um]  n[cm^-3]
+0.00     0                        0.00     0      0
+0.05     2.0e17                   0.00     5      0
+...                               ...
 ```
 
-- **Formats:** a text / CSV table whose header names the columns and their units, for n(z) on the axis or
-  n(r, z) on a rectilinear grid (one row per grid point); or an openPMD mesh (HDF5) with the axes z, or r and z,
-  regular or with explicit coordinates ([rectilinear meshes](docs/openpmd_rectilinear.md)).
+- **One format for several codes** ([`docs/density_file.md`](docs/density_file.md)): the header of the file
+  defines the geometry (`z`, `rz`, `xz`, `xyz`), the units and the grid. GEM-PIC-RZ reads n(z) on the axis and
+  n(r, z) on a rectilinear grid; Cartesian and 3D files are for the 3D codes and are rejected here.
+- **Carriers:** a text table, with the coordinates in columns or with the axes in the header and the values
+  alone as data (uniform or explicit axes); or an openPMD mesh (HDF5) with the axes z, or r and z, regular or
+  with explicit coordinates ([rectilinear meshes](docs/openpmd_rectilinear.md)).
+- **Transverse function:** a file with n(z) may carry the transverse shape, `# transverse = "exp(-(r / (50 um))^2)"`
+  (a function of r, x, y), so that the file alone defines the target.
 - **Absolute density or factor:** the unit in the file decides. A density in `cm^-3` or `m^-3` (openPMD:
   `unitDimension` L⁻³) is used as it is; `density` is then only the reference n0 of the outputs. A density
   without unit is a factor on `density`.
 - **Use:** linear interpolation in z and r; zero outside the file (`file_outside = hold`: the edge values);
-  `file_z` shifts the file along z. `z_points` (and, for n(r, z), `radial_profile`) cannot be combined with the
-  file; `r_max` and `density_function` still apply.
+  `file_z` shifts the file along z. `z_points` (and, for n(r, z) or a file with a transverse function, `radial_profile`) cannot be
+  combined with the file; `r_max` and `density_function` still apply.
 - **Start-up checks:** the summary prints the range of the file against the run and the peak density. Negative
   or non-finite values and files outside the run are errors. A file cut where the density is above 1 % of its
   peak, and gradients shorter than 4 steps or radial cells, give warnings.
 - **All backends, MPI, restart:** the profile only enters the loading of the fresh plasma at the front of the
   window, which is the same code in every path; every MPI rank reads the file, and so does a restart.
 - **Checks** (ctest `density_file_<backend>`, `tests/mpi.sh`): XXNUMBERS
-- **Example:** `examples/gas_jet/` (deck, `jet_axis.txt`, `jet_rz.txt`).
+- **Example:** `examples/gas_jet/` (deck, `jet_axis.txt`, `jet_rz.txt`, `jet_gauss.txt`).
 
 ## MPI: domain decomposition along ζ
 

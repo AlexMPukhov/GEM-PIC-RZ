@@ -1,7 +1,9 @@
 # Gas jet with a shallow density channel, n_e(r, z) (synthetic sample of the form a fluid simulation or an
-# Abel-inverted measurement gives): the axis profile of jet_axis.txt times 1 + 0.3 (r / 20 um)^2
-# one row per grid point; the rows must fill the grid of the z and r values
-# z[mm]   r[um]   n_e[cm^-3]
+# Abel-inverted measurement gives): the axis profile of jet_axis.txt times 1 + 0.3 (r / 20 um)^2.
+# One row per grid point; the rows fill the grid of the z and r values. Format: docs/density_file.md
+# density_profile = 1
+# geometry = rz
+# columns  = z[mm]   r[um]   n_e[cm^-3]
 0.00    0.0   0.0000e+00
 0.00    5.0   0.0000e+00
 0.00   10.0   0.0000e+00

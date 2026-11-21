@@ -1117,7 +1117,7 @@ void Simulation::loadFresh() {
         p.x = r * std::cos(ph); p.y = r * std::sin(ph); p.z = s0;
         p.qm = -1.0; p.zeta = zv.node(Nz); p.status = 0; p.sp = SPECIES_PLASMA;
         // density_function(x, y, z, r): the weight of each particle (may break the axial symmetry)
-        const double n = (nAx <= 0.0) ? 0.0 : P.fn.empty() ? nAx : P.density(p.x, p.y, zmid);
+        const double n = (nAx <= 0.0) ? 0.0 : !P.perParticle() ? nAx : P.density(p.x, p.y, zmid);
         const double Q = n * Q0;
         if (n > 0.0) {
           p.q = Q; p.w = -Q;

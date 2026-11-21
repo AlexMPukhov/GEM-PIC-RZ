@@ -6,7 +6,8 @@
   jet2d_rect.h5   the same as absolute density in m^-3 (n0 = 0.002 n_c), mesh 'n_gas' beside a second mesh, data
                   [z][r], rectilinear: the coordinates are data sets named in gridCoordinates
                   (docs/openpmd_rectilinear.md)
-  gauss_jet.h5    smooth jet exp(-((z - 150)/200)^2 - (r/120)^2) on 81 x 41 points, a factor, thetaMode
+  gauss_jet.h5    smooth jet exp(-((z - 150)/200)^2 - (r/120)^2) on 321 x 161 points, a factor, thetaMode
+  ramp_gauss.h5   n(z) = min(z/400, 1) on 2 points (geometry z) with the attribute transverseFunction, a Gaussian in r
 """
 import numpy as np
 import h5py
@@ -78,15 +79,26 @@ t.attrs["position"] = np.array([0.0, 0.0])
 f.close()
 
 # smooth gas jet
-z = np.linspace(0.0, 400.0, 81)
-r = np.linspace(0.0, 160.0, 41)
+z = np.linspace(0.0, 400.0, 321)
+r = np.linspace(0.0, 160.0, 161)
 f = root("gauss_jet.h5")
 jet = np.exp(-(r[:, None] / 120.0) ** 2) * np.exp(-((z[None, :] - 150.0) / 200.0) ** 2)
 d = f.create_dataset("/data/0/meshes/density", data=jet[None, :, :])
 d.attrs["geometry"] = np.bytes_("thetaMode")
 d.attrs["geometryParameters"] = np.bytes_("m=0;imag=+")
 common(d, ["r", "z"], [0] * 7, 1.0, k0inv)
-d.attrs["gridSpacing"] = np.array([4.0, 5.0])
+d.attrs["gridSpacing"] = np.array([1.0, 1.25])
 d.attrs["gridGlobalOffset"] = np.array([0.0, 0.0])
 d.attrs["position"] = np.array([0.0, 0.0])
+f.close()
+
+# n(z) with a transverse function (geometry z): the file alone defines the target
+f = root("ramp_gauss.h5")
+d = f.create_dataset("/data/0/meshes/density", data=np.array([0.0, 1.0]))
+d.attrs["geometry"] = np.bytes_("cartesian")
+common(d, ["z"], [0] * 7, 1.0, k0inv)
+d.attrs["gridSpacing"] = np.array([400.0])
+d.attrs["gridGlobalOffset"] = np.array([0.0])
+d.attrs["position"] = np.array([0.0])
+d.attrs["transverseFunction"] = np.bytes_("exp(-(r / (120 k0^-1))^2)")
 f.close()

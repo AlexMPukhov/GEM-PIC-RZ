@@ -15,6 +15,7 @@ trap 'rm -rf "$TMP"' EXIT
 {
   echo "<!-- Generated from docs/input_deck.md by tools/sync_skills.sh. Do not edit this copy. -->"
   sed -e "s|](openpmd_rectilinear.md)|]($URL/docs/openpmd_rectilinear.md)|g" \
+      -e "s|](density_file.md)|]($URL/docs/density_file.md)|g" \
       -e "s|](\.\./examples/|]($URL/examples/|g" "$SRC/docs/input_deck.md"
 } > "$TMP/input_deck.md"
 

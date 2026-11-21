@@ -1,6 +1,8 @@
 # Gas jet, electron density on the laser axis (synthetic sample of the form an interferometry
-# measurement gives): 0.3 mm sin^2 ramps, 1.4 mm plateau of 3e18 cm^-3
-# z[mm]   n_e[cm^-3]
+# measurement gives): 0.3 mm sin^2 ramps, 1.4 mm plateau of 3e18 cm^-3. Format: docs/density_file.md
+# density_profile = 1
+# geometry = z
+# columns  = z[mm]   n_e[cm^-3]
 0.00   0.0000e+00
 0.05   2.0096e+17
 0.10   7.5000e+17

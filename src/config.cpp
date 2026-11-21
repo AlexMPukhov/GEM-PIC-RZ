@@ -297,14 +297,20 @@ double PlasmaConfig::density(double r, double z) const {
   if (!present || r >= r_max) return 0.0;
   if (file) {  // the same order of the factors as below: a file that repeats a table gives the same numbers
     const double f = file->at(r, z - file_z, file_hold);
-    return (file->absolute ? f : n0 * f) * radialFactor(r);
+    const double n = (file->absolute ? f : n0 * f) * radialFactor(r);
+    // transverse function of the file: its mean over the azimuth
+    return file->transverse.empty() ? n : n * file->transMean(r);
   }
   return n0 * longitudinal(z) * radialFactor(r);
 }
 
 double PlasmaConfig::density(double x, double y, double z) const {
   const double r = std::sqrt(x * x + y * y);
-  const double n = density(r, z);
+  double n = density(r, z);
+  if (n > 0.0 && perParticle() && file && !file->transverse.empty()) {  // T(r, x, y) at the particle
+    const double f = file->at(r, z - file_z, file_hold);
+    n = (file->absolute ? f : n0 * f) * radialFactor(r) * file->trans(x, y);
+  }
   if (n <= 0.0 || fn.empty()) return n;
   const double v[4] = {x, y, z, r};
   return std::max(0.0, n * fn(v));
@@ -777,11 +783,14 @@ void readDensityFileKeys(const BlockReader& r, const Deck& d, const Units& u, Pl
   }
   P.file_z = r.num("file_z", Dim::Length, 0.0);
   P.file_hold = r.word("file_outside", "zero", {"zero", "hold"}) == "hold";
-  if (P.file->twoD())
+  if (P.file->twoD() || !P.file->transverse.empty())
     for (const char* k : {"radial_profile", "channel_depth", "r_channel", "r_points", "r_values"})
       if (r.has(k))
-        r.failKey(k, "the density_file holds n(r, z), which includes the radial profile (remove it; r_max and "
-                     "density_function still apply)");
+        r.failKey(k, P.file->twoD()
+                         ? "the density_file holds n(r, z), which includes the radial profile (remove it; r_max and "
+                           "density_function still apply)"
+                         : "the density_file carries a transverse function, which is the radial profile (remove "
+                           "it; r_max and density_function still apply)");
 }
 
 // start-up checks of a density file against the run: ranges, peak, cuts at the ends, steep gradients
@@ -815,6 +824,8 @@ void checkDensityFile(const BlockReader& r, const std::string& label, const Unit
     std::snprintf(buf, sizeof buf, "peak %.4g cm^-3 (%.4g n_c) at z = %.6g mm", F.peak * toNc * u.nc_cm3(),
                   F.peak * toNc, (F.zPeak + P.file_z) * mm);
   P.file_info.push_back(buf);
+  if (!F.transverse.empty())
+    P.file_info.push_back("times the transverse function of the file, T(r, x, y) = " + F.transverse.text());
   const double tol = g.endTol();
   const bool cutA = za > tol, cutB = zb < g.z_end - tol, cutR = F.twoD() && F.r.back() < rNeed * (1.0 - 1e-12);
   if (P.file_hold) {
