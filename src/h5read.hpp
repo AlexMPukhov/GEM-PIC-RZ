@@ -52,11 +52,7 @@ class File {
   }
   bool isGroup(const std::string& p) const {
     H5O_info_t info;
-#if H5_VERSION_GE(1, 12, 0)
-    if (H5Oget_info_by_name3(f, p.c_str(), &info, H5O_INFO_BASIC, H5P_DEFAULT) < 0) return false;
-#else
-    if (H5Oget_info_by_name(f, p.c_str(), &info, H5P_DEFAULT) < 0) return false;
-#endif
+    if (H5Oget_info_by_name3(f, p.c_str(), &info, H5O_INFO_BASIC, H5P_DEFAULT) < 0) return false;  // HDF5 >= 1.12
     return info.type == H5O_TYPE_GROUP;
   }
   bool hasAttr(const std::string& obj, const char* name) const {

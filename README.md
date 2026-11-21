@@ -40,7 +40,7 @@ cmake -S . -B build && cmake --build build -j     # or simply: make
 cd build && ctest                                 # or: make test
 ```
 
-C++17 is required. MPI (any implementation) and the HDF5 C library are optional (HDF5 output; e.g. `apt install libhdf5-dev`); there are no other external libraries. `-DGEMPIC_NATIVE=OFF` builds without `-march=native`.
+C++17 is required. MPI (any implementation) and the HDF5 C library, version 1.12 or newer, are optional (HDF5 output; point `HDF5_ROOT` to the installation; a serial or a parallel build of HDF5 both work); there are no other external libraries. `-DGEMPIC_NATIVE=OFF` builds without `-march=native`.
 
 GPU build (NVIDIA, CUDA toolkit 12 or 13; only plain `nvcc` is needed, no Kokkos. See
 [`docs/gpu.md`](docs/gpu.md) for installing nvcc without root rights, e.g.
