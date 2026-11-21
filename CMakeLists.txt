@@ -65,7 +65,7 @@ endif()
 # library with everything except main()
 add_library(gemcore STATIC
   src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp src/ionization.cpp src/mapping.cpp
-  src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
+  src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp src/density_file.cpp)
 target_include_directories(gemcore PUBLIC src)
 
 # HDF5 output (C library)
@@ -130,7 +130,7 @@ elseif(GEMPIC_OPENMP)
     # test build: the GPU code paths emulated on CPU threads (see portable.hpp)
     add_executable(gempic_rz_gpuemu src/main.cpp src/units.cpp src/deck.cpp src/config.cpp src/atomic_data.cpp
       src/ionization.cpp src/mapping.cpp src/grid.cpp src/solver.cpp src/dielectric.cpp src/bound.cpp src/smoothing.cpp src/simulation.cpp src/diagnostics.cpp
-      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp)
+      src/output_hdf5.cpp src/engine.cpp src/comm.cpp src/pipeline.cpp src/eigen.cpp src/expr.cpp src/beam_import.cpp src/laser_file.cpp src/density_file.cpp)
     gempic_use_hdf5(gempic_rz_gpuemu)
     gempic_use_mpi(gempic_rz_gpuemu)
     target_include_directories(gempic_rz_gpuemu PRIVATE src)
@@ -245,6 +245,17 @@ if(GEMPIC_HAVE_HDF5)
     add_test(NAME dopant_${b}
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/dopant.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
   endforeach()
+  # density profiles from files (plasma.density_file, ion.density_file): text tables and openPMD meshes against
+  # the same profiles given in the deck
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME density_file_${b}
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/density_file.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:compare_columns> ${b})
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME density_file_gpu_emulation
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/density_file.sh $<TARGET_FILE:gempic_rz_gpuemu> $<TARGET_FILE:compare_columns>
+              openmp)
+  endif()
   # radial smoothing of the plasma sources (plasma.smooth_length)
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME smoothing_${b}

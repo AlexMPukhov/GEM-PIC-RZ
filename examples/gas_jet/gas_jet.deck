@@ -1,0 +1,64 @@
+# ============================================================================
+#  LWFA in a gas jet whose density profile is read from a file
+#  (plasma.density_file: measured or simulated profiles, n(z) or n(r, z))
+#
+#  run:   gempic_rz examples/gas_jet/gas_jet.deck
+#  with the profile n(r, z) (a jet with a shallow channel):
+#         gempic_rz examples/gas_jet/gas_jet.deck plasma.density_file=jet_rz.txt
+#  with n(z) times a transverse function given in the file (a Gaussian jet):
+#         gempic_rz examples/gas_jet/gas_jet.deck plasma.density_file=jet_gauss.txt
+#
+#  The file is looked up in the working directory and then beside the deck.
+#  The run summary reports the range of the file against the run, the peak
+#  density and, as warnings, a file that is cut at a finite density or
+#  gradients that the steps do not resolve.
+# ============================================================================
+
+grid {
+  lambda0          = 0.8 um
+  m_max            = 1
+
+  radial_grid      = table        # 38 nm near the axis, 0.38 um outside 4 um
+  r_points         = 0,    1.5,  4,    24   um
+  dr_points        = 38.2, 38.2, 382,  382  nm
+  r_max            = 24.4 um
+
+  dzeta            = 31.83 nm     # 25 points per laser wavelength
+  nzeta            = 1200         # window length 38.2 um
+
+  dz               = 5.09 um      # the 0.3 mm ramps of the jet take 59 steps each
+  z_end            = 2 mm         # the length of the profile in the file
+  r_absorber       = 20.4 um
+}
+
+laser {
+  a0           = 2
+  waist        = 8.02 um
+  tau_fwhm     = 12.5 fs
+  zeta_center  = 30.56 um
+  z_focus      = 0.3 mm           # at the end of the up-ramp
+}
+
+plasma {
+  density        = 3e18 cm^-3     # reference density n0: the unit of the n_e/n0 output
+  density_file   = jet_axis.txt   # n(z) in cm^-3 over mm: the absolute density, used as it is
+  # file_z       = 0 mm           # z of the simulation at the file's z = 0 (shifts the profile)
+  # file_outside = zero           # zero (default) | hold: the density beyond the ends of the file
+  r_max          = 19.1 um
+  ppc_r          = 2
+  ppc_phi        = 8
+  ppc_r_axis     = 4
+  ppc_phi_axis   = 16
+  r_axis_refine  = 1.27 um
+}
+
+output {
+  dir        = gas_jet
+  every      = 50
+  map_stride = 4
+}
+
+numerics {
+  iterations = 2
+  seed       = 12345
+}

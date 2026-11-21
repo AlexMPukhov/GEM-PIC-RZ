@@ -19,6 +19,8 @@
 #  10. dielectric-lined tube (tests/dielectric_dwa.deck), offset bunch: 1 rank pipelined, 3 ranks (also on the
 #      device) = serial
 #  11. bound electrons with ionization (tests/bound_ionize.deck): 1 rank pipelined, 3 ranks (2 on the device) = serial
+#  12. plasma density n(r, z) from a file (plasma.density_file; every rank reads the file and loads its block):
+#      1 rank pipelined = serial (identical), 3 ranks (also on the device) and a 3 -> 2 rank restart = serial
 # usage: sh tests/mpi.sh <gempic_rz> <compare_columns> <mpiexec> [extra mpiexec flags]
 set -e
 abspath() { (cd "$(dirname "$1")" && echo "$(pwd)/$(basename "$1")"); }
@@ -164,6 +166,28 @@ if [ -n "$DEV" ]; then  # the medium on the device (2 ranks: the emulation build
   for f in axis_00004.txt map_00004.txt; do "$CMP" bser/$f bdv/$f 1e-6 1e-9; done
 fi
 echo "  bound electrons with ionization: 1 rank pipelined, 3 ranks = serial$([ -n "$DEV" ] && echo ", also on the device (2 ranks)")"
+# plasma density n(r, z) from a text table (the profile of tests/density_file.sh, part 3)
+awk 'BEGIN { print "# geometry = rz"; print "# columns = z[k0^-1] r[k0^-1] n"
+  nz = split("0 400 1000", z, " "); nr = split("0 75 150 400", r, " ")
+  for (i = 1; i <= nz; i++) for (j = 1; j <= nr; j++) {
+    f = z[i] < 400 ? z[i] / 400 : 1; g = 0.6 + 0.8 * (r[j] < 75 ? r[j] / 75 : 1)
+    printf "%g %g %.17g\n", z[i], r[j], f * g } }' > jet2d.txt
+sed -e 's|^  z_points .*|  density_file  = jet2d.txt|' -e '/^  z_values /d' "$DECK" > jet.deck
+"$EXE" jet.deck $C output.dir=jser > jser.log
+grep -q "n(r, z) on 4 x 3 points" jser.log
+GEMPIC_PIPELINE=1 "$EXE" jet.deck $C output.dir=jp1 > jp1.log
+for f in axis_00002.txt axis_00004.txt map_00004.txt bunches.txt; do "$CMP" jser/$f jp1/$f 0 0; done
+run 3 jet.deck $C output.dir=jmp > jmp.log
+for f in axis_00002.txt axis_00004.txt map_00004.txt bunches.txt; do "$CMP" jser/$f jmp/$f 1e-6 1e-9; done
+run 3 jet.deck $C output.dir=jck grid.z_end=80k0^-1 output.checkpoint_every=2 > jck1.log
+run 2 jet.deck $C output.dir=jck output.checkpoint_every=2 --restart latest > jck2.log
+for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" jser/$f jck/$f 1e-6 1e-9; done
+if [ -n "$DEV" ]; then
+  GEMPIC_PIPELINE_ENGINE=1 OMP_NUM_THREADS=2 runx 3 "$DEV" jet.deck output.every=1 output.map_stride=8 \
+    grid.z_end=160k0^-1 $DB output.dir=jdv > jdv.log
+  for f in axis_00004.txt map_00004.txt bunches.txt; do "$CMP" jser/$f jdv/$f 1e-6 1e-9; done
+fi
+echo "  density n(r, z) from a file: 1 rank pipelined, 3 ranks, 3 -> 2 rank restart = serial$([ -n "$DEV" ] && echo ", also on the device")"
 rc=0
 run 3 "$DECK" $C output.dir=w output.walltime_hours=1e-5 > w1.log || rc=$?
 if [ $rc -ne 3 ]; then echo "expected exit code 3 at the wall-time limit, got $rc"; exit 1; fi

@@ -1,0 +1,14 @@
+# The axis profile of jet_axis.txt in the grid layout (the axis in the header, the values alone as data),
+# with a transverse function: a Gaussian jet of 60 um radius (1/e). Format: docs/density_file.md
+# density_profile = 1
+# geometry = z
+# density_unit = cm^-3
+# z = uniform 0 0.05 41 mm
+# transverse = "exp(-(r / (60 um))^2)"
+0.0000e+00  2.0096e+17  7.5000e+17  1.5000e+18  2.2500e+18  2.7990e+18
+3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18
+3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18
+3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18
+3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18
+3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  3.0000e+18  2.7990e+18
+2.2500e+18  1.5000e+18  7.5000e+17  2.0096e+17  0.0000e+00

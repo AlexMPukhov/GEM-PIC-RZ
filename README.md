@@ -127,6 +127,8 @@ numerics { ... }    algorithm parameters               (optional)
   numbers with units (`r / (20 um)`), the usual functions and operators, and the named values of the block
   `constants`; any single value of the deck may be an expression of them (`waist = "2 * w0"`). See
   [Functions and expressions](docs/input_deck.md#functions-and-expressions).
+- **Profiles from files:** the plasma or gas density n(z) or n(r, z) can be read from a text table or an openPMD
+  mesh (`density_file`, see [Density profiles from files](#density-profiles-from-files-gas-jets-hydro-codes)).
 - **Reference:** all keys, units and defaults are listed in [`docs/input_deck.md`](docs/input_deck.md).
 
 | example | shows |
@@ -140,6 +142,7 @@ numerics { ... }    algorithm parameters               (optional)
 | `examples/two_pulses_channel.deck` | two laser pulses (focused drive pulse, circularly polarized 2nd harmonic), parabolic channel, trapezoidal profile |
 | `examples/ion_collapse.deck` | mobile hydrogen ions collapsing inside a dense electron bunch (Rosenzweig et al. 2005) |
 | `examples/chain_lwfa_fel/` | chained run: down-ramp injection (FBPIC) → acceleration → plasma lens, chicane and helical undulator (GEM-PIC-RZ), openPMD hand-off between the stages (README there) |
+| `examples/gas_jet/` | LWFA in a gas jet whose density profile is read from a file (`plasma.density_file`): sample tables n(z) and n(r, z) in cm⁻³ |
 | `examples/ionization_injection.deck` | ionization injection: N⁵⁺ dopant field-ionized to N⁶⁺/N⁷⁺ by an a0 = 2 pulse (ADK, NIST energies) |
 | `examples/dwa_proton_microbuncher/` | dielectric wakefield structure (quartz-lined copper tube, Petrenko & Sheinman, RuPAC 2016): 600 MeV, 5 nC drive beam in a tapered FODO channel (BBU), proton microbuncher, chicane and proton "klystron"; deck generator `make_deck.py` (README there) |
 
@@ -178,6 +181,7 @@ deck of the skill for 3 steps with the real executable. Details and the result o
 | `src/deck.*` | generic parser: blocks, `key = value`, lists, strings, comments, line numbers, command-line overrides |
 | `src/units.*` | unit table and conversion to code units |
 | `src/beam_import.*` | reading particle beams from openPMD and native HDF5 files |
+| `src/density_file.*` | plasma / gas density profiles from files: text tables and openPMD meshes, n(z) or n(r, z), interpolation |
 | `src/laser_file.*` | lasers from LASY / openPMD envelope files: reader, azimuthal modes, exact propagation (Hankel + FFT), envelope → R |
 | `src/h5read.hpp` | small read-only HDF5 helper shared by the importers |
 | `src/expr.*` | function parser: expressions of the deck (profiles, constants) compiled to a stack program |
@@ -267,6 +271,56 @@ output { lasy = true }                    # diag/lasy/laser_NNNNN.h5 at z_end, r
   propagation vs the paraxial Gaussian (0.1 % in the peak), export → re-import (7·10⁻⁴), and the luminal Bessel
   pulse of the `flying_focus` block given as a file with `inject = boundary` vs the built-in flying focus after
   0.3 mm (peak 0.25 %, rms 1.3·10⁻³). LASY reads the exported files. All backends give the same fields.
+
+## Density profiles from files (gas jets, hydro codes)
+
+The density of the plasma, or of the gas of an `ion` block with `profile = own`, can be read from a file
+instead of being written into the deck: a measured gas-jet profile (interferometry, Abel inversion), a fluid
+simulation of a nozzle, or the result of a hydrodynamic code that is handed to the PIC run. Details and all
+keys: [`docs/input_deck.md`](docs/input_deck.md#density-profile-from-a-file-density_file).
+
+```
+plasma { density = 3e18 cm^-3;  density_file = jet_axis.txt;  r_max = 19 um }
+```
+
+```
+# geometry = z                    # geometry = rz                  (jet_axis.txt: n(z);  jet_rz.txt: n(r, z))
+# columns  = z[mm]  n[cm^-3]      # columns  = z[mm]  r[um]  n[cm^-3]
+0.00     0                        0.00     0      0
+0.05     2.0e17                   0.00     5      0
+...                               ...
+```
+
+- **One format for several codes** ([`docs/density_file.md`](docs/density_file.md)): the header of the file
+  defines the geometry (`z`, `rz`, `xz`, `xyz`), the units and the grid. GEM-PIC-RZ reads n(z) on the axis and
+  n(r, z) on a rectilinear grid; Cartesian and 3D files are for the 3D codes and are rejected here.
+- **Carriers:** a text table, with the coordinates in columns or with the axes in the header and the values
+  alone as data (uniform or explicit axes); or an openPMD mesh (HDF5) with the axes z, or r and z, regular or
+  with explicit coordinates ([rectilinear meshes](docs/openpmd_rectilinear.md)).
+- **Transverse function:** a file with n(z) may carry the transverse shape, `# transverse = "exp(-(r / (50 um))^2)"`
+  (a function of r, x, y), so that the file alone defines the target.
+- **Absolute density or factor:** the unit in the file decides. A density in `cm^-3` or `m^-3` (openPMD:
+  `unitDimension` L⁻³) is used as it is; `density` is then only the reference n0 of the outputs. A density
+  without unit is a factor on `density`.
+- **Use:** linear interpolation in z and r; zero outside the file (`file_outside = hold`: the edge values);
+  `file_z` shifts the file along z. `z_points` (and, for n(r, z) or a file with a transverse function, `radial_profile`) cannot be
+  combined with the file; `r_max` and `density_function` still apply.
+- **Start-up checks:** the summary prints the range of the file against the run and the peak density. Negative
+  or non-finite values and files outside the run are errors. A file cut where the density is above 1 % of its
+  peak, and gradients shorter than 4 steps or radial cells, give warnings.
+- **All backends, MPI, restart:** the profile only enters the loading of the fresh plasma at the front of the
+  window, which is the same code in every path; every MPI rank reads the file, and so does a restart.
+- **Checks** (ctest `density_file_<backend>`, `tests/mpi.sh`), against the same profile
+  written in the deck, on the regression case (laser, up-ramp, H⁺ ions, witness; 4 steps): a file with the points of
+  `z_points` / `z_values` gives the identical run (difference 0, serial and OpenMP); the ramp in cm⁻³ over µm, in
+  the grid layout in m⁻³ with `file_z`, n(r, z) in both layouts and as openPMD meshes (regular thetaMode,
+  rectilinear in m⁻³) against `density_function`, and n(z) with a transverse function (Gaussian; x-dependent)
+  against the table times that function agree within 10⁻⁶ relative; a smooth Gaussian jet sampled on 321 × 161
+  points differs from its function by 1.0·10⁻⁴ (E_x), 1.2·10⁻⁴ (E_z) and 2.5·10⁻⁴ (n_e) of the peak on the axis
+  (linear interpolation); a restart equals the uninterrupted run; 21 faulty files and combinations are rejected
+  with a message. The GPU emulation build gives the same; MPI: 1 rank pipelined identical, 3 ranks and a
+  3 → 2 rank restart equal the serial run.
+- **Example:** `examples/gas_jet/` (deck, `jet_axis.txt`, `jet_rz.txt`, `jet_gauss.txt`).
 
 ## MPI: domain decomposition along ζ
 

@@ -349,6 +349,10 @@ The density is `n(r, z) = density · f(z) · g(r)` for `r < r_max`, and 0 outsid
 |-----|------|---------|---------|
 | `density` | density | — | reference density n0 (also the normalization of the `n_e/n0` output) |
 | `z_points`, `z_values` | length list, number list | constant 1 | piecewise-linear f(z), constant beyond the end points |
+| `density_file` | file name | — | the profile from a file, n(z) or n(r, z): a text table or an openPMD mesh, see [Density profile from a file](#density-profile-from-a-file-density_file). It replaces `z_points`/`z_values`; a file with n(r, z) also replaces `radial_profile` |
+| `file_z` | length | 0 | with `density_file`: the z of the simulation at the file's z = 0 (shifts the profile) |
+| `file_outside` | `zero` \| `hold` | `zero` | with `density_file`: the density beyond the ends of the file, zero or the edge values continued |
+| `file_mesh`, `file_iteration` | name, integer | `density`, last | with an openPMD `density_file`: the mesh record and the iteration |
 | `density_function` | function of x, y, z, r | 1 | a further factor, see [Functions](#functions-and-expressions) |
 | `radial_profile` | `uniform` \| `parabolic` \| `table` | `uniform` | form of g(r) |
 | `channel_depth`, `r_channel` | number, length | — | parabolic: g = 1 + depth · r²/r_channel² |
@@ -362,6 +366,86 @@ The density is `n(r, z) = density · f(z) · g(r)` for `r < r_max`, and 0 outsid
 | `r_axis_refine` | length | 10 k0⁻¹ | radius of the refined loading near the axis. It avoids sampling noise in the tiny cells on the axis |
 
 Plasma electrons are always mobile. Ions are an immobile background unless `ion` blocks make them mobile (next section). Without a `plasma` block the propagation is in vacuum.
+
+### Density profile from a file (`density_file`)
+
+Measured gas-jet profiles (interferometry, Abel inversion), fluid simulations of a nozzle or the output of a
+hydrodynamic code are given as a file: the density on the axis, n(z), or on a rectilinear grid of the r-z plane,
+n(r, z). The same keys work in an `ion` block with `profile = own`.
+
+```
+plasma { density = 3e18 cm^-3;  density_file = jet_axis.txt;  r_max = 19 um }
+```
+
+The format is specified in [density_file.md](density_file.md): one self-describing format for several codes,
+with the geometries `z`, `rz`, `xz` and `xyz`. GEM-PIC-RZ reads `z` and `rz`; a Cartesian or 3D file is rejected
+(it is not averaged over the azimuth).
+
+**Text table.** The header, comment lines `# key = value`, defines the geometry, the units and the layout; other
+comment lines are free text. Data are numbers separated by blanks, tabs, commas or semicolons.
+
+```
+# geometry = z                    # geometry = rz
+# columns  = z[mm]  n[cm^-3]      # columns  = z[mm]  r[um]  n[cm^-3]
+0.00     0                        0.00     0      0
+0.05     2.0e17                   0.00     5      0
+0.10     7.5e17                   0.05     0      2.0e17
+...                               ...
+```
+
+- **Columns layout** (`# columns = ...`): one row per point, the coordinates and the density (`n`, `n_e`,
+  `density`, …) with their units in brackets. `z`: z strictly increasing, at least 2 points. `rz`: one row per grid
+  point in any order; the rows must fill the grid of the distinct z and r values (every pair once), the spacings may
+  be non-uniform; at least 2 values of z and of r.
+- **Grid layout:** the axes in the header, the values alone as data, e.g.
+  `# density_unit = cm^-3`, `# z = uniform 0 0.05 41 mm` (origin, step, count, unit), `# r = list 0 5 10 20 um`,
+  `# order = z r` (the last axis varies fastest).
+- **Transverse function:** a file with geometry `z` may carry `# transverse = "exp(-(r / (50 um))^2)"`, a function
+  of r, x, y; the density is n(z) · T. The file alone then defines the target.
+- **Lengths:** any length unit of the deck (`nm`, `um`, `mm`, `cm`, `m`, `k0^-1`); a unit is required.
+- **Density:** a physical unit (`cm^-3`, `m^-3`, `n_c`) means the **absolute density**, used as it is. No unit
+  (`n`, `n[1]`, `density_unit = 1`) means a **factor on `density`**, like `z_values`.
+
+**openPMD mesh (HDF5).** A scalar mesh record, by default `density` or the only mesh of the iteration, else
+`file_mesh`; the last iteration, or `file_iteration`. Axes `z`, or `r` and `z` in either order; of a `thetaMode`
+record (`[mode][r][z]`) the mode m = 0 is taken. The axes are regular (`gridSpacing`, `gridGlobalOffset`,
+`position`) or have explicit coordinates (`gridCoordinates`, the rectilinear meshes of
+[openpmd_rectilinear.md](openpmd_rectilinear.md)); lengths follow from `gridUnitSI`. `unitDimension` of a number
+density (L⁻³) means the absolute density (`unitSI` to m⁻³); a dimensionless record is a factor on `density`. A
+charge or mass density is rejected: convert it to a number density first. A mesh with the axis `z` only may carry
+the transverse function as the string attribute `transverseFunction`.
+
+**How the file is used**
+
+- **Interpolation:** linear in z and in r (bilinear) between the points of the file. Inside the first radius of the
+  file the density is the value at that radius.
+- **Outside the file:** the density is zero (`file_outside = zero`, the default), or the edge values are continued
+  (`file_outside = hold`, like the inline tables). The summary says which ends of the file lie inside the run.
+- **Position:** z of the file is z of the simulation (z = 0: start of the run); `file_z` shifts it, e.g.
+  `file_z = -1.5 mm` starts the run 1.5 mm behind the file's origin.
+- **With `density`:** it remains the reference density n0, the unit of the `n_e/n0` output and of λ_p in the
+  summary. It scales the profile only if the file holds a factor. In an `ion` block with an absolute file,
+  `density` is not given (an error if it is).
+- **With the other profile keys:** `z_points`/`z_values` cannot be combined with the file (error). `radial_profile`
+  and its keys multiply a file with n(z), and cannot be combined with a file that holds n(r, z) or carries a
+  transverse function (error). `r_max`
+  still cuts the plasma column, and `density_function(x, y, z, r)` is a further factor, e.g. for a jet that is not
+  axially symmetric about the laser axis.
+- **Start-up checks** (in the run summary, also with `--check`): format, number of points and kind of the values;
+  the z and r range of the file against the run; the peak density and its position. Negative and non-finite
+  values, a non-increasing z, an incomplete grid, a missing geometry or unit, an unknown header key, and a file that lies
+  outside the run
+  are errors. Warnings: the file ends inside the run where the density is above 1 % of its peak (a jump to zero),
+  and gradients with a scale length n_peak/|∇n| below 4 steps `dz` or 4 radial cells, which the loading does not
+  resolve (the plasma is loaded once per step and radial cell).
+- **MPI, restart:** every rank reads the file and loads its block; a restart reads the file again, so it must
+  still be there and unchanged.
+
+Checks (ctest `density_file_<backend>`, `tests/mpi.sh`): a table with the points of `z_points`/`z_values` gives the
+identical run; the same ramp in cm⁻³ over µm agrees to rounding; n(r, z) in both text layouts and as openPMD
+meshes (regular, rectilinear in m⁻³) agrees with the same profile given as `density_function`, and n(z) with a
+transverse function in the file with the inline table times that `density_function`; 1–3 MPI ranks and a
+restart agree with the serial run. Example: [`examples/gas_jet/`](../examples/gas_jet/gas_jet.deck).
 
 ## `ion` (0 … N blocks, requires `plasma`)
 
@@ -384,7 +468,9 @@ Each block represents one ion species of the plasma by macroparticles. It serves
 - **Own profile (`profile = own`):** a dopant that is only in part of the plasma (e.g. a doped section for
   localized ionization injection, a gas jet in front of a cell) gets its own profile. Then `density` is the atom
   density at the reference point, and the profile keys of the `plasma` block are available in the `ion` block:
-  `z_points`/`z_values`, `radial_profile` (with its keys), `r_max` and `density_function(x, y, z, r)`. The ions are
+  `z_points`/`z_values`, `density_file` (with `file_z`, `file_outside`, `file_mesh`, `file_iteration`; with an
+  absolute density in the file, `density` is left out), `radial_profile` (with its keys), `r_max` and
+  `density_function(x, y, z, r)`. The ions are
   loaded wherever this density is positive, also where the plasma has none. With `charge_state` Z0 > 0 the
   code also loads Z0 free electrons per atom at the same place (the species is neutral); `fraction` is not
   used. Example:

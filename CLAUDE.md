@@ -157,4 +157,16 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     on atto in /storage2/pukhov/opmdv/pylib). Not done (option): reconstructed t = const output by copying each
     slice at the level s = c t* + zeta (about L/dz steps of buffering). Waiting: Anton's markdown (one more
     "straightforward mistake"), his deck + LASY file for the field-energy growth with ionized He (flying focus).
+  - **Density profiles from files** (branch `density-file`, 2026-11-21; README "Density profiles from files", ctest
+    density_file_*, part 12 of tests/mpi.sh, examples/gas_jet/): `plasma.density_file` and the same in `ion` blocks
+    with profile = own (src/density_file.*, PlasmaConfig::density). Format spec for all codes: docs/density_file.md
+    (Alexander: "1D, 2D and 3D for the 3D code. The header must define the geometry"): text header
+    `# geometry = z | rz | xz | xyz`, columns layout or grid layout (uniform / list axes), optional
+    `# transverse = "f(r, x, y)"` for geometry z; or an openPMD mesh, regular or rectilinear. GEM-PIC-RZ reads
+    z and rz and rejects xz / xyz (an azimuthal average of 3D files only with his OK). Alexander's decisions: no SourceLAB-specific
+    interface; the unit in the file decides (physical unit = absolute density, none = factor on `density`); text
+    and openPMD; 1D and 2D; strict combinations (no z_points with a file, no radial_profile with n(r, z)); zero
+    outside the file unless file_outside = hold. The profile enters only the host-side loading
+    (Simulation::loadFresh, boundBegin), so engine and MPI need nothing more. The format is meant to be the
+    hydro -> PIC hand-off too; QUARZ and VLPL should take the same format (not done).
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).
