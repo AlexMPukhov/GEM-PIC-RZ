@@ -405,11 +405,7 @@ int main(int argc, char** argv) {
                   f.attrI("Nzeta"));
       std::printf("  lambda0 = %.6g um, n0 = %.6g cm^-3, E0 = %.6g V/m, backend: %s\n", f.attrD("lambda0_m") * 1e6,
                   f.attrD("n0_m3") * 1e-6, f.attrD("E0_V_per_m"), f.attrS("backend").c_str());
-#if H5_VERSION_GE(1, 12, 0)
-      H5Ovisit3(f.id, H5_INDEX_NAME, H5_ITER_NATIVE, listObj, nullptr, H5O_INFO_BASIC);
-#else
-      H5Ovisit(f.id, H5_INDEX_NAME, H5_ITER_NATIVE, listObj, nullptr);
-#endif
+      H5Ovisit3(f.id, H5_INDEX_NAME, H5_ITER_NATIVE, listObj, nullptr, H5O_INFO_BASIC);  // HDF5 >= 1.12
       return 0;
     }
     if (what == "beam") {
