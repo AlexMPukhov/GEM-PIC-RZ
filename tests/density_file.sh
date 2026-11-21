@@ -166,6 +166,20 @@ expect_fail "file outside the run" "outside the run" f1.deck plasma.file_z=1mm
 expect_fail "file_z without a file" "only used with 'density_file'" "$R" plasma.file_z=1mm
 expect_fail "absolute file and ion density" "remove 'density'" i2.deck ion.density=0.002n_c
 echo "  summary, 2 warnings, 12 rejected files and combinations  ok"
+
+# ---- 7. the example (examples/gas_jet): the files are found beside the deck; no warning about the profile
+G="$SRC/examples/gas_jet/gas_jet.deck"
+"$EXE" "$G" --check > ex1.log 2>&1
+grep -q "n(z) on 41 points, absolute density \[cm^-3\]" ex1.log
+grep -q "peak 3e+18 cm^-3" ex1.log
+"$EXE" "$G" plasma.density_file=jet_rz.txt --check > ex2.log 2>&1
+grep -q "n(r, z) on 6 x 41 points, absolute density \[cm^-3\]" ex2.log
+grep -q "peak 4.406e+18 cm^-3 .* r = 25 um" ex2.log
+! grep -q "WARNING.*density file" ex1.log && ! grep -q "WARNING.*density file" ex2.log
+"$EXE" "$G" numerics.backend=$BACKEND grid.z_end=15.27um output.every=0 output.dir=ex > ex3.log
+awk '!/^#/ { for (c = 1; c <= NF; c++) if ($c != $c + 0 || $c == "nan" || $c == "inf") bad = 1; n++ }
+  END { exit !(n > 0 && !bad) }' ex/axis_00003.txt
+echo "  examples/gas_jet: n(z) and n(r, z) sample files accepted without warnings, 3 steps run  ok"
 cd - > /dev/null
 [ -n "$KEEP" ] && echo "$WORK" || rm -rf "$WORK"
 echo "density_file test passed ($BACKEND)"
