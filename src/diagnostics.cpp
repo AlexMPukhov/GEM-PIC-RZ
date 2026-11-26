@@ -98,6 +98,7 @@ void DiagSums::add(const DiagSums& o) {
   W0 += o.W0;
   Fz += o.Fz;
   Urear += o.Urear;
+  Fabs += o.Fabs;
   if (o.Pmax > Pmax) { Pmax = o.Pmax; zPmax = o.zPmax; }
   if (pslices.size() < o.pslices.size()) pslices.resize(o.pslices.size(), 0.0);
   for (size_t j = 0; j < o.pslices.size(); ++j) pslices[j] += o.pslices[j];
@@ -167,6 +168,7 @@ DiagSums Simulation::diagSums(int n0, int n1, const std::vector<Particle>& beam,
       D.Fz += f * zv.len(n);
       if (n == 0) D.Urear = u;
     }
+    D.Fabs = absorbedF;
   }
   if (cfg.output.fel) {
     // bunching at the FEL wavelength
@@ -546,10 +548,11 @@ void Simulation::writeEnergyTable(const DiagSums& D) {
                  "# energy balance of the plane z = s (all modes) [J]: F = int S_z dA dt through the plane (the window);\n"
                  "#   behind = what stays behind the window in this step: field energy of the rear slice x dz, plus\n"
                  "#   kinetic = energy of the streaming particles leaving the rear. F(0) - F(z) = sum of behind up to z\n"
-                 "#   + losses at the radial boundary (absorber) + energy carried along z by trapped particles\n"
-                 "# step  z[mm]  F[J]  behind[J]  kinetic[J]  field_rear_per_length[J/m]\n");
-  std::fprintf(fp, "%6d %10.5f %.10e %.6e %.6e %.6e\n", step_no, s0 * u.k0inv_um() * 1e-3, D.Fz * WJ, left * WJ,
-               exitKinetic * WJ, D.Urear * WJ / L);
+                 "#   + absorbed + energy carried along z by trapped particles. absorbed = cumulative loss of F in the\n"
+                 "#   radial absorber layer since the start of this run (serial and MPI pipeline; 0 with the GPU engine)\n"
+                 "# step  z[mm]  F[J]  behind[J]  kinetic[J]  field_rear_per_length[J/m]  absorbed[J]\n");
+  std::fprintf(fp, "%6d %10.5f %.10e %.6e %.6e %.6e %.6e\n", step_no, s0 * u.k0inv_um() * 1e-3, D.Fz * WJ, left * WJ,
+               exitKinetic * WJ, D.Urear * WJ / L, D.Fabs * WJ);
   std::fclose(fp);
 }
 

@@ -1816,14 +1816,18 @@ void Simulation::absorber(double s) {
         if (d == 1.0) continue;
         const cd inc = (ff ? ffInc(m, true, n, i, s) : cd(0.0)) + incidentF(m, n, i);
         cd& R = fnew.Rr[fnew.f(m, n, i)];
+        const double b = std::norm(R);
         R = inc + d * (R - inc);
+        absorbedF += 0.5 * PI * (m == 0 ? 1.0 : 2.0) * g.Af[i] * (b - std::norm(R)) * zv.len(n);
       }
       for (int i = 0; i < g.N; ++i) {
         const double d = damp(g.c[i]);
         if (d == 1.0) continue;
         const cd inc = (ff ? ffInc(m, false, n, i, s) : cd(0.0)) + incidentC(m, n, i);
         cd& R = fnew.Rp[fnew.c(m, n, i)];
+        const double b = std::norm(R);
         R = inc + d * (R - inc);
+        absorbedF += 0.5 * PI * (m == 0 ? 1.0 : 2.0) * g.Ac[i] * (b - std::norm(R)) * zv.len(n);
       }
     }
 }

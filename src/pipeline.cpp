@@ -334,7 +334,7 @@ class PipelineRun {
     for (const auto& kv : D.moments) { B.put(kv.first); B.put(kv.second); }
     B.putVec(D.freed);
     B.put(D.Wrad); B.put(D.W0); B.put(D.Pmax); B.put(D.zPmax);
-    B.put(D.Fz); B.put(D.Urear);
+    B.put(D.Fz); B.put(D.Urear); B.put(D.Fabs);
     putSparse(B, D.pslices);
     putSparse(B, D.rslices);
     putSparse(B, D.hslices);
@@ -353,7 +353,7 @@ class PipelineRun {
     }
     o.freed = B.getVec<double>();
     o.Wrad = B.get<double>(); o.W0 = B.get<double>(); o.Pmax = B.get<double>(); o.zPmax = B.get<double>();
-    o.Fz = B.get<double>(); o.Urear = B.get<double>();
+    o.Fz = B.get<double>(); o.Urear = B.get<double>(); o.Fabs = B.get<double>();
     D.add(o);
     addSparse(B, D.pslices);
     addSparse(B, D.rslices);
@@ -472,14 +472,18 @@ void PipelineRun::absorbSlice(Fields& F, int n, double s) const {
       if (d == 1.0) continue;
       const cd inc = (ff ? S.ffInc(m, true, n, i, s) : cd(0.0)) + S.incidentF(m, n, i);
       cd& R = F.Rr[F.f(m, n, i)];
+      const double b = std::norm(R);
       R = inc + d * (R - inc);
+      S.absorbedF += 0.5 * PI * (m == 0 ? 1.0 : 2.0) * S.g.Af[i] * (b - std::norm(R)) * S.zv.len(n);
     }
     for (int i = 0; i < S.g.N; ++i) {
       const double d = damp(S.g.c[i]);
       if (d == 1.0) continue;
       const cd inc = (ff ? S.ffInc(m, false, n, i, s) : cd(0.0)) + S.incidentC(m, n, i);
       cd& R = F.Rp[F.c(m, n, i)];
+      const double b = std::norm(R);
       R = inc + d * (R - inc);
+      S.absorbedF += 0.5 * PI * (m == 0 ? 1.0 : 2.0) * S.g.Ac[i] * (b - std::norm(R)) * S.zv.len(n);
     }
   }
 }
@@ -1672,8 +1676,10 @@ void PipelineRun::dueDiag(int j) {
   dj.freed = S.freedCharge;
   if (r == 0) dj.exitStates = S.exitStates;
   if (r == 0) dj.exitKinetic = S.exitKinetic;
-  dj.f = std::async(std::launch::async, [this]() {
+  const double absF = S.absorbedF;  // (the next step adds to it while the job runs)
+  dj.f = std::async(std::launch::async, [this, absF]() {
     DiagSums D = S.diagSums(a, b, dj.beam, dj.freed);
+    D.Fabs = absF;
     const bool ok = finiteOwn();
     return std::make_pair(std::move(D), ok);
   });
