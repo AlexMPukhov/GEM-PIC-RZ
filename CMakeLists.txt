@@ -193,6 +193,9 @@ if(TARGET gempic_rz_gpuemu)
             -DBACKEND=openmp -DSRC=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/tests/regression.cmake)
 endif()
 
+# launch guard: more launcher tasks than MPI ranks (srun without PMI support) stops the run at once
+add_test(NAME launch_guard COMMAND sh ${CMAKE_SOURCE_DIR}/tests/launch_guard.sh $<TARGET_FILE:gempic_rz>)
+
 # MPI pipeline (2-4 ranks; MPIEXEC_PREFLAGS e.g. for a batch system)
 if(GEMPIC_HAVE_MPI AND GEMPIC_HAVE_HDF5)
   add_test(NAME mpi_pipeline

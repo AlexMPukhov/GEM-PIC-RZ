@@ -3,7 +3,9 @@
 // ============================================================================
 #include "comm.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <initializer_list>
 #include <list>
 
 #if defined(GEMPIC_HAVE_MPI)
@@ -102,6 +104,28 @@ void waitAll() {}
 void abort(int code) { std::exit(code); }
 
 #endif
+
+namespace {
+int envInt(const char* name) {
+  const char* v = std::getenv(name);
+  if (!v || !*v) return -1;
+  char* end = nullptr;
+  const long x = std::strtol(v, &end, 10);
+  return (*end == 0 && x >= 0 && x < (1L << 30)) ? int(x) : -1;
+}
+}  // namespace
+
+int launcherTasks() {
+  for (const char* n : {"OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "SLURM_STEP_NUM_TASKS"})
+    if (envInt(n) > 0) return envInt(n);
+  return 1;
+}
+int launcherRank() {
+  if (envInt("OMPI_COMM_WORLD_SIZE") > 0) return std::max(0, envInt("OMPI_COMM_WORLD_RANK"));
+  if (envInt("PMI_SIZE") > 0) return std::max(0, envInt("PMI_RANK"));
+  if (envInt("SLURM_STEP_NUM_TASKS") > 0) return std::max(0, envInt("SLURM_PROCID"));
+  return 0;
+}
 
 }  // namespace comm
 }  // namespace gem
