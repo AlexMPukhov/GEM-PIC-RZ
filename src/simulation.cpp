@@ -1530,6 +1530,9 @@ void Simulation::step() {
   for (auto& v : exitStates) std::fill(v.begin(), v.end(), 0.0);
   for (const auto& p : stream)
     if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) exitStates[ionIndex(p.sp)][p.Zi] += p.w;
+  exitKinetic = 0.0;
+  for (const auto& p : stream)
+    if (p.status == 0) exitKinetic += kineticEnergy(p);
   prepareIncident(s1, 0, Nz);
   absorber(s1);
   std::swap(fold, fnew);

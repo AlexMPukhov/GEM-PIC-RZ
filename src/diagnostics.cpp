@@ -96,6 +96,8 @@ void DiagSums::add(const DiagSums& o) {
   nimax = std::max(nimax, o.nimax);
   Wrad += o.Wrad;
   W0 += o.W0;
+  Fz += o.Fz;
+  Urear += o.Urear;
   if (o.Pmax > Pmax) { Pmax = o.Pmax; zPmax = o.zPmax; }
   if (pslices.size() < o.pslices.size()) pslices.resize(o.pslices.size(), 0.0);
   for (size_t j = 0; j < o.pslices.size(); ++j) pslices[j] += o.pslices[j];
@@ -133,6 +135,39 @@ DiagSums Simulation::diagSums(int n0, int n1, const std::vector<Particle>& beam,
     D.nimax = std::max(D.nimax, (c0s.rhoi[c0s.d(k, 0)] + c0b.rhoi[c0b.d(k, 0)]) / n_ref);
   for (const auto& p : beam) D.moments[p.sp].add(p);
   D.freed = freedCharge;
+  // energy balance, all modes: S_z = E_r B_phi - E_phi B_r, averaged over phi: fac (|R|^2 - |L|^2) / 4 for the face
+  // (R_r, L_r) and the centre (R_p, L_p) pairs; u = fac ((|R|^2 + |L|^2) / 2 + |E_z|^2 + |B_z|^2) / 2 (fac = 1 for
+  // m = 0, 2 for m >= 1); area weights Af, Ac = r dr (times 2 pi)
+  {
+    const int N = g.N;
+    auto slice = [&](int n, double& flux, double& dens) {
+      flux = dens = 0.0;
+      for (int m = 0; m <= M; ++m) {
+        const double fac = (m == 0) ? 1.0 : 2.0;
+        double e = 0.0, s = 0.0;
+        for (int i = 1; i <= N; ++i) {
+          const size_t j = fold.f(m, n, i);
+          const double R = std::norm(fold.Rr[j]), L = std::norm(fold.Lr[j]);
+          e += g.Af[i] * (0.5 * (R + L) + std::norm(fold.Bz[j]));
+          s += g.Af[i] * (R - L);
+        }
+        for (int i = 0; i < N; ++i) {
+          const size_t j = fold.c(m, n, i);
+          const double R = std::norm(fold.Rp[j]), L = std::norm(fold.Lp[j]);
+          e += g.Ac[i] * (0.5 * (R + L) + std::norm(fold.Ez[j]));
+          s += g.Ac[i] * (R - L);
+        }
+        flux += 0.5 * PI * fac * s;  // 2 pi fac s / 4
+        dens += PI * fac * e;        // 2 pi fac e / 2
+      }
+    };
+    for (int n = n0; n < std::min(n1, Nz); ++n) {
+      double f, u;
+      slice(n, f, u);
+      D.Fz += f * zv.len(n);
+      if (n == 0) D.Urear = u;
+    }
+  }
   if (cfg.output.fel) {
     // bunching at the FEL wavelength
     const double k = 2.0 * PI / cfg.output.fel_wavelength;
@@ -262,6 +297,7 @@ void Simulation::report(const DiagSums& D, bool files) {
   std::fflush(stdout);
   writeBunchTable(D);
   writeIonizationTable(D);
+  writeEnergyTable(D);
   if (cfg.output.fel) writeFelTable(D);
   if (cfg.output.fel && cfg.output.fel_harmonics > 1) writeFelHarmonics(D);
   if (externalOutput) return;  // MPI pipeline: rank 0 streams the blocks of the ranks itself
@@ -279,7 +315,7 @@ void Simulation::report(const DiagSums& D, bool files) {
 // interrupted run: keep the comments and the lines of steps <= N.
 void Simulation::trimTables() {
   if (comm::rank() != 0) return;  // only rank 0 writes the output
-  for (const char* t : {"/bunches.txt", "/ionization.txt", "/fel.txt", "/fel_power.txt", "/fel_harmonics.txt"}) {
+  for (const char* t : {"/bunches.txt", "/ionization.txt", "/energy.txt", "/fel.txt", "/fel_power.txt", "/fel_harmonics.txt"}) {
     const std::string name = cfg.output.dir + t;
     FILE* fp = std::fopen(name.c_str(), "r");
     if (!fp) continue;
@@ -483,6 +519,37 @@ void Simulation::writeIonizationTable(const DiagSums& D) {
     for (size_t z = 0; z < v.size(); ++z) std::fprintf(fp, " %9.6f", tot > 0 ? v[z] / tot : 0.0);
     std::fprintf(fp, "\n");
   }
+  std::fclose(fp);
+}
+
+// energy.txt: energy balance of the plane z = s. Energy conservation integrated over all times t and the cross-section
+// at a fixed z gives dF/dz = -(u + k)_after - radial losses: F = int S_z dA dt is the energy that crosses the plane,
+// (u + k)_after the field and kinetic energy per unit length that stay behind the window. A level holds the time
+// history of its plane (slice zeta crossed it at t = (s - zeta)/c), so F = sum_n S_z h_n / c; what stays behind is
+// the field energy of the rear slice times the step and the kinetic energy of the streaming particles leaving the
+// rear (a macroparticle carries the plasma of a slab of thickness Delta). Then F(0) - F(s) = sum of `left` up to s
+// plus the losses at the radial boundary (absorber) and the energy carried by particles moving along z (trapped).
+void Simulation::writeEnergyTable(const DiagSums& D) {
+  const std::string name = cfg.output.dir + "/energy.txt";
+  const bool fresh = (step_no == 0) || !std::filesystem::exists(name);
+  FILE* fp = std::fopen(name.c_str(), fresh ? "w" : "a");
+  if (!fp) return;
+  const Units& u = cfg.units;
+  const double L = u.k0inv_um() * 1e-6, E0 = MC2_MEV * 1e6 / L, eps0 = 8.8541878128e-12;
+  const double WJ = eps0 * E0 * E0 * L * L * L;  // code energy [J] (= m c^2 n_c k0^-3)
+  double dz = 0.0;  // step that made this level
+  if (step_no > 0) dz = (energyPrevZ >= 0.0) ? s0 - energyPrevZ : cfg.grid.stepAt(s0);
+  energyPrevZ = s0;
+  const double left = D.Urear * dz + exitKinetic;
+  if (fresh)
+    std::fprintf(fp,
+                 "# energy balance of the plane z = s (all modes) [J]: F = int S_z dA dt through the plane (the window);\n"
+                 "#   behind = what stays behind the window in this step: field energy of the rear slice x dz, plus\n"
+                 "#   kinetic = energy of the streaming particles leaving the rear. F(0) - F(z) = sum of behind up to z\n"
+                 "#   + losses at the radial boundary (absorber) + energy carried along z by trapped particles\n"
+                 "# step  z[mm]  F[J]  behind[J]  kinetic[J]  field_rear_per_length[J/m]\n");
+  std::fprintf(fp, "%6d %10.5f %.10e %.6e %.6e %.6e\n", step_no, s0 * u.k0inv_um() * 1e-3, D.Fz * WJ, left * WJ,
+               exitKinetic * WJ, D.Urear * WJ / L);
   std::fclose(fp);
 }
 

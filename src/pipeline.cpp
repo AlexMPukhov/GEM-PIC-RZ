@@ -208,6 +208,7 @@ class PipelineRun {
     std::vector<Particle> beam;
     std::vector<double> freed;
     std::vector<std::vector<double>> exitStates;
+    double exitKinetic = 0.0;
     std::future<std::pair<DiagSums, bool>> f;
     DiagSums D;
   } dj;
@@ -333,6 +334,7 @@ class PipelineRun {
     for (const auto& kv : D.moments) { B.put(kv.first); B.put(kv.second); }
     B.putVec(D.freed);
     B.put(D.Wrad); B.put(D.W0); B.put(D.Pmax); B.put(D.zPmax);
+    B.put(D.Fz); B.put(D.Urear);
     putSparse(B, D.pslices);
     putSparse(B, D.rslices);
     putSparse(B, D.hslices);
@@ -351,6 +353,7 @@ class PipelineRun {
     }
     o.freed = B.getVec<double>();
     o.Wrad = B.get<double>(); o.W0 = B.get<double>(); o.Pmax = B.get<double>(); o.zPmax = B.get<double>();
+    o.Fz = B.get<double>(); o.Urear = B.get<double>();
     D.add(o);
     addSparse(B, D.pslices);
     addSparse(B, D.rslices);
@@ -989,9 +992,13 @@ void PipelineRun::step(Buffer& F) {
   if (r == 0 && !eng) absorb(0, s1);
   if (!eng) prof.stop(Prof::MARCH);
   for (auto& v : S.exitStates) std::fill(v.begin(), v.end(), 0.0);
+  S.exitKinetic = 0.0;
   if (r == 0)
     for (const auto& p : S.stream)
       if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION) S.exitStates[ionIndex(p.sp)][p.Zi] += p.w;
+  if (r == 0)
+    for (const auto& p : S.stream)
+      if (p.status == 0) S.exitKinetic += kineticEnergy(p);
 
   // ---- wall-time limit: decided by the front rank, passed down the pipeline
   ++stepsDone;
@@ -1664,6 +1671,7 @@ void PipelineRun::dueDiag(int j) {
   dj.beam = S.beam;
   dj.freed = S.freedCharge;
   if (r == 0) dj.exitStates = S.exitStates;
+  if (r == 0) dj.exitKinetic = S.exitKinetic;
   dj.f = std::async(std::launch::async, [this]() {
     DiagSums D = S.diagSums(a, b, dj.beam, dj.freed);
     const bool ok = finiteOwn();
@@ -1691,10 +1699,12 @@ void PipelineRun::finishDiag() {
     std::swap(S.step_no, dj.stepNo);
     std::swap(S.s0, dj.s0);
     S.exitStates.swap(dj.exitStates);
+    std::swap(S.exitKinetic, dj.exitKinetic);
     reportStep(dj.step, &dj);
     std::swap(S.step_no, dj.stepNo);
     std::swap(S.s0, dj.s0);
     S.exitStates.swap(dj.exitStates);
+    std::swap(S.exitKinetic, dj.exitKinetic);
   }
   dj.on = false;
   dj.ready = false;

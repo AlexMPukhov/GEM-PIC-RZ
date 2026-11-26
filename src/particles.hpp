@@ -94,5 +94,12 @@ GEM_HD inline void vay(double& ux, double& uy, double& uz, const EB& f, double q
 }
 
 GEM_HD inline double gammaOf(const Particle& p) { return sqrt(1.0 + p.ux * p.ux + p.uy * p.uy + p.uz * p.uz); }
+// kinetic energy of a macroparticle [m_e c^2 n_c k0^-3 = the code energy unit]: (number x mass) (gamma - 1);
+// |q / qm| = number x mass for electrons (qm = -1) and ions (q = Zi w, qm = Zi / M); neutral atoms do not move
+GEM_HD inline double kineticEnergy(const Particle& p) {
+  if (p.q == 0.0 || p.qm == 0.0) return 0.0;
+  const double u2 = p.ux * p.ux + p.uy * p.uy + p.uz * p.uz;
+  return fabs(p.q / p.qm) * u2 / (1.0 + sqrt(1.0 + u2));
+}
 
 }  // namespace gem

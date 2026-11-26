@@ -57,6 +57,9 @@ struct DiagSums {
   // FEL diagnostics (output.fel): field energy of the modes m >= 1 (radiation of a centred beam)
   // and m = 0, largest power of the modes m >= 1 through a slice, and its zeta
   double Wrad = 0, W0 = 0, Pmax = 0, zPmax = 0;
+  // energy balance (energy.txt), all modes: flux through the plane z = s, int S_z dA dt (sum over the slices of
+  // S_z h_n, c = 1), and the field energy per unit length at the rear slice (n = 0), int u dA
+  double Fz = 0, Urear = 0;
   // bunching per bunch in slices of output.fel_slice: {Q, sum |q| cos, sum |q| sin} per slice
   std::map<int, std::vector<double>> slices;
   // power of the modes m >= 1 in slices of output.fel_slice: {sum P h, sum h} per slice
@@ -120,6 +123,9 @@ class Simulation {
   std::vector<AdkRates> adk;                 // per ion block (empty levels without ionization)
   std::vector<Particle> born;                // electrons freed in the current slice
   std::vector<std::vector<double>> exitStates;  // per ion block: atoms per charge state leaving the window
+  double exitKinetic = 0.0;  // kinetic energy of the streaming particles leaving the rear of the window in the step
+                             // (code units; a macroparticle carries the plasma of a slab of thickness Delta)
+  double energyPrevZ = -1.0;  // level of the previous line of energy.txt (-1: none in this process)
   std::vector<double> freedCharge;           // per ion block: charge freed in the last step [code]
   double sliceFieldBound = 0.0;              // upper bound of |E| on the two slices of the current push
   double s0 = 0.0;
@@ -307,6 +313,7 @@ class Simulation {
   void writeFelTable(const DiagSums& D);
   void writeFelHarmonics(const DiagSums& D);
   void writeIonizationTable(const DiagSums& D);
+  void writeEnergyTable(const DiagSums& D);
 };
 
 }  // namespace gem

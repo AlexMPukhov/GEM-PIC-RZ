@@ -1682,7 +1682,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   E.lcnt.clear(dev::L_COUNT);
   E.bound.clear(1);
   E.freed.clear(std::max<size_t>(1, ionsCfg.size()));
-  E.exitSt.clear(std::max<size_t>(1, ionsCfg.size() * E.zStride));
+  E.exitSt.clear(ionsCfg.size() * E.zStride + 1);  // the last element: kinetic energy leaving the window
   E.hcnt[dev::C_BEAM] = E.nBeam;
   E.pushCounters();
   // particles that continue streaming in the next step (after a restart)
@@ -1908,10 +1908,12 @@ void Engine::step() {
   double* exitSt = E.exitSt.data();
   const int zs = E.zStride;
   par::zero(exitSt, E.exitSt.capacity());
+  const size_t kExit = sim.exitStates.size() * size_t(zs);  // kinetic energy of the particles leaving the window
   par::forDyn(&cnt[C_STREAM], nullptr, streamCapI, GEM_LAMBDA(long i) {
     const Particle& p = stream[i];
     if (p.status == 0 && isIon(p.sp) && p.sp != SPECIES_TRAPPED_ION)
       par::atomicAddD(&exitSt[size_t(ionIndex(p.sp)) * zs + p.Zi], p.w);
+    if (p.status == 0) par::atomicAddD(&exitSt[kExit], kineticEnergy(p));
   });
   if (sim.cfg.grid.r_absorber < sim.g.rho[N]) {
     if (sim.hasIncident) {  // file lasers fed through the layer: incident field of the level s1 (host)
@@ -2897,6 +2899,7 @@ void Engine::download() {
   par::download(ex.data(), E.exitSt.data(), ex.size());
   for (size_t s = 0; s < sim.exitStates.size(); ++s)
     for (size_t z = 0; z < sim.exitStates[s].size(); ++z) sim.exitStates[s][z] = ex[s * E.zStride + z];
+  sim.exitKinetic = ex[sim.exitStates.size() * size_t(E.zStride)];
   if (!sim.freedCharge.empty()) par::download(sim.freedCharge.data(), E.freed.data(), sim.freedCharge.size());
   unsigned long long lc[dev::L_COUNT];
   par::download(lc, E.lcnt.data(), dev::L_COUNT);
