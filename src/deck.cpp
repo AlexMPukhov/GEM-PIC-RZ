@@ -1,13 +1,4 @@
-    ++k;
-    // an optional name after the block type:  bunch witness {
-    if (k < T.size() && (T[k].type == Tok::Word || T[k].type == Tok::Str)) {
-      b.tag = T[k].text;
-      if (b.tag.empty() || b.tag.find_first_of(" 	.[]=") != std::string::npos)
-        throw err(T[k].line, "the name '" + b.tag + "' of block '" + b.name + "' must not be empty or contain blanks, '.', '[', ']' or '='");
-      ++k;
-    }
-    skipEnd();
-    if (k >= T.size() || T[k].type != Tok::LBrace)// ============================================================================
+// ============================================================================
 //  deck.cpp -- tokenizer and parser for the input deck (see deck.hpp)
 // ============================================================================
 #include "deck.hpp"
@@ -118,6 +109,14 @@ Deck Deck::parseString(const std::string& text, const std::string& source) {
     b.name = lower(T[k].text);
     b.line = T[k].line;
     ++k;
+    // an optional name after the block type:  bunch witness {
+    if (k < T.size() && (T[k].type == Tok::Word || T[k].type == Tok::Str)) {
+      b.tag = T[k].text;
+      if (b.tag.empty() || b.tag.find_first_of(" \t.[]=") != std::string::npos)
+        throw err(T[k].line, "the name '" + b.tag + "' of block '" + b.name +
+                                 "' must not be empty or contain blanks, '.', '[', ']' or '='");
+      ++k;
+    }
     skipEnd();
     if (k >= T.size() || T[k].type != Tok::LBrace)
       throw err(b.line, "expected '{' after block name '" + b.name + "'");
