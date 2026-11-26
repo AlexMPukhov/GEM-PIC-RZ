@@ -120,7 +120,7 @@ struct AdkV {
   const LevelV* lev;  // index k (charge state before the ionization)
 };
 struct IonV {
-  int mobile, ionization, Zmax;
+  int mobile, ionization, Zmax, split;
   double mass;
 };
 struct TriV {
@@ -417,6 +417,7 @@ GEM_HD inline void ionize(const Params& P, Particle& p, double E1, double E0, do
   const AdkV& R = P.adk[s];
   if (E1 < R.Emin_all && E0 < R.Emin_all) return;
   const uint64_t base = ionKeyParticle(Z.key, p.id);
+  const int K = P.ions[s].split;
   double tleft = dt;
   const int Z0 = p.Zi;
   unsigned draw = 0;
@@ -429,10 +430,17 @@ GEM_HD inline void ionize(const Params& P, Particle& p, double E1, double E0, do
       w = pg * w + pe1 * 0.5 * (adkRate(P.bound.adk[1], 0, E1) + adkRate(P.bound.adk[1], 0, E0)) +
           pe2 * 0.5 * (adkRate(P.bound.adk[2], 0, E1) + adkRate(P.bound.adk[2], 0, E0));
     if (!(w > 0.0)) break;
-    const double tw = -log(1.0 - uniform01(base + draw++)) / w;
-    if (tw > tleft) break;
-    tleft -= tw;
-    ++p.Zi;
+    if (K > 1) {  // quiet ionization (Simulation::ionize)
+      if (w * tleft < p.tau) { p.tau -= float(w * tleft); break; }
+      tleft -= p.tau / w;
+      ++p.Zi;
+      p.tau = float(quietDepth(p.id, p.sib, p.Zi, K));
+    } else {
+      const double tw = -log(1.0 - uniform01(base + draw++)) / w;
+      if (tw > tleft) break;
+      tleft -= tw;
+      ++p.Zi;
+    }
     Particle e = p;
     e.q = -p.w;
     e.qm = -1.0;
@@ -1545,7 +1553,7 @@ Engine::Engine(Simulation& s) : sim(s), st((par::initDevice(), new EngineState))
   std::vector<size_t> levOff;
   for (size_t s = 0; s < ionsCfg.size(); ++s) {
     const auto& I = ionsCfg[s];
-    iv.push_back({I.mobile ? 1 : 0, I.ionization ? 1 : 0, I.Zmax, I.mass});
+    iv.push_back({I.mobile ? 1 : 0, I.ionization ? 1 : 0, I.Zmax, I.split, I.mass});
     levOff.push_back(lv.size());
     const AdkRates& R = sim.adk[s];
     for (const auto& L : R.lev) lv.push_back({L.logpre, L.power, L.expo, L.Epeak, L.Emin});

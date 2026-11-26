@@ -1039,8 +1039,11 @@ void readIon(const Block& b, const Deck& d, const Units& u, const GridConfig& g,
     if (I.Zmax < I.Z || I.Zmax > I.Znuc)
       r.failKey("max_charge_state", "must lie between charge_state and " + std::to_string(I.Znuc));
     if (I.Zmax == I.Z) warn.push_back(b.label() + ": max_charge_state = charge_state, nothing to ionize");
+    I.split = int(r.integer("split", 1));
+    if (I.split < 1 || I.split > 256) r.failKey("split", "must lie between 1 and 256");
   } else {
     if (r.has("max_charge_state")) r.failKey("max_charge_state", "is only used with ionization = adk");
+    if (r.has("split")) r.failKey("split", "is only used with ionization = adk");
     I.Zmax = I.Z;
   }
   I.mobile = r.flag("mobile", true);
@@ -2187,6 +2190,7 @@ std::string Config::summary() const {
           lv += buf;
         }
         line("        ADK field ionization up to Z = %d, ionization energies [eV] %s", I.Zmax, lv.c_str());
+        if (I.split > 1) line("        quiet ionization: %d ion macroparticles per slot, stratified thresholds", I.split);
       }
     }
     if (plasma.free_electrons && fsum < 1.0 - 1e-9)

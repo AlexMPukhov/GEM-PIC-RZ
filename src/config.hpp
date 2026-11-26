@@ -230,6 +230,7 @@ struct IonConfig {
   bool mobile = true;          // pushed by the fields (false: fixed, e.g. heavy dopant)
   bool ionization = false;     // ADK field ionization of the levels Z ... Zmax-1
   int Zmax = 1;                // highest charge state reachable by ionization
+  int split = 1;               // ion macroparticles per loading slot (> 1: quiet ionization, rng.hpp quietDepth)
   std::vector<double> ip_eV;   // ionization energies, index = charge state k (k -> k+1)
   // own profile (deck: profile = own): atom density prof.density(x, y, z) instead of
   // atoms x the plasma profile; loaded with Z electrons per atom (neutral)

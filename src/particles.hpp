@@ -43,6 +43,8 @@ struct Particle {
   double w;           // ions: number of atoms (in units of the code charge), q = Zi * w
   int Zi;             // ions: charge state
   int sub;            // MPI pipeline: next sub-step of a beam push continued on the next rank
+  float tau;          // ions with split > 1: optical depth left to the next ionization (rng.hpp quietDepth)
+  int sib;            // ions with split > 1: index of the sibling in its loading slot
   unsigned long long id;  // parallel engine: key of the random numbers (ionization)
 };
 

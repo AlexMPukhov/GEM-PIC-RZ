@@ -1149,11 +1149,24 @@ void Simulation::loadFresh() {
             stream.push_back(e);
           }
           ion.Zi = I.Z;
-          ion.q = I.Z * ion.w;
           ion.qm = I.qm();
           ion.sp = SPECIES_ION_BASE - int(s);
           ion.id = idBase + stream.size();
-          stream.push_back(ion);
+          if (I.split <= 1) {
+            ion.q = I.Z * ion.w;
+            stream.push_back(ion);
+          } else {  // quiet ionization: K siblings with the key of the slot, spread over the azimuthal gap
+            const int K = I.split;
+            ion.w /= K;
+            ion.q = I.Z * ion.w;
+            for (int j = 0; j < K; ++j) {
+              const double phj = ph + 2.0 * PI * j / (double(K) * nph);
+              ion.x = r * std::cos(phj); ion.y = r * std::sin(phj);
+              ion.sib = j;
+              ion.tau = float(quietDepth(ion.id, j, ion.Zi, K));
+              stream.push_back(ion);
+            }
+          }
         }
       }
     }
@@ -1321,6 +1334,7 @@ void Simulation::ionize(Particle& p, double E1, double E0, double dt, std::vecto
   const AdkRates& R = adk[s];
   if (E1 < R.minField() && E0 < R.minField()) return;
   const uint64_t base = ionKeyParticle(ionKey, p.id);  // counter-based (rng.hpp)
+  const int K = cfg.ions[s].split;
   unsigned draw = 0;
   double tleft = dt;
   const int Z0 = p.Zi;
@@ -1335,10 +1349,17 @@ void Simulation::ionize(Particle& p, double E1, double E0, double dt, std::vecto
       w = pg * w + pe1 * 0.5 * (bound.rateLevel(1, E1) + bound.rateLevel(1, E0)) +
           pe2 * 0.5 * (bound.rateLevel(2, E1) + bound.rateLevel(2, E0));
     if (!(w > 0.0)) break;
-    const double tw = -std::log(1.0 - uniform01(base + draw++)) / w;
-    if (tw > tleft) break;
-    tleft -= tw;
-    ++p.Zi;
+    if (K > 1) {  // quiet ionization: the optical depth left to the event (rng.hpp quietDepth)
+      if (w * tleft < p.tau) { p.tau -= float(w * tleft); break; }
+      tleft -= p.tau / w;
+      ++p.Zi;
+      p.tau = float(quietDepth(p.id, p.sib, p.Zi, K));
+    } else {
+      const double tw = -std::log(1.0 - uniform01(base + draw++)) / w;
+      if (tw > tleft) break;
+      tleft -= tw;
+      ++p.Zi;
+    }
     Particle e = p;
     e.q = -p.w;
     e.qm = -1.0;
