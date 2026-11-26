@@ -117,15 +117,13 @@ int main() {
     const std::string bunchKeys = "charge = 1 nC; energy = 1 GeV; sigma_x = 5 um; sigma_z = 10 um; zeta_center = 20 um; macroparticles = 100";
     Deck d = Deck::parseString(std::string(BASE) + lasers + "bunch Driver { " + bunchKeys + " }\n" +
                                    "BUNCH witness { species = positron; " + bunchKeys + " }\n" +
-                                   "ion Dopant { element = N; charge_state = 5; density = 1e17 cm^-3 }
-plasma { density = 1e18 cm^-3 }", "named");
+                                   "ion Dopant { element = N; charge_state = 5; density = 1e17 cm^-3 } plasma { density = 1e18 cm^-3 }", "named");
     Deck o = Deck::parseString(std::string(BASE) +
                                    "laser { a0 = 2; waist = 8 um; tau_fwhm = 30 fs; zeta_center = 30 um }\n"
                                    "laser { a0 = 0.5; waist = 5 um; tau_fwhm = 20 fs; zeta_center = 20 um }\n"
                                    "bunch { name = Driver; " + bunchKeys + " }\n" +
                                    "bunch { name = witness; species = positron; " + bunchKeys + " }\n" +
-                                   "ion { name = Dopant; element = N; charge_state = 5; density = 1e17 cm^-3 }
-plasma { density = 1e18 cm^-3 }", "old");
+                                   "ion { name = Dopant; element = N; charge_state = 5; density = 1e17 cm^-3 } plasma { density = 1e18 cm^-3 }", "old");
     CHECK(d.blocks[1].name == "laser" && d.blocks[1].tag == "Drive");   // the type in lower case, the name as written
     CHECK(d.blocks[4].name == "bunch" && d.blocks[4].tag == "witness");
     CHECK(d.blocks[1].label() == "laser Drive" && d.blocks[4].label() == "bunch witness" && d.blocks[0].label() == "grid");
