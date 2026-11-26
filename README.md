@@ -129,6 +129,9 @@ numerics { ... }    algorithm parameters               (optional)
   [Functions and expressions](docs/input_deck.md#functions-and-expressions).
 - **Profiles from files:** the plasma or gas density n(z) or n(r, z) can be read from a text table or an openPMD
   mesh (`density_file`, see [Density profiles from files](#density-profiles-from-files-gas-jets-hydro-codes)).
+- **Named blocks:** a name may follow the block type, `bunch witness { ... }`, `laser drive { ... }`; it addresses the
+  block on the command line (`"bunch witness.charge=20 pC"`) and is the species name of a `bunch` or `ion`. This is
+  the common input form of the VLPL family of codes (VLPL, GEM-PIC-RZ, QUARZ).
 - **Reference:** all keys, units and defaults are listed in [`docs/input_deck.md`](docs/input_deck.md).
 
 | example | shows |

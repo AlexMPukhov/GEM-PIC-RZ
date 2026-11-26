@@ -1,4 +1,13 @@
-// ============================================================================
+    ++k;
+    // an optional name after the block type:  bunch witness {
+    if (k < T.size() && (T[k].type == Tok::Word || T[k].type == Tok::Str)) {
+      b.tag = T[k].text;
+      if (b.tag.empty() || b.tag.find_first_of(" 	.[]=") != std::string::npos)
+        throw err(T[k].line, "the name '" + b.tag + "' of block '" + b.name + "' must not be empty or contain blanks, '.', '[', ']' or '='");
+      ++k;
+    }
+    skipEnd();
+    if (k >= T.size() || T[k].type != Tok::LBrace)// ============================================================================
 //  deck.cpp -- tokenizer and parser for the input deck (see deck.hpp)
 // ============================================================================
 #include "deck.hpp"
@@ -78,6 +87,7 @@ Entry* Block::find(const std::string& key) {
   return nullptr;
 }
 std::string Block::label() const {
+  if (!tag.empty()) return name + " " + tag;
   return count > 1 ? name + "[" + std::to_string(index) + "]" : name;
 }
 
@@ -144,6 +154,10 @@ Deck Deck::parseString(const std::string& text, const std::string& source) {
       b.entries.push_back(std::move(e));
     }
     if (!closed) throw err(b.line, "block '" + b.name + "' is not closed with '}'");
+    if (!b.tag.empty())
+      for (const auto& o : d.blocks)
+        if (o.name == b.name && o.tag == b.tag)
+          throw err(b.line, "block '" + b.name + " " + b.tag + "' given twice (first in line " + std::to_string(o.line) + ")");
     d.blocks.push_back(std::move(b));
   }
   d.finalize();
@@ -196,8 +210,20 @@ void Deck::applyOverride(const std::string& spec) {
   const auto eq = spec.find('=');
   const auto dot = spec.find('.');
   if (eq == std::string::npos || dot == std::string::npos || dot > eq)
-    throw DeckError("override '" + spec + "' must have the form block.key=value or block[i].key=value");
-  std::string bname = lower(spec.substr(0, dot));
+    throw DeckError("override '" + spec + "' must have the form block.key=value, block[i].key=value or \"block name.key=value\"");
+  std::string bname = spec.substr(0, dot), tag;
+  {
+    // "bunch witness.charge=20pC": the block by the name after its type or by its key `name`
+    const auto a = bname.find_first_not_of(" 	");
+    const auto z = bname.find_last_not_of(" 	");
+    bname = a == std::string::npos ? "" : bname.substr(a, z - a + 1);
+    const auto sp = bname.find_first_of(" 	");
+    if (sp != std::string::npos) {
+      tag = bname.substr(bname.find_first_not_of(" 	", sp));
+      bname = bname.substr(0, sp);
+    }
+    bname = lower(bname);
+  }
   const std::string key = lower(spec.substr(dot + 1, eq - dot - 1));
   const std::string value = spec.substr(eq + 1);
   int idx = 0;
@@ -209,8 +235,26 @@ void Deck::applyOverride(const std::string& spec) {
     bname = bname.substr(0, br);
   }
   Block* target = nullptr;
-  for (auto& b : blocks)
-    if (b.name == bname && b.index == idx) target = &b;
+  if (!tag.empty()) {
+    if (br != std::string::npos) throw DeckError("override '" + spec + "': give the index or the name of the block, not both");
+    int found = 0;
+    for (auto& b : blocks) {
+      if (b.name != bname) continue;
+      const Entry* ne = b.find("name");
+      const bool byKey = b.tag.empty() && ne && ne->tokens.size() == 1 && ne->tokens[0] == tag;
+      if (b.tag == tag || byKey) { target = &b; ++found; }
+    }
+    if (found != 1) {
+      std::string list;
+      for (const auto& b : blocks)
+        if (b.name == bname) list += (list.empty() ? "" : ", ") + b.label();
+      throw DeckError("override '" + spec + "': the deck has " + (found ? "several blocks" : "no block") + " '" + bname + " " + tag +
+                      "'" + (list.empty() ? "" : " (blocks of this type: " + list + ")"));
+    }
+  } else {
+    for (auto& b : blocks)
+      if (b.name == bname && b.index == idx) target = &b;
+  }
   if (!target && idx == 0 && all(bname).empty()) {
     // the deck has no block of this type: create it (e.g. numerics.seed=3)
     Block nb;
@@ -239,7 +283,7 @@ void Deck::applyOverride(const std::string& spec) {
 std::string Deck::dump() const {
   std::ostringstream os;
   for (const auto& b : blocks) {
-    os << b.name << " {\n";
+    os << b.name << (b.tag.empty() ? "" : " " + b.tag) << " {\n";
     size_t w = 0;
     for (const auto& e : b.entries) w = std::max(w, e.key.size());
     for (const auto& e : b.entries) {
