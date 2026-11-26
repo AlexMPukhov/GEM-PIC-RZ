@@ -1157,6 +1157,7 @@ void Simulation::loadFresh() {
             stream.push_back(ion);
           } else {  // quiet ionization: K siblings with the key of the slot, spread over the azimuthal gap
             const int K = I.split;
+            ion.id ^= mix64(uint64_t(cfg.numerics.seed) + 0x9A3C5E71ULL);  // the thresholds depend on the seed
             ion.w /= K;
             ion.q = I.Z * ion.w;
             for (int j = 0; j < K; ++j) {

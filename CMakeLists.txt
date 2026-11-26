@@ -256,6 +256,17 @@ if(GEMPIC_HAVE_HDF5)
       COMMAND sh ${CMAKE_SOURCE_DIR}/tests/density_file.sh $<TARGET_FILE:gempic_rz_gpuemu> $<TARGET_FILE:compare_columns>
               openmp)
   endif()
+  # quiet ionization (ion.split): mean vs ADK / rate equations, seed-to-seed scatter vs Monte Carlo, per backend
+  foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
+    add_test(NAME quiet_ionization_${b}
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/quiet_ionization.sh $<TARGET_FILE:gempic_rz> $<TARGET_FILE:check_physics>
+              numerics.backend=${b})
+  endforeach()
+  if(TARGET gempic_rz_gpuemu)
+    add_test(NAME quiet_ionization_gpu_emulation
+      COMMAND sh ${CMAKE_SOURCE_DIR}/tests/quiet_ionization.sh $<TARGET_FILE:gempic_rz_gpuemu>
+              $<TARGET_FILE:check_physics> numerics.backend=openmp)
+  endif()
   # radial smoothing of the plasma sources (plasma.smooth_length)
   foreach(b IN LISTS GEMPIC_TEST_BACKENDS)
     add_test(NAME smoothing_${b}
