@@ -1004,6 +1004,7 @@ gempic_rz deck.txt --check                          # read the deck, print the s
 gempic_rz deck.txt numerics.backend=cuda           # run on the GPU (GPU build)
 gempic_rz deck.txt --restart latest                # continue from the newest checkpoint
 mpirun -np 8 gempic_rz deck.txt                    # MPI: 8 ranks along zeta (any number of ranks can restart a checkpoint)
+srun -n 8 gempic_rz deck.txt                        # only if the MPI library has Slurm support (otherwise: stops, see README "MPI")
 gempic_rz deck.txt grid.z_end=2mm laser[1].a0=1.5   # override values (parameter scans)
 gempic_rz deck.txt "bunch[0].name=witness 2" output.dir=scan_a
 gempic_rz --template > my.deck                      # annotated example deck

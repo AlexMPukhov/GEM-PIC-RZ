@@ -328,6 +328,12 @@ plasma { density = 3e18 cm^-3;  density_file = jet_axis.txt;  r_max = 19 um }
 consecutive slices. Rank P−1 is at the front, rank 0 at the rear. MPI is
 found automatically by CMake and by the Makefile (`mpicxx`).
 
+**Launcher check.** If the launcher starts several tasks but MPI sees only one rank (e.g. `srun` with an MPI
+library built without Slurm/PMIx support, or a build without MPI), every task would run the whole deck and
+overwrite the files of the others. GEM-PIC-RZ then stops at once with exit code 1 and the message "the launcher
+started N tasks, but MPI sees only one rank" (it compares `OMPI_COMM_WORLD_SIZE`, `PMI_SIZE` or
+`SLURM_STEP_NUM_TASKS` with the MPI size). Use `mpirun -np P` in that case. ctest `launch_guard`.
+
 **Pipeline in the steps.** Within one step s⁰ → s¹ the ζ-march is sequential,
 from the front of the window to the rear. A ζ-decomposition therefore runs as
 a pipeline: rank q computes step k while rank q+1 already computes step k+1.

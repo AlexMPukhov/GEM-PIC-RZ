@@ -227,6 +227,22 @@ int run(int argc, char** argv) {
 
 int main(int argc, char** argv) {
   gem::comm::init(&argc, &argv);
+  // the launcher started several tasks, but MPI sees one rank: independent copies would run the same deck and
+  // overwrite each other's files (e.g. srun with an MPI library built without Slurm support)
+  if (gem::comm::size() == 1 && gem::comm::launcherTasks() > 1) {
+    if (gem::comm::launcherRank() == 0)
+      std::fprintf(stderr,
+                   "error: the launcher started %d tasks, but MPI sees only one rank: every task would run the whole "
+                   "deck and overwrite the files of the others.\n"
+                   "  %s\n",
+                   gem::comm::launcherTasks(),
+                   gem::comm::available()
+                       ? "Start with mpirun -np N (this MPI library does not take its ranks from the launcher, e.g. "
+                         "srun without Slurm/PMIx support), or one task."
+                       : "This build has no MPI: start one task (cmake finds MPI if it is installed).");
+    gem::comm::finalize();
+    return 1;
+  }
   // only rank 0 writes to the console (errors go to stderr on every rank)
   if (gem::comm::rank() != 0 && !std::freopen("/dev/null", "w", stdout)) return 1;
   const int rc = run(argc, argv);

@@ -59,6 +59,11 @@ void send(int dest, int tag, Buffer&& b);  // non-blocking; the buffer is kept u
 Buffer recv(int src, int tag);            // blocking
 void waitAll();                           // complete all pending sends
 [[noreturn]] void abort(int code);
+// Tasks the launcher started (mpirun: OMPI_COMM_WORLD_SIZE, MPICH: PMI_SIZE, srun: SLURM_STEP_NUM_TASKS; 1 if
+// none is set) and the launcher index of this process. More tasks than MPI ranks with size() == 1 means that
+// independent copies were started (srun with an MPI library without Slurm support, or a build without MPI).
+int launcherTasks();
+int launcherRank();
 }  // namespace comm
 
 }  // namespace gem
