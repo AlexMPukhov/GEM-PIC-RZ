@@ -109,6 +109,54 @@ int main() {
     CHECK(d.blocks[0].label() == "grid");
     CHECK(d.blocks[2].find("a0")->line == 9);
   }
+  // ------------------------------------------------------------ named blocks (common form of the VLPL family)
+  // reference: the same deck with the key `name` and the numbered overrides, which the code always read
+  {
+    const std::string lasers = "laser Drive { a0 = 2; waist = 8 um; tau_fwhm = 30 fs; zeta_center = 30 um }\n"
+                               "laser probe { a0 = 0.5; waist = 5 um; tau_fwhm = 20 fs; zeta_center = 20 um }\n";
+    const std::string bunchKeys = "charge = 1 nC; energy = 1 GeV; sigma_x = 5 um; sigma_z = 10 um; zeta_center = 20 um; macroparticles = 100";
+    Deck d = Deck::parseString(std::string(BASE) + lasers + "bunch Driver { " + bunchKeys + " }\n" +
+                                   "BUNCH witness { species = positron; " + bunchKeys + " }\n" +
+                                   "ion Dopant { element = N; charge_state = 5; density = 1e17 cm^-3 } plasma { density = 1e18 cm^-3 }", "named");
+    Deck o = Deck::parseString(std::string(BASE) +
+                                   "laser { a0 = 2; waist = 8 um; tau_fwhm = 30 fs; zeta_center = 30 um }\n"
+                                   "laser { a0 = 0.5; waist = 5 um; tau_fwhm = 20 fs; zeta_center = 20 um }\n"
+                                   "bunch { name = Driver; " + bunchKeys + " }\n" +
+                                   "bunch { name = witness; species = positron; " + bunchKeys + " }\n" +
+                                   "ion { name = Dopant; element = N; charge_state = 5; density = 1e17 cm^-3 } plasma { density = 1e18 cm^-3 }", "old");
+    CHECK(d.blocks[1].name == "laser" && d.blocks[1].tag == "Drive");   // the type in lower case, the name as written
+    CHECK(d.blocks[4].name == "bunch" && d.blocks[4].tag == "witness");
+    CHECK(d.blocks[1].label() == "laser Drive" && d.blocks[4].label() == "bunch witness" && d.blocks[0].label() == "grid");
+    d.applyOverride("laser probe.a0=3.5");
+    d.applyOverride("bunch witness.charge=20 pC");
+    d.applyOverride(" BUNCH Driver.sigma_y=7 um");                      // adds a key
+    o.applyOverride("laser[1].a0=3.5");
+    o.applyOverride("bunch witness.charge=20 pC");                      // by the key `name` of an unnamed block
+    o.applyOverride("bunch[0].sigma_y=7 um");
+    Config c = Config::fromDeck(d), r = Config::fromDeck(o);
+    CHECK(c.lasers.size() == 2 && c.bunches.size() == 2 && c.ions.size() == 1);
+    CHECK(c.lasers[1].a0 == 3.5 && r.lasers[1].a0 == 3.5 && c.lasers[0].a0 == r.lasers[0].a0);
+    CHECK(c.bunches[0].name == "Driver" && c.bunches[1].name == "witness" && c.ions[0].name == "Dopant");
+    CHECK(c.bunches[0].name == r.bunches[0].name && c.bunches[1].name == r.bunches[1].name && c.ions[0].name == r.ions[0].name);
+    CHECK_NEAR(c.bunches[1].charge_pC, 20.0, 1e-12);
+    CHECK(c.bunches[1].charge_pC == r.bunches[1].charge_pC && c.bunches[0].charge_pC == r.bunches[0].charge_pC);
+    CHECK(c.bunches[0].sigma_y == r.bunches[0].sigma_y && c.bunches[0].sigma_y != c.bunches[0].sigma_x);
+    CHECK(c.bunches[1].qm == r.bunches[1].qm && c.bunches[1].gamma == r.bunches[1].gamma);
+    // dump -> parse keeps the names
+    Deck d2 = Deck::parseString(d.dump(), "dump");
+    CHECK(d2.blocks[2].tag == "probe" && d2.blocks[3].tag == "Driver");
+    Config c2 = Config::fromDeck(d2);
+    CHECK(c2.bunches[1].name == "witness" && c2.lasers[1].a0 == 3.5 && c2.bunches[1].charge_pC == c.bunches[1].charge_pC);
+    // errors
+    EXPECT_ERROR(d.applyOverride("bunch nobody.charge=1 pC"), "has no block 'bunch nobody'");
+    EXPECT_ERROR(d.applyOverride("bunch[1] witness.charge=1 pC"), "the index or the name");
+    EXPECT_ERROR(d.applyOverride("bunch driver.charge=1 pC"), "has no block 'bunch driver'");   // names keep their case
+    EXPECT_ERROR(Deck::parseString("bunch a { charge = 1 pC }\nbunch a { charge = 2 pC }", "t"), "block 'bunch a' given twice (first in line 1)");
+    EXPECT_ERROR(Deck::parseString("bunch a b { charge = 1 pC }", "t"), "expected '{'");
+    EXPECT_ERROR(cfgOf(std::string(BASE) + "bunch a { name = b; " + bunchKeys + " }"), "differs from the name 'a'");
+    Config same = cfgOf(std::string(BASE) + "bunch a { name = a; " + bunchKeys + " }");
+    CHECK(same.bunches[0].name == "a");
+  }
   EXPECT_ERROR(Deck::parseString("grid { a = 1\n", "x.deck"), "x.deck:1: block 'grid' is not closed");
   EXPECT_ERROR(Deck::parseString("grid { a = 1\n a = 2 }", "x.deck"), "x.deck:2: key 'a' given twice");
   EXPECT_ERROR(Deck::parseString("grid { a = }", "x.deck"), "missing value for key 'a'");

@@ -36,6 +36,7 @@ laser { a0 = 2; waist = 8 um; tau_fwhm = 25 fs; zeta_center = 30 um }   # ";" se
 - **Units are required:** every dimensional value needs a unit. A number without a unit, or with a unit of the wrong kind (e.g. `waist = 8 fs`), is an error.
 - **Unknown keys are errors:** every key that the code does not read is reported with its line number, so typos cannot pass silently. For a missing required key, the message names a similar key found in the block (`needs key 'zeta_center' (found 'zeta_centre' in line 15: misspelled?)`).
 - **Repeated blocks are numbered:** blocks of the same type are numbered in order of appearance, `laser[0]`, `laser[1]`, …
+- **Blocks may be named:** a name may follow the block type, `bunch witness { ... }`, `laser drive { ... }` (the common input form of the VLPL family: VLPL, GEM-PIC-RZ, QUARZ). The name keeps its case, must be unique among the blocks of its type, and addresses the block on the command line (`"bunch witness.charge=20 pC"`) and in messages. For `bunch` and `ion` it is the name of the species, the same as the key `name` (give one of them, or both with the same value); other blocks use it only for addressing.
 - **Strings:** quote a string that contains blanks, e.g. `dir = "run 1"`.
 - **Unit suffix:** a unit may follow the last number directly, e.g. `5nm`.
 - **Expressions:** a single value may be an expression, e.g. `waist = "2 * w0"` (see [Functions and expressions](#functions-and-expressions)).
@@ -1007,6 +1008,7 @@ mpirun -np 8 gempic_rz deck.txt                    # MPI: 8 ranks along zeta (an
 srun -n 8 gempic_rz deck.txt                        # only if the MPI library has Slurm support (otherwise: stops, see README "MPI")
 gempic_rz deck.txt grid.z_end=2mm laser[1].a0=1.5   # override values (parameter scans)
 gempic_rz deck.txt "bunch[0].name=witness 2" output.dir=scan_a
+gempic_rz deck.txt "bunch witness.charge=20 pC"     # a block by its name (`bunch witness { ... }` or the key name = witness)
 gempic_rz --template > my.deck                      # annotated example deck
 ```
 

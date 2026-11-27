@@ -169,4 +169,10 @@ Read this first. README.md is the user documentation; docs/ holds the details.
     outside the file unless file_outside = hold. The profile enters only the host-side loading
     (Simulation::loadFresh, boundBegin), so engine and MPI need nothing more. The format is meant to be the
     hydro -> PIC hand-off too; QUARZ and VLPL should take the same format (not done).
+  - **Common input form of the VLPL family** (branch `deck-standard`, 2026-11-26; Alexander accepted the standard for
+    VLPL, GEM-PIC-RZ and QUARZ on that day): the block form, units and key names of GEM-PIC-RZ are the reference, so
+    here only named blocks were added: `bunch witness { }`, `laser drive { }` (Block::tag in src/deck.*, case kept,
+    unique per type; override `"bunch witness.charge=20 pC"`, also by the key `name`; for bunch and ion the tag is the
+    species name, BlockReader::name). ctest deck_parser. QUARZ and VLPL read the common names as aliases on their
+    branches `deck-standard`; the private repository VLPL-Family has the survey and the cross-code caveats.
   - Open physics issue: density down-ramp injection vs FBPIC (attributed to the GT2 choice; GT1 future work).

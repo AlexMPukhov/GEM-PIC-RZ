@@ -31,6 +31,14 @@ class BlockReader {
 
   bool has(const std::string& key) const { return b_.find(key) != nullptr; }
 
+  // the name of the block: the name after the block type ("bunch witness {"), the key `name`, or `def`
+  std::string name(const std::string& def) const {
+    if (b_.tag.empty()) return str("name", def);
+    if (has("name") && str("name", def) != b_.tag)
+      fail(get("name", true), "differs from the name '" + b_.tag + "' given after the block type");
+    return b_.tag;
+  }
+
   // required number
   double num(const std::string& key, Dim dim) const {
     const Entry* e = get(key, true);
@@ -1081,7 +1089,7 @@ void readIon(const Block& b, const Deck& d, const Units& u, const GridConfig& g,
 
   const std::string def = I.element.empty() ? "ion" + std::to_string(b.index)
                           : (I.Z == 0 ? I.element : I.element + std::to_string(I.Z) + "+");
-  I.name = r.str("name", def);
+  I.name = r.name(def);
   if (I.mass < 100.0) warn.push_back(b.label() + " (" + I.name + "): mass below 100 m_e - is the unit right?");
 }
 
@@ -1219,7 +1227,7 @@ void readBunchFile(const Block& b, const Deck& d, const Units& u, const GridConf
 void readBunch(const Block& b, const Deck& d, const Units& u, const GridConfig& g, BunchConfig& B,
                std::vector<std::string>& warn) {
   BlockReader r(b, d, u);
-  B.name = r.str("name", "bunch" + std::to_string(b.index));
+  B.name = r.name("bunch" + std::to_string(b.index));
   if (r.has("file")) {
     readBunchFile(b, d, u, g, B, warn);
     return;

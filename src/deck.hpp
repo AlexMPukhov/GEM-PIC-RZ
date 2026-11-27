@@ -17,6 +17,10 @@
 //    (MeV vs meV).
 //  * A block type may occur several times (laser, bunch); blocks of the same
 //    type are addressed as laser[0], laser[1], ... in overrides and messages.
+//  * A block may carry a name after its type:  bunch witness { ... }  (the common
+//    form of the VLPL family). The name keeps its case, is unique among the blocks
+//    of its type, addresses the block in overrides ("bunch witness.charge=20pC")
+//    and is the default of the key `name` of the blocks that have one (bunch, ion).
 //  * The deck reader only knows the syntax. Which blocks and keys exist, and
 //    their units, is defined by the consumer (config.cpp). Every key that the
 //    consumer never asks for is reported as an error, so typos are caught.
@@ -40,7 +44,8 @@ struct Entry {
 };
 
 struct Block {
-  std::string name;  // lower case
+  std::string name;  // block type, lower case
+  std::string tag;   // name given after the type ("bunch witness {"), case kept; empty if none
   int line = 0;      // line of the block header
   int index = 0;     // index among blocks with the same name
   int count = 1;     // number of blocks with this name in the deck
@@ -48,7 +53,7 @@ struct Block {
 
   const Entry* find(const std::string& key) const;
   Entry* find(const std::string& key);
-  std::string label() const;  // "grid" or "laser[1]" (index shown if count > 1)
+  std::string label() const;  // "grid", "laser[1]" (index shown if count > 1) or "bunch witness"
 };
 
 class Deck {
@@ -69,7 +74,8 @@ class Deck {
   // error listing every key that was never read by the consumer
   void checkAllUsed() const;
 
-  // command-line override "block.key=value" or "block[i].key=value";
+  // command-line override "block.key=value", "block[i].key=value" or "block name.key=value"
+  // (the name after the block type, or the value of the key `name` of the block);
   // replaces the value, or adds the key if it is not in the block; a block
   // type that does not occur in the deck at all is created
   void applyOverride(const std::string& spec);
